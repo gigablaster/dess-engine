@@ -10,14 +10,11 @@ ash = "0.37"
 sdl2 = { version = "0.35", features = ["bundled"] }
 common = { path = "../common" }
 log = "0.4"
-simple_logger = "4.0"
-anyhow = "1.0"
-puffin = "0.14"
 gpu-allocator = { version = "0.22", default-features = false, features = ["vulkan"]}
 arrayvec = "0.7"
 
-[dev-dependencies]
-runner = { path = "../runner" }
-
 [[example]]
 name = "vk-clear"
+
+[dev-dependencies]
+simple_logger = "4.0"

@@ -15,11 +15,11 @@
 
 use std::sync::Arc;
 
-use ash::vk;
+use ash::vk::{self, ClearValue, RenderPassBeginInfo};
 
 use crate::BackendResult;
 
-use super::Device;
+use super::{CommandBuffer, Device, Framebuffer};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RenderPassAttachmentDesc {
@@ -89,12 +89,7 @@ impl RenderPass {
         let attachment_refs = desc
             .color_attachments
             .iter()
-            .map(|a| {
-                a.build(
-                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                )
-            })
+            .map(|a| a.build(vk::ImageLayout::UNDEFINED, vk::ImageLayout::PRESENT_SRC_KHR))
             .chain(desc.depth_attachment.as_ref().map(|a| {
                 a.build(
                     vk::ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,

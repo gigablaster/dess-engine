@@ -22,13 +22,14 @@ use crate::BackendResult;
 
 use super::{Device, Image, ImageViewDesc, RenderPass};
 
-pub const MAX_COLOR_ATTACHMENTS: usize = 8;
-const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
+pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
+pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
 
 pub struct Framebuffer {
     device: Arc<Device>,
     pub raw: vk::Framebuffer,
     pub views: ArrayVec<vk::ImageView, MAX_ATTACHMENTS>,
+    pub extent: vk::Extent2D,
 }
 
 impl Framebuffer {
@@ -75,10 +76,16 @@ impl Framebuffer {
 
         let fbo = unsafe { device.raw.create_framebuffer(&fbo_desc, None) }?;
 
+        let extent = vk::Extent2D {
+            width: attachments[0].width,
+            height: attachments[0].height,
+        };
+
         Ok(Self {
             device: device.clone(),
             raw: fbo,
             views,
+            extent,
         })
     }
 

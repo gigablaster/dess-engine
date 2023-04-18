@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::vk;
-use log::{log, Level};
+use log::{info, log, Level};
 use render_backend::vulkan::{
     Device, Framebuffer, Instance, PhysicalDeviceList, RenderPass, RenderPassAttachmentDesc,
     RenderPassDesc, Surface, Swapchain, SwapchainDesc,
@@ -71,7 +71,7 @@ fn main() -> Result<(), String> {
         vsync: true,
     };
 
-    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format);
+    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format).clear_input();
     let render_pass_desc = RenderPassDesc {
         color_attachments: &[color_attachment_desc],
         depth_attachment: None,
@@ -85,6 +85,18 @@ fn main() -> Result<(), String> {
             match event {
                 Event::Quit { .. } => break 'running,
                 _ => {}
+            }
+            {
+                let frame = device.begin_frame().unwrap();
+                let image = swapchain.acquire_next_image().unwrap();
+                {
+                    let cb = frame.command_buffer.begin().unwrap();
+                    cb.begin_pass(&render_pass, &image.framebufer);
+                    cb.end_pass();
+                }
+                device.submit_render(&frame.command_buffer, &image).unwrap();
+                device.end_frame(frame).unwrap();
+                swapchain.present_image(image);
             }
         }
     }

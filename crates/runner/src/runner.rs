@@ -74,7 +74,7 @@ pub fn run(client: impl Client) -> Result<(), String> {
         vsync: true,
     };
 
-    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format);
+    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format).clear_input();
     let render_pass_desc = RenderPassDesc {
         color_attachments: &[color_attachment_desc],
         depth_attachment: None,

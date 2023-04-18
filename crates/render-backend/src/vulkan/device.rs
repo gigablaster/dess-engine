@@ -24,7 +24,7 @@ use log::info;
 
 use crate::{BackendError, BackendResult};
 
-use super::{CommandBuffer, GpuResource, Instance, PhysicalDevice, QueueFamily};
+use super::{CommandBuffer, GpuResource, Instance, PhysicalDevice, QueueFamily, SwapchainImage};
 
 pub struct Queue {
     pub raw: vk::Queue,
@@ -121,7 +121,7 @@ impl Device {
                 log_allocations: true,
                 ..Default::default()
             },
-            buffer_device_address: true,
+            buffer_device_address: false,
         })
         .map_err(|err| err.to_string())?;
 
@@ -155,13 +155,8 @@ impl Device {
         {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
                 unsafe {
-                    self.raw.wait_for_fences(
-                        &[
-                            frame0.command_buffer.fence,
-                        ],
-                        true,
-                        u64::MAX,
-                    )
+                    self.raw
+                        .wait_for_fences(&[frame0.command_buffer.fence], true, u64::MAX)
                 }?;
             } else {
                 return Err(BackendError::Other(
@@ -186,6 +181,22 @@ impl Device {
                 "Unable to finish frame: frame data is being held by user code".into(),
             ))
         }
+    }
+
+    pub fn submit_render(&self, cb: &CommandBuffer, image: &SwapchainImage) -> BackendResult<()> {
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
+            .wait_semaphores(&[image.acquire_semaphore])
+            .signal_semaphores(&[image.rendering_finished_semaphore])
+            .command_buffers(&[cb.raw])
+            .build();
+        unsafe {
+            self.raw.reset_fences(&[cb.fence])?;
+            self.raw
+                .queue_submit(self.queue.raw, &[submit_info], cb.fence)?;
+        }
+
+        Ok(())
     }
 }
 

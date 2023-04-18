@@ -13,13 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use ash::vk::{self, FenceCreateFlags};
+use std::marker::PhantomData;
+
+use arrayvec::ArrayVec;
+use ash::vk::{
+    self, ClearColorValue, ClearDepthStencilValue, ClearDepthStencilValueBuilder, ClearValue,
+    CommandBufferUsageFlags, FenceCreateFlags, SubpassContents,
+};
 
 use crate::BackendResult;
 
-use super::{GpuResource, QueueFamily};
+use super::{Framebuffer, GpuResource, QueueFamily, RenderPass, MAX_ATTACHMENTS};
 
 pub struct CommandBuffer {
+    device: ash::Device,
     pub raw: vk::CommandBuffer,
     pub fence: vk::Fence,
     pub pool: vk::CommandPool,
@@ -50,15 +57,83 @@ impl CommandBuffer {
         let fence = unsafe { device.create_fence(&fence_create_info, None)? };
 
         Ok(Self {
+            device: device.clone(),
             raw: command_buffer,
             fence,
             pool,
         })
     }
+
+    pub fn begin(&self) -> BackendResult<CommandBufferGenerator> {
+        unsafe {
+            self.device
+                .reset_command_buffer(self.raw, vk::CommandBufferResetFlags::empty())
+        }?;
+        let begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+            .build();
+        unsafe { self.device.begin_command_buffer(self.raw, &begin_info) }?;
+
+        Ok(CommandBufferGenerator {
+            device: self.device.clone(),
+            cb: self.raw,
+            phantom: PhantomData,
+        })
+    }
+}
+
+pub struct CommandBufferGenerator<'a> {
+    device: ash::Device,
+    cb: vk::CommandBuffer,
+    phantom: PhantomData<&'a CommandBuffer>,
+}
+
+impl<'a> Drop for CommandBufferGenerator<'a> {
+    fn drop(&mut self) {
+        unsafe { self.device.end_command_buffer(self.cb) }.unwrap();
+    }
+}
+
+impl<'a> CommandBufferGenerator<'a> {
+    pub fn begin_pass(&self, render_pass: &RenderPass, framebuffer: &Framebuffer) {
+        let clear = render_pass
+            .color_attachments
+            .iter()
+            .map(|_| ClearValue {
+                color: ClearColorValue {
+                    float32: [1.0, 0.0, 0.0, 1.0],
+                },
+            })
+            .chain(render_pass.depth_attachment.as_ref().map(|_| ClearValue {
+                depth_stencil: ClearDepthStencilValue {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            }))
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+        let pass_begin_info = vk::RenderPassBeginInfo::builder()
+            .render_pass(render_pass.raw)
+            .framebuffer(framebuffer.raw)
+            .clear_values(&clear)
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: framebuffer.extent,
+            })
+            .build();
+
+        unsafe {
+            self.device
+                .cmd_begin_render_pass(self.cb, &pass_begin_info, SubpassContents::INLINE)
+        };
+    }
+
+    pub fn end_pass(&self) {
+        unsafe { self.device.cmd_end_render_pass(self.cb) };
+    }
 }
 
 impl GpuResource for CommandBuffer {
-    fn free(&mut self, device: &ash::Device, allocator: &mut gpu_allocator::vulkan::Allocator) {
+    fn free(&mut self, device: &ash::Device, _: &mut gpu_allocator::vulkan::Allocator) {
         unsafe {
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
