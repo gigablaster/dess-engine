@@ -1,0 +1,39 @@
+// Copyright (C) 2023 gigablaster
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+mod command_buffer;
+mod device;
+mod framebuffer;
+mod image;
+mod instance;
+mod physical_device;
+mod render_pass;
+mod surface;
+mod swapchain;
+
+pub use command_buffer::*;
+pub use device::*;
+pub use framebuffer::*;
+use gpu_allocator::vulkan::Allocator;
+pub use image::*;
+pub use instance::*;
+pub use physical_device::*;
+pub use render_pass::*;
+pub use surface::*;
+pub use swapchain::*;
+
+pub trait GpuResource {
+    fn free(&mut self, device: &ash::Device, allocator: &mut Allocator);
+}

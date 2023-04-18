@@ -1,0 +1,16 @@
+[package]
+name = "runner"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+ash = "0.37"
+sdl2 = { version = "0.35", features = ["bundled"] }
+common = { path = "../common" }
+render = { path = "../render" }
+render-backend = { path = "../render-backend" }
+log = "0.4"
+simple_logger = "4.0"
+anyhow = "1.0"
