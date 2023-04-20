@@ -14,21 +14,18 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::vk;
-use log::{info, log, Level};
+
 use render_backend::vulkan::{
-    Device, Framebuffer, Instance, PhysicalDeviceList, RenderPass, RenderPassAttachmentDesc,
-    RenderPassDesc, Surface, Swapchain, SwapchainDesc,
+    Device, Instance, PhysicalDeviceList, RenderPass, RenderPassAttachmentDesc, RenderPassDesc,
+    Surface, Swapchain, SwapchainDesc,
 };
-use sdl2::{
-    event::Event,
-    log::{set_output_function, Category, Priority},
-};
+use sdl2::event::Event;
 
 fn main() -> Result<(), String> {
     simple_logger::init().unwrap();
     let sdl = sdl2::init()?;
     let video = sdl.video()?;
-    let timer = sdl.timer()?;
+    let _timer = sdl.timer()?;
 
     let window = video
         .window("vk-clear", 1280, 720)
@@ -71,14 +68,17 @@ fn main() -> Result<(), String> {
         vsync: true,
     };
 
-    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format).clear_input();
+    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format)
+        .garbage_input()
+        .initial_layout(vk::ImageLayout::UNDEFINED)
+        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
     let render_pass_desc = RenderPassDesc {
         color_attachments: &[color_attachment_desc],
         depth_attachment: None,
     };
     let render_pass = RenderPass::new(&device, &render_pass_desc).unwrap();
 
-    let mut swapchain = Swapchain::create(&device, &surface, &render_pass, &desc).unwrap();
+    let mut swapchain = Swapchain::new(&device, &surface, &desc).unwrap();
 
     'running: loop {
         for event in event_pump.poll_iter() {
@@ -91,7 +91,19 @@ fn main() -> Result<(), String> {
                 let image = swapchain.acquire_next_image().unwrap();
                 {
                     let cb = frame.command_buffer.begin().unwrap();
-                    cb.begin_pass(&render_pass, &image.framebufer);
+                    cb.begin_pass(
+                        [window.size().0, window.size().1],
+                        &render_pass,
+                        &[&image.image],
+                        None,
+                    );
+                    cb.clear(
+                        [window.size().0, window.size().1],
+                        &[vk::ClearColorValue {
+                            float32: [1.0, 0.0, 0.0, 1.0],
+                        }],
+                        None,
+                    );
                     cb.end_pass();
                 }
                 device.submit_render(&frame.command_buffer, &image).unwrap();
@@ -100,6 +112,7 @@ fn main() -> Result<(), String> {
             }
         }
     }
+    device.wait();
 
     Ok(())
 }

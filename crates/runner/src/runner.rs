@@ -17,8 +17,7 @@ use ash::vk;
 use common::{Client, ClientState, TimeFilter};
 use log::{log, Level};
 use render_backend::vulkan::{
-    Device, Framebuffer, Instance, PhysicalDeviceList, RenderPass, RenderPassAttachmentDesc,
-    RenderPassDesc, Surface, Swapchain, SwapchainDesc,
+    Device, Instance, PhysicalDeviceList, Surface, Swapchain, SwapchainDesc,
 };
 use sdl2::{
     event::Event,
@@ -74,14 +73,7 @@ pub fn run(client: impl Client) -> Result<(), String> {
         vsync: true,
     };
 
-    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format).clear_input();
-    let render_pass_desc = RenderPassDesc {
-        color_attachments: &[color_attachment_desc],
-        depth_attachment: None,
-    };
-    let render_pass = RenderPass::new(&device, &render_pass_desc).unwrap();
-
-    let mut swapchain = Swapchain::create(&device, &surface, &render_pass, &desc).unwrap();
+    let _swapchain = Swapchain::new(&device, &surface, &desc).unwrap();
 
     let result = {
         let mut time_filter = TimeFilter::new();

@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    ffi::CStr,
+    sync::{Arc, Mutex},
+};
 
 use ash::{extensions::khr, vk};
 use gpu_allocator::{
@@ -22,80 +25,67 @@ use gpu_allocator::{
 };
 use log::info;
 
-use crate::{BackendError, BackendResult};
+use crate::{BackendError, BackendResult, GpuResource};
 
-use super::{CommandBuffer, GpuResource, Instance, PhysicalDevice, QueueFamily, SwapchainImage};
+use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily, SwapchainImage};
 
 pub struct Queue {
-    pub raw: vk::Queue,
-    pub family: QueueFamily,
-}
-
-pub struct DeviceFrame {
-    pub device: ash::Device,
-    pub command_buffer: CommandBuffer,
-    pub queue_family: QueueFamily,
-}
-
-impl DeviceFrame {
-    pub fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
-        Ok(Self {
-            device: device.clone(),
-            command_buffer: CommandBuffer::new(device, queue_family)?,
-            queue_family: *queue_family,
-        })
-    }
-}
-
-impl GpuResource for DeviceFrame {
-    fn free(&mut self, device: &ash::Device, allocator: &mut Allocator) {
-        self.command_buffer.free(device, allocator);
-    }
+    pub(crate) raw: vk::Queue,
+    pub(crate) family: QueueFamily,
 }
 
 pub struct Device {
-    pub instance: Arc<Instance>,
+    pub(crate) instance: Arc<Instance>,
     pub raw: ash::Device,
     pub pdevice: PhysicalDevice,
-    pub queue: Queue,
+    pub graphics_queue: Queue,
+    pub transfer_queue: Queue,
     pub allocator: Arc<Mutex<Allocator>>,
     setup_cb: Mutex<CommandBuffer>,
-    frames: [Mutex<Arc<DeviceFrame>>; 2],
+    frames: [Mutex<Arc<FrameContext>>; 2],
 }
 
 impl Device {
     pub fn create(instance: &Arc<Instance>, pdevice: &PhysicalDevice) -> BackendResult<Arc<Self>> {
-        if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {}
-
-        let device_extension_names = vec![khr::Swapchain::name().as_ptr()];
-
-        let desired_queue = pdevice
-            .queue_families
-            .iter()
-            .filter(|queue| queue.is_supported(vk::QueueFlags::GRAPHICS))
-            .copied()
-            .next();
-
-        let desired_queue = if let Some(queue) = desired_queue {
-            queue
-        } else {
+        if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER) {
             return Err(BackendError::Other(
-                "Can't create device for physica device that doesn't support graphics".into(),
+                "Device doesn't support graphics and transfer queues".into(),
             ));
         };
 
-        let priorities = [1.0];
+        let device_extension_names = vec![
+            khr::Swapchain::name().as_ptr(),
+            vk::KhrImagelessFramebufferFn::name().as_ptr(),
+            vk::KhrImageFormatListFn::name().as_ptr(),
+        ];
 
+        for ext in &device_extension_names {
+            let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
+            if !pdevice.supported_extensions.contains(ext) {
+                return Err(BackendError::NoExtension(ext.into()));
+            }
+        }
+
+        let graphics_queue = pdevice.get_queue(vk::QueueFlags::GRAPHICS)?;
+        let transfer_queue = pdevice.get_queue(vk::QueueFlags::TRANSFER)?;
+
+        let mut imageless_framebuffer_address =
+            vk::PhysicalDeviceImagelessFramebufferFeaturesKHR::default();
+        let mut features = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut imageless_framebuffer_address)
+            .build();
+
+        unsafe {
+            instance
+                .raw
+                .get_physical_device_features2(pdevice.raw, &mut features)
+        };
+
+        let priorities = [1.0];
         let queue_info = [vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(desired_queue.index)
+            .queue_family_index(graphics_queue.index)
             .queue_priorities(&priorities)
             .build()];
-
-        let mut physical_device_buffer_device_address =
-            vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
-        let mut features = vk::PhysicalDeviceFeatures2::builder()
-            .push_next(&mut physical_device_buffer_device_address)
-            .build();
 
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_info)
@@ -125,32 +115,35 @@ impl Device {
         })
         .map_err(|err| err.to_string())?;
 
-        let queue = unsafe { device.get_device_queue(desired_queue.index, 0) };
-
-        let queue = Queue {
-            raw: queue,
-            family: desired_queue,
-        };
-
-        let setup_cb = CommandBuffer::new(&device, &desired_queue)?;
+        let setup_cb = CommandBuffer::new(&device, &transfer_queue)?;
 
         let frames = [
-            Mutex::new(Arc::new(DeviceFrame::new(&device, &desired_queue)?)),
-            Mutex::new(Arc::new(DeviceFrame::new(&device, &desired_queue)?)),
+            Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
+            Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
         ];
 
         Ok(Arc::new(Self {
             instance: instance.clone(),
-            raw: device,
             pdevice: pdevice.clone(),
-            queue,
+            graphics_queue: Self::create_queue(&device, graphics_queue),
+            transfer_queue: Self::create_queue(&device, transfer_queue),
             allocator: Arc::new(Mutex::new(allocator)),
             setup_cb: Mutex::new(setup_cb),
+            raw: device,
             frames,
         }))
     }
 
-    pub fn begin_frame(&self) -> BackendResult<Arc<DeviceFrame>> {
+    fn create_queue(device: &ash::Device, queue_family: QueueFamily) -> Queue {
+        let queue = unsafe { device.get_device_queue(queue_family.index, 0) };
+
+        Queue {
+            raw: queue,
+            family: queue_family,
+        }
+    }
+
+    pub fn begin_frame(&self) -> BackendResult<Arc<FrameContext>> {
         let mut frame0 = self.frames[0].lock().unwrap();
         {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
@@ -167,7 +160,7 @@ impl Device {
         Ok(frame0.clone())
     }
 
-    pub fn end_frame(&self, frame: Arc<DeviceFrame>) -> BackendResult<()> {
+    pub fn end_frame(&self, frame: Arc<FrameContext>) -> BackendResult<()> {
         drop(frame);
 
         let mut frame0 = self.frames[0].lock().unwrap();
@@ -193,10 +186,14 @@ impl Device {
         unsafe {
             self.raw.reset_fences(&[cb.fence])?;
             self.raw
-                .queue_submit(self.queue.raw, &[submit_info], cb.fence)?;
+                .queue_submit(self.graphics_queue.raw, &[submit_info], cb.fence)?;
         }
 
         Ok(())
+    }
+
+    pub fn wait(&self) {
+        unsafe { self.raw.device_wait_idle().unwrap() };
     }
 }
 

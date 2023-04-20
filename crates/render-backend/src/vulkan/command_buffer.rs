@@ -13,17 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::marker::PhantomData;
-
 use arrayvec::ArrayVec;
-use ash::vk::{
-    self, ClearColorValue, ClearDepthStencilValue, ClearDepthStencilValueBuilder, ClearValue,
-    CommandBufferUsageFlags, FenceCreateFlags, SubpassContents,
+use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
+
+use crate::{BackendResult, GpuResource};
+
+use super::{
+    Device, FramebufferCacheKey, Image, ImageViewDesc, QueueFamily, RenderPass, MAX_ATTACHMENTS,
+    MAX_COLOR_ATTACHMENTS,
 };
-
-use crate::BackendResult;
-
-use super::{Framebuffer, GpuResource, QueueFamily, RenderPass, MAX_ATTACHMENTS};
 
 pub struct CommandBuffer {
     device: ash::Device,
@@ -33,7 +31,7 @@ pub struct CommandBuffer {
 }
 
 impl CommandBuffer {
-    pub fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
+    pub(crate) fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
         let pool_create_info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(queue_family.index)
@@ -75,17 +73,15 @@ impl CommandBuffer {
         unsafe { self.device.begin_command_buffer(self.raw, &begin_info) }?;
 
         Ok(CommandBufferGenerator {
-            device: self.device.clone(),
+            device: &self.device,
             cb: self.raw,
-            phantom: PhantomData,
         })
     }
 }
 
 pub struct CommandBufferGenerator<'a> {
-    device: ash::Device,
+    device: &'a ash::Device,
     cb: vk::CommandBuffer,
-    phantom: PhantomData<&'a CommandBuffer>,
 }
 
 impl<'a> Drop for CommandBufferGenerator<'a> {
@@ -95,35 +91,116 @@ impl<'a> Drop for CommandBufferGenerator<'a> {
 }
 
 impl<'a> CommandBufferGenerator<'a> {
-    pub fn begin_pass(&self, render_pass: &RenderPass, framebuffer: &Framebuffer) {
-        let clear = render_pass
-            .color_attachments
+    pub fn begin_pass(
+        &self,
+        dims: [u32; 2],
+        render_pass: &RenderPass,
+        color_attachments: &[&Image],
+        depth_attachment: Option<Image>,
+    ) {
+        let color_attachment_descs = color_attachments
             .iter()
-            .map(|_| ClearValue {
-                color: ClearColorValue {
-                    float32: [1.0, 0.0, 0.0, 1.0],
-                },
+            .map(|image| &image.desc)
+            .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
+        let image_attachments = color_attachments
+            .iter()
+            .map(|image| {
+                let desc = ImageViewDesc::default()
+                    .level_count(1)
+                    .base_mip_level(0)
+                    .format(image.desc.format)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .aspect_mask(vk::ImageAspectFlags::COLOR);
+                image.get_or_create_view(self.device, desc).unwrap()
             })
-            .chain(render_pass.depth_attachment.as_ref().map(|_| ClearValue {
-                depth_stencil: ClearDepthStencilValue {
-                    depth: 1.0,
-                    stencil: 0,
-                },
+            .chain(depth_attachment.as_ref().map(|image| {
+                let desc = ImageViewDesc::default()
+                    .level_count(1)
+                    .base_mip_level(0)
+                    .format(image.desc.format)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .aspect_mask(vk::ImageAspectFlags::DEPTH);
+                image.get_or_create_view(self.device, desc).unwrap()
             }))
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
-        let pass_begin_info = vk::RenderPassBeginInfo::builder()
+
+        let key = FramebufferCacheKey::new(
+            dims,
+            &color_attachment_descs,
+            depth_attachment.map(|image| image.desc).as_ref(),
+        );
+
+        let mut pass_attachments_info = vk::RenderPassAttachmentBeginInfoKHR::builder()
+            .attachments(&image_attachments)
+            .build();
+        let [width, height] = dims;
+        let framebuffer = render_pass
+            .framebuffer_cache
+            .get_or_create(&self.device, key)
+            .unwrap();
+
+        let begin_pass_info = vk::RenderPassBeginInfo::builder()
             .render_pass(render_pass.raw)
-            .framebuffer(framebuffer.raw)
-            .clear_values(&clear)
+            .framebuffer(framebuffer)
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: framebuffer.extent,
+                extent: vk::Extent2D {
+                    width: width as _,
+                    height: height as _,
+                },
             })
+            .push_next(&mut pass_attachments_info)
             .build();
 
         unsafe {
+            self.device.cmd_begin_render_pass(
+                self.cb,
+                &begin_pass_info,
+                vk::SubpassContents::INLINE,
+            )
+        };
+    }
+
+    pub fn clear(
+        &self,
+        dims: [u32; 2],
+        colors: &[vk::ClearColorValue],
+        depth: Option<vk::ClearDepthStencilValue>,
+    ) {
+        let attachments = colors
+            .iter()
+            .enumerate()
+            .map(|(index, value)| {
+                vk::ClearAttachment::builder()
+                    .aspect_mask(vk::ImageAspectFlags::COLOR)
+                    .color_attachment(index as _)
+                    .clear_value(vk::ClearValue { color: *value })
+                    .build()
+            })
+            .chain(depth.as_ref().map(|depth| {
+                vk::ClearAttachment::builder()
+                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
+                    .clear_value(vk::ClearValue {
+                        depth_stencil: *depth,
+                    })
+                    .build()
+            }))
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+
+        let rect = vk::ClearRect::builder()
+            .rect(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: dims[0],
+                    height: dims[1],
+                },
+            })
+            .base_array_layer(0)
+            .layer_count(1)
+            .build();
+        unsafe {
             self.device
-                .cmd_begin_render_pass(self.cb, &pass_begin_info, SubpassContents::INLINE)
+                .cmd_clear_attachments(self.cb, &attachments, &[rect])
         };
     }
 
@@ -133,10 +210,16 @@ impl<'a> CommandBufferGenerator<'a> {
 }
 
 impl GpuResource for CommandBuffer {
-    fn free(&mut self, device: &ash::Device, _: &mut gpu_allocator::vulkan::Allocator) {
+    fn free(&mut self, device: &ash::Device, _allocator: &mut gpu_allocator::vulkan::Allocator) {
         unsafe {
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
         }
+    }
+}
+
+impl Device {
+    pub fn create_command_buffer(&self) -> BackendResult<CommandBuffer> {
+        CommandBuffer::new(&self.raw, &self.graphics_queue.family)
     }
 }

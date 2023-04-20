@@ -21,9 +21,9 @@ use gpu_allocator::{
     MemoryLocation,
 };
 
-use crate::{BackendError, BackendResult};
+use crate::{BackendError, BackendResult, GpuResource};
 
-use super::{Device, GpuResource};
+use super::Device;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ImageType {
@@ -92,7 +92,7 @@ impl ImageViewDesc {
         self
     }
 
-    pub fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
+    fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::builder()
             .format(self.format.unwrap_or(image.desc.format))
             .components(vk::ComponentMapping {
@@ -127,10 +127,77 @@ impl ImageViewDesc {
 
 #[derive(Debug)]
 pub struct Image {
-    pub raw: vk::Image,
+    pub(crate) raw: vk::Image,
     pub desc: ImageDesc,
-    pub allocation: Option<Allocation>,
-    pub views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
+    pub(crate) allocation: Option<Allocation>,
+    pub(crate) views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
+}
+
+impl Image {
+    pub fn new(device: &Device, image_desc: ImageDesc, name: Option<&str>) -> BackendResult<Self> {
+        let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
+        let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
+        let allocation = device
+            .allocator
+            .lock()
+            .unwrap()
+            .allocate(&AllocationCreateDesc {
+                name: name.unwrap_or("image"),
+                requirements,
+                location: MemoryLocation::GpuOnly,
+                linear: false,
+                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
+            })?;
+        unsafe {
+            device
+                .raw
+                .bind_image_memory(image, allocation.memory(), allocation.offset())
+        }?;
+
+        Ok(Self {
+            raw: image,
+            desc: image_desc,
+            allocation: Some(allocation),
+            views: Default::default(),
+        })
+    }
+
+    pub fn get_or_create_view(
+        &self,
+        device: &ash::Device,
+        view_desc: ImageViewDesc,
+    ) -> BackendResult<vk::ImageView> {
+        let mut views = self.views.lock().unwrap();
+        if let Some(view) = views.get(&view_desc) {
+            Ok(*view)
+        } else {
+            if self.desc.format == vk::Format::D32_SFLOAT
+                && !view_desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
+            {
+                return Err(BackendError::Other(
+                    "Depth-only resource used without vk::ImageAspectFlags::DEPTH flag".into(),
+                ));
+            }
+            let create_info = vk::ImageViewCreateInfo {
+                image: self.raw,
+                ..view_desc.build(self)
+            };
+
+            let view = unsafe { device.create_image_view(&create_info, None) }?;
+
+            views.insert(view_desc, view);
+
+            Ok(view)
+        }
+    }
+
+    pub fn destroy_all_views(&self, device: &ash::Device) {
+        let mut views = self.views.lock().unwrap();
+        views.iter().for_each(|(_, view)| {
+            unsafe { device.destroy_image_view(*view, None) };
+        });
+        views.clear();
+    }
 }
 
 pub struct ImageSubResourceData<'a> {
@@ -193,7 +260,7 @@ impl ImageDesc {
     }
 
     fn build(&self) -> vk::ImageCreateInfo {
-        let (image_type, image_extents, image_layers) = match self.image_type {
+        let (image_type, image_extents, _image_layers) = match self.image_type {
             ImageType::Tex1D => (
                 vk::ImageType::TYPE_1D,
                 vk::Extent3D {
@@ -252,11 +319,7 @@ impl ImageDesc {
 
 impl GpuResource for Image {
     fn free(&mut self, device: &ash::Device, allocator: &mut gpu_allocator::vulkan::Allocator) {
-        let mut views = self.views.lock().unwrap();
-        views.iter().for_each(|(_, view)| {
-            unsafe { device.destroy_image_view(*view, None) };
-        });
-        views.clear();
+        self.destroy_all_views(device);
         if let Some(allocation) = self.allocation.take() {
             allocator.free(allocation).ok();
         }
@@ -264,60 +327,4 @@ impl GpuResource for Image {
     }
 }
 
-impl Device {
-    pub fn create_image(&self, image_desc: &ImageDesc, name: Option<&str>) -> BackendResult<Image> {
-        let image = unsafe { self.raw.create_image(&image_desc.build(), None) }?;
-        let requirements = unsafe { self.raw.get_image_memory_requirements(image) };
-        let allocation = self
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate(&AllocationCreateDesc {
-                name: name.unwrap_or("image"),
-                requirements,
-                location: MemoryLocation::GpuOnly,
-                linear: false,
-                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-            })?;
-        unsafe {
-            self.raw
-                .bind_image_memory(image, allocation.memory(), allocation.offset())
-        }?;
-
-        Ok(Image {
-            raw: image,
-            desc: *image_desc,
-            allocation: Some(allocation),
-            views: Default::default(),
-        })
-    }
-
-    pub fn create_image_view(
-        &self,
-        image: &Image,
-        view_desc: &ImageViewDesc,
-    ) -> BackendResult<vk::ImageView> {
-        let mut views = image.views.lock().unwrap();
-        if let Some(view) = views.get(view_desc) {
-            Ok(*view)
-        } else {
-            if image.desc.format == vk::Format::D32_SFLOAT
-                && !view_desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
-            {
-                return Err(BackendError::Other(
-                    "Depth-only resource used without vk::ImageAspectFlags::DEPTH flag".into(),
-                ));
-            }
-            let create_info = vk::ImageViewCreateInfo {
-                image: image.raw,
-                ..view_desc.build(image)
-            };
-
-            let view = unsafe { self.raw.create_image_view(&create_info, None) }?;
-
-            views.insert(*view_desc, view);
-
-            Ok(view)
-        }
-    }
-}
+impl Device {}

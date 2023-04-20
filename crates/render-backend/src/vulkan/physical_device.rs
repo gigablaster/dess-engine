@@ -13,11 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::fmt::Debug;
+use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use crate::BackendResult;
+use crate::{BackendError, BackendResult};
 
 use super::{Instance, Surface};
 
@@ -39,6 +39,7 @@ pub struct PhysicalDevice {
     pub queue_families: Vec<QueueFamily>,
     pub properties: vk::PhysicalDeviceProperties,
     pub memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub(crate) supported_extensions: HashSet<String>,
 }
 
 impl PhysicalDevice {
@@ -46,6 +47,18 @@ impl PhysicalDevice {
         self.queue_families
             .iter()
             .any(|queue_family| queue_family.is_supported(flags))
+    }
+
+    pub fn get_queue(&self, flags: vk::QueueFlags) -> BackendResult<QueueFamily> {
+        self.queue_families
+            .iter()
+            .filter(|x| x.is_supported(flags))
+            .copied()
+            .next()
+            .ok_or(BackendError::Other(format!(
+                "Can't find queue with {:?} support",
+                flags
+            )))
     }
 }
 
@@ -76,12 +89,26 @@ impl Instance {
                         .collect();
 
                     let memory_properties = self.raw.get_physical_device_memory_properties(pdevice);
+                    let extension_properties = self
+                        .raw
+                        .enumerate_device_extension_properties(pdevice)
+                        .unwrap();
+                    let supported_extensions = extension_properties
+                        .iter()
+                        .map(|ext| {
+                            CStr::from_ptr(ext.extension_name.as_ptr() as *const c_char)
+                                .to_string_lossy()
+                                .as_ref()
+                                .to_owned()
+                        })
+                        .collect();
 
                     PhysicalDevice {
                         raw: pdevice,
                         queue_families,
                         properties,
                         memory_properties,
+                        supported_extensions,
                     }
                 })
                 .collect())

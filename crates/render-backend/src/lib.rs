@@ -13,41 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use ash::{vk, LoadingError};
-use gpu_allocator::AllocationError;
-
+mod error;
+mod gpuresource;
 pub mod vulkan;
 
-#[derive(Debug)]
-pub enum BackendError {
-    Loading(LoadingError),
-    Vulkan(vk::Result),
-    Allocation(AllocationError),
-    Other(String),
-}
-
-impl From<LoadingError> for BackendError {
-    fn from(value: ash::LoadingError) -> Self {
-        BackendError::Loading(value)
-    }
-}
-
-impl From<vk::Result> for BackendError {
-    fn from(value: vk::Result) -> Self {
-        BackendError::Vulkan(value)
-    }
-}
-
-impl From<String> for BackendError {
-    fn from(value: String) -> Self {
-        BackendError::Other(value)
-    }
-}
-
-impl From<AllocationError> for BackendError {
-    fn from(value: AllocationError) -> Self {
-        BackendError::Allocation(value)
-    }
-}
-
-pub type BackendResult<T> = std::result::Result<T, BackendError>;
+pub use error::*;
+pub use gpuresource::*;

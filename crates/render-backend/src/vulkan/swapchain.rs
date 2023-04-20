@@ -23,7 +23,7 @@ use crate::{
     BackendResult,
 };
 
-use super::{Device, Framebuffer, Image, RenderPass, Surface};
+use super::{Device, Image, Surface};
 
 #[derive(Debug, Copy, Clone)]
 pub struct SwapchainDesc {
@@ -34,7 +34,6 @@ pub struct SwapchainDesc {
 
 pub struct Swapchain {
     device: Arc<Device>,
-    surface: Arc<Surface>,
     pub loader: khr::Swapchain,
     pub raw: vk::SwapchainKHR,
     pub desc: SwapchainDesc,
@@ -42,13 +41,10 @@ pub struct Swapchain {
     pub acquire_semaphore: Vec<vk::Semaphore>,
     pub rendering_finished_semaphore: Vec<vk::Semaphore>,
     pub next_semaphore: usize,
-    pub framebuffers: Vec<Arc<Framebuffer>>,
-    pub render_pass: Arc<RenderPass>,
 }
 
 pub struct SwapchainImage {
     pub image: Arc<Image>,
-    pub framebufer: Arc<Framebuffer>,
     pub image_index: u32,
     pub acquire_semaphore: vk::Semaphore,
     pub rendering_finished_semaphore: vk::Semaphore,
@@ -67,18 +63,23 @@ impl Swapchain {
     }
 
     pub fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
-        let prefered = [vk::SurfaceFormatKHR {
-            format: vk::Format::B8G8R8A8_UNORM,
-            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-        }];
+        let prefered = [
+            vk::SurfaceFormatKHR {
+                format: vk::Format::A2B10G10R10_UNORM_PACK32,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+            vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_UNORM,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+        ];
 
         prefered.into_iter().find(|format| formats.contains(format))
     }
 
-    pub fn create(
+    pub fn new(
         device: &Arc<Device>,
-        surface: &Arc<Surface>,
-        render_pass: &Arc<RenderPass>,
+        surface: &Surface,
         desc: &SwapchainDesc,
     ) -> BackendResult<Self> {
         let surface_capabilities = unsafe {
@@ -153,9 +154,9 @@ impl Swapchain {
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?;
         let images = images
-            .into_iter()
+            .iter()
             .map(|image| Image {
-                raw: image,
+                raw: *image,
                 desc: ImageDesc {
                     image_type: ImageType::Tex2D,
                     usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
@@ -171,11 +172,6 @@ impl Swapchain {
             })
             .map(Arc::new)
             .collect::<Vec<_>>();
-
-        let framebuffers = images
-            .iter()
-            .map(|image| Arc::new(Framebuffer::new(device, render_pass, &[image], None).unwrap()))
-            .collect();
 
         let acquire_semaphore = (0..images.len())
             .map(|_| unsafe {
@@ -197,7 +193,6 @@ impl Swapchain {
 
         Ok(Self {
             device: device.clone(),
-            surface: surface.clone(),
             raw: swapchain,
             loader,
             desc: *desc,
@@ -205,8 +200,6 @@ impl Swapchain {
             acquire_semaphore,
             rendering_finished_semaphore,
             next_semaphore: 0,
-            framebuffers,
-            render_pass: render_pass.clone(),
         })
     }
 
@@ -226,7 +219,6 @@ impl Swapchain {
                 self.next_semaphore = (self.next_semaphore + 1) % self.images.len();
                 Ok(SwapchainImage {
                     image: self.images[present_index as usize].clone(),
-                    framebufer: self.framebuffers[present_index as usize].clone(),
                     image_index: present_index,
                     acquire_semaphore,
                     rendering_finished_semaphore,
@@ -240,7 +232,7 @@ impl Swapchain {
                     "Swapchain recreation needed".into(),
                 ))
             }
-            err => panic!("Shitshow"),
+            _err => panic!("Shitshow"),
         }
     }
 
@@ -253,13 +245,13 @@ impl Swapchain {
 
         match unsafe {
             self.loader
-                .queue_present(self.device.queue.raw, &present_info)
+                .queue_present(self.device.graphics_queue.raw, &present_info)
         } {
             Ok(_) => (),
             Err(err)
                 if err == vk::Result::ERROR_OUT_OF_DATE_KHR
                     || err == vk::Result::SUBOPTIMAL_KHR => {}
-            err => panic!("Fuckshit!"),
+            _err => panic!("Fuckshit!"),
         }
     }
 }
@@ -274,12 +266,7 @@ impl Drop for Swapchain {
             unsafe { self.device.raw.destroy_semaphore(*semaphore, None) };
         }
         for image in self.images.iter() {
-            image
-                .views
-                .lock()
-                .unwrap()
-                .iter()
-                .for_each(|(_, view)| unsafe { self.device.raw.destroy_image_view(*view, None) });
+            image.destroy_all_views(&self.device.raw);
         }
     }
 }

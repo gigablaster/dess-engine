@@ -13,23 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod command_buffer;
-mod device;
-mod frame_context;
-mod image;
-mod instance;
-mod physical_device;
-mod render_pass;
-mod surface;
-mod swapchain;
+use gpu_allocator::vulkan::Allocator;
 
-pub use command_buffer::*;
-pub use device::*;
-pub use frame_context::*;
-
-pub use image::*;
-pub use instance::*;
-pub use physical_device::*;
-pub use render_pass::*;
-pub use surface::*;
-pub use swapchain::*;
+pub trait GpuResource {
+    fn free(&mut self, device: &ash::Device, allocator: &mut Allocator);
+}
