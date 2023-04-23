@@ -484,6 +484,7 @@ dependencies = [
  "byteorder",
  "crc",
  "four-cc",
+ "lazy_static",
  "log",
  "lz4_flex",
  "memmap2",

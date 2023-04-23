@@ -1,17 +1,14 @@
-use std::{fs::File, io, path::Path};
+use std::{
+    fs::File,
+    io::{self},
+    path::Path,
+};
 
 use memmap2::{Mmap, MmapOptions};
 
 #[derive(Debug)]
 pub struct MappedFile {
-    file: File,
     mmap: Mmap,
-}
-
-impl AsRef<[u8]> for MappedFile {
-    fn as_ref(&self) -> &[u8] {
-        self.mmap.as_ref()
-    }
 }
 
 impl MappedFile {
@@ -19,6 +16,14 @@ impl MappedFile {
         let file = File::open(path)?;
         let mmap = unsafe { MmapOptions::new().map(&file)? };
 
-        Ok(Self { file, mmap })
+        Ok(Self { mmap })
+    }
+
+    pub fn part(&self, from: usize, to: usize) -> &[u8] {
+        &self.mmap.as_ref()[from..to]
+    }
+
+    pub fn data(&self) -> &[u8] {
+        &self.mmap.as_ref()
     }
 }

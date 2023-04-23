@@ -5,15 +5,25 @@ mod traits;
 mod vfs;
 
 pub use error::*;
+use lazy_static::lazy_static;
 pub use traits::*;
-pub use vfs::*;
 
-use std::io::{self, Read, Write};
+use std::{
+    io::{self, Read, Write},
+    path::Path,
+    sync::Mutex,
+};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use crc::{Crc, CRC_32_CKSUM};
 
+use crate::vfs::Vfs;
+
 const CHECKER: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
+
+lazy_static! {
+    static ref VFS: Mutex<Vfs> = Mutex::new(Vfs::default());
+}
 
 impl VfsRead for String {
     fn read(r: &mut impl Read) -> io::Result<Self> {
@@ -40,4 +50,14 @@ impl VfsWrite for String {
 
         Ok(())
     }
+}
+
+pub fn scan(root: &Path) -> Result<(), VfsError> {
+    let mut vfs = VFS.lock().unwrap();
+    vfs.scan(root)
+}
+
+pub fn get_asset(path: &Path) -> Result<Box<dyn Read>, VfsError> {
+    let vfs = VFS.lock().unwrap();
+    vfs.get_asset(path)
 }

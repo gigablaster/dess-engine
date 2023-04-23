@@ -1,12 +1,14 @@
 use std::{
+    cmp::min,
     collections::HashMap,
-    fs,
-    io::Cursor,
+    fs::{self, File},
+    io::{self, Cursor, Read},
     path::{Path, PathBuf},
     sync::Arc,
 };
 
 use log::{error, info};
+use lz4_flex::frame::FrameDecoder;
 
 use crate::{
     directory::{read_archive_directory, FileHeader},
@@ -40,6 +42,44 @@ pub struct Vfs {
     catalog: HashMap<PathBuf, FileReference>,
 }
 
+struct MappedFileSlice {
+    file: Arc<MappedFile>,
+    from: usize,
+    to: usize,
+    cursor: usize,
+}
+
+impl MappedFileSlice {
+    pub fn new(file: &Arc<MappedFile>, from: usize, size: usize) -> Self {
+        Self {
+            file: file.clone(),
+            from,
+            to: from + size,
+            cursor: 0,
+        }
+    }
+}
+
+impl Read for MappedFileSlice {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let from = self.from + self.cursor;
+        let to = self.to;
+        if from >= to {
+            Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Out of allowed mapped area",
+            ))
+        } else {
+            let to_copy = min(to - from, buf.len());
+            let data = self.file.part(from, from + to_copy);
+            buf.copy_from_slice(data);
+            self.cursor += to_copy;
+
+            Ok(to_copy)
+        }
+    }
+}
+
 impl Vfs {
     pub fn scan(&mut self, root: &Path) -> Result<(), VfsError> {
         let paths = fs::read_dir(root)?;
@@ -62,9 +102,26 @@ impl Vfs {
         Ok(())
     }
 
+    pub fn get_asset(&self, path: &Path) -> Result<Box<dyn Read>, VfsError> {
+        if let Some(data) = self.catalog.get(path) {
+            match data {
+                FileReference::File(path) => Ok(Box::new(File::open(path)?)),
+                FileReference::Archive(archive) => {
+                    Ok(Box::new(FrameDecoder::new(MappedFileSlice::new(
+                        &archive.file,
+                        archive.location.offset as _,
+                        archive.location.packed as _,
+                    ))))
+                }
+            }
+        } else {
+            Err(VfsError::NotFound(path.into()))
+        }
+    }
+
     fn add_archive(&mut self, path: &Path) -> Result<(), VfsError> {
         let mapped_file = Arc::new(MappedFile::open(path)?);
-        let directory = read_archive_directory(&mut Cursor::new(mapped_file.as_ref()))?;
+        let directory = read_archive_directory(&mut Cursor::new(mapped_file.data()))?;
         directory.into_iter().for_each(|(name, header)| {
             self.catalog.insert(
                 name.into(),
