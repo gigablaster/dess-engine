@@ -21,7 +21,6 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 
-
 use crate::BackendResult;
 
 use super::{Device, ImageDesc};
