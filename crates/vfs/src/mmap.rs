@@ -1,8 +1,4 @@
-use std::{
-    fs::File,
-    io::{self},
-    path::Path,
-};
+use std::{fs::File, io, path::Path};
 
 use memmap2::{Mmap, MmapOptions};
 
@@ -22,8 +18,10 @@ impl MappedFile {
     pub fn part(&self, from: usize, to: usize) -> &[u8] {
         &self.mmap.as_ref()[from..to]
     }
+}
 
-    pub fn data(&self) -> &[u8] {
-        &self.mmap.as_ref()
+impl AsRef<[u8]> for MappedFile {
+    fn as_ref(&self) -> &[u8] {
+        self.mmap.as_ref()
     }
 }

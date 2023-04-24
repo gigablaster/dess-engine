@@ -1,65 +1,90 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{self, Read, Seek, Write},
     mem::size_of,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use common::traits::{BinaryDeserialization, BinarySerialization};
 use four_cc::FourCC;
+use lz4_flex::compress;
+use uuid::Uuid;
 
 use crate::VfsError;
 
-use super::{VfsRead, VfsWrite};
-
 const MAGICK: FourCC = FourCC(*b"dess");
 const VERSION: u32 = 1;
+const FILE_ALIGN: u64 = 4096;
 
-#[derive(Debug, Clone, Copy)]
-pub struct FileHeader {
-    pub offset: u64,
-    pub size: u64,
-    pub packed: u64,
+#[derive(Debug, Copy, Clone)]
+pub enum Compression {
+    None(usize),
+    LZ4(usize, usize),
 }
 
-impl VfsRead for FileHeader {
-    fn read(r: &mut impl Read) -> io::Result<Self> {
-        Ok(Self {
-            offset: r.read_u64::<LittleEndian>()?,
-            size: r.read_u64::<LittleEndian>()?,
-            packed: r.read_u64::<LittleEndian>()?,
-        })
-    }
-}
-
-impl VfsWrite for FileHeader {
-    fn write(&self, w: &mut impl Write) -> io::Result<()> {
-        w.write_u64::<LittleEndian>(self.offset)?;
-        w.write_u64::<LittleEndian>(self.size)?;
-        w.write_u64::<LittleEndian>(self.packed)?;
+impl BinarySerialization for Compression {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        match self {
+            Compression::None(size) => {
+                w.write_u8(0)?;
+                w.write_u32::<LittleEndian>(*size as u32)?
+            }
+            Compression::LZ4(uncompressed, compressed) => {
+                w.write_u8(1)?;
+                w.write_u32::<LittleEndian>(*uncompressed as u32)?;
+                w.write_u32::<LittleEndian>(*compressed as u32)?;
+            }
+        };
 
         Ok(())
     }
 }
 
-#[derive(Debug)]
-struct DirectoryHeader {
-    pub count: u32,
-    pub offset: u64,
+impl BinaryDeserialization for Compression {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let byte = r.read_u8()?;
+        let result = match byte {
+            0 => Compression::None(r.read_u32::<LittleEndian>()? as usize),
+            1 => {
+                let uncompressed = r.read_u32::<LittleEndian>()? as usize;
+                let compressed = r.read_u32::<LittleEndian>()? as usize;
+
+                Compression::LZ4(uncompressed, compressed)
+            }
+            _ => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "Compression format isn't supported",
+                ))
+            }
+        };
+
+        Ok(result)
+    }
 }
 
-impl VfsRead for DirectoryHeader {
-    fn read(r: &mut impl Read) -> io::Result<Self> {
+#[derive(Debug, Clone)]
+pub struct FileHeader {
+    pub type_id: FourCC,
+    pub offset: u64,
+    pub compression: Compression,
+}
+
+impl BinaryDeserialization for FileHeader {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         Ok(Self {
-            count: r.read_u32::<LittleEndian>()?,
+            type_id: FourCC::deserialize(r)?,
             offset: r.read_u64::<LittleEndian>()?,
+            compression: Compression::deserialize(r)?,
         })
     }
 }
 
-impl VfsWrite for DirectoryHeader {
-    fn write(&self, w: &mut impl Write) -> io::Result<()> {
-        w.write_u32::<LittleEndian>(self.count)?;
+impl BinarySerialization for FileHeader {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        self.type_id.serialize(w)?;
         w.write_u64::<LittleEndian>(self.offset)?;
+        self.compression.serialize(w)?;
 
         Ok(())
     }
@@ -71,33 +96,18 @@ struct RootHeader {
     version: u32,
 }
 
-impl VfsRead for FourCC {
-    fn read(r: &mut impl Read) -> io::Result<Self> {
-        let mut magic = [0u8; 4];
-        r.read_exact(&mut magic)?;
-
-        Ok(FourCC(magic))
-    }
-}
-
-impl VfsWrite for FourCC {
-    fn write(&self, w: &mut impl Write) -> io::Result<()> {
-        w.write_all(&self.0)
-    }
-}
-
-impl VfsRead for RootHeader {
-    fn read(r: &mut impl Read) -> io::Result<Self> {
+impl BinaryDeserialization for RootHeader {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         Ok(Self {
-            magick: FourCC::read(r)?,
+            magick: FourCC::deserialize(r)?,
             version: r.read_u32::<LittleEndian>()?,
         })
     }
 }
 
-impl VfsWrite for RootHeader {
-    fn write(&self, w: &mut impl Write) -> io::Result<()> {
-        self.magick.write(w)?;
+impl BinarySerialization for RootHeader {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        self.magick.serialize(w)?;
         w.write_u32::<LittleEndian>(self.version)?;
 
         Ok(())
@@ -113,108 +123,142 @@ impl Default for RootHeader {
     }
 }
 
-impl RootHeader {
-    pub fn file_offset() -> usize {
-        size_of::<u64>() + size_of::<u32>()
+#[derive(Debug)]
+pub struct Directory {
+    files: HashMap<Uuid, FileHeader>,
+    names: HashMap<String, Uuid>,
+    tags: HashMap<String, HashSet<Uuid>>,
+}
+
+impl Directory {
+    pub fn load<R: Read + Seek>(r: &mut R) -> Result<Self, VfsError> {
+        let root_header = RootHeader::deserialize(r)?;
+        if root_header.magick != MAGICK {
+            return Err(VfsError::InvalidFormat);
+        }
+        if root_header.version > VERSION {
+            return Err(VfsError::InvalidVersiom);
+        }
+        r.seek(io::SeekFrom::End(-(size_of::<u64>() as i64)))?;
+        let offset = r.read_u64::<LittleEndian>()?;
+        r.seek(io::SeekFrom::Start(offset as _))?;
+
+        let names = HashMap::<String, Uuid>::deserialize(r)?;
+        let files = HashMap::<Uuid, FileHeader>::deserialize(r)?;
+        let tags = HashMap::<String, HashSet<Uuid>>::deserialize(r)?;
+
+        Ok(Self { names, files, tags })
+    }
+
+    pub fn by_uuid(&self, uuid: Uuid) -> Option<&FileHeader> {
+        self.files.get(&uuid)
+    }
+
+    pub fn by_name(&self, name: &str) -> Option<&Uuid> {
+        self.names.get(name)
+    }
+
+    pub fn by_tag(&self, tag: &str) -> Option<&HashSet<Uuid>> {
+        if let Some(tagged) = self.tags.get(tag) {
+            Some(tagged)
+        } else {
+            None
+        }
     }
 }
 
-pub fn read_archive_directory<T: Read + Seek>(
-    file: &mut T,
-) -> Result<HashMap<String, FileHeader>, VfsError> {
-    let root_header = RootHeader::read(file)?;
-    if root_header.magick != MAGICK {
-        return Err(VfsError::InvalidFormat);
-    }
-    if root_header.version > VERSION {
-        return Err(VfsError::InvalidVersiom);
-    }
-    file.seek(io::SeekFrom::End(-(RootHeader::file_offset() as i64)))?;
-    let directory_header = DirectoryHeader::read(file)?;
-    file.seek(io::SeekFrom::Start(directory_header.offset as _))?;
-    let mut result = HashMap::new();
-    for _ in 0..directory_header.count {
-        let name = String::read(file)?;
-        let header = FileHeader::read(file)?;
-
-        result.insert(name, header);
-    }
-
-    Ok(result)
+pub struct DirectoryBaker<W: Write + Seek> {
+    w: W,
+    files: HashMap<Uuid, FileHeader>,
+    names: HashMap<String, Uuid>,
+    tags: HashMap<String, HashSet<Uuid>>,
 }
 
-pub fn prepare_archive<T: Write>(file: &mut T) -> Result<(), VfsError> {
-    Ok(RootHeader::default().write(file)?)
-}
-
-pub fn write_archive_directory<T: Write + Seek>(
-    file: &mut T,
-    directory: &HashMap<String, FileHeader>,
-) -> Result<(), VfsError> {
-    let start_offset = file.stream_position()?;
-    for (name, header) in directory {
-        name.write(file)?;
-        header.write(file)?;
+impl<W: Write + Seek> DirectoryBaker<W> {
+    pub fn new(w: W) -> Result<Self, VfsError> {
+        let mut w = w;
+        RootHeader::default().serialize(&mut w)?;
+        Ok(Self {
+            w,
+            files: HashMap::new(),
+            names: HashMap::new(),
+            tags: HashMap::new(),
+        })
     }
-    let directory_header = DirectoryHeader {
-        offset: start_offset,
-        count: directory.len() as _,
-    };
-    directory_header.write(file)?;
 
-    Ok(())
-}
+    pub fn write(
+        &mut self,
+        type_id: FourCC,
+        data: &[u8],
+        uuid: Uuid,
+        packed: bool,
+    ) -> Result<(), VfsError> {
+        let offset = self.try_align()?;
+        let compression = if packed {
+            let compressed = compress(data);
+            self.w.write_all(&compressed)?;
 
-#[cfg(test)]
-mod test {
-    use std::{collections::HashMap, io::Cursor};
+            Compression::LZ4(data.len(), compressed.len())
+        } else {
+            self.w.write_all(data)?;
 
-    use super::{prepare_archive, read_archive_directory, write_archive_directory, FileHeader};
+            Compression::None(data.len())
+        };
 
-    fn prepare() -> Vec<u8> {
-        let mut data = Vec::new();
-        let mut file = Cursor::new(&mut data);
-        prepare_archive(&mut file).unwrap();
-        let mut directory = HashMap::new();
-        directory.insert(
-            "file1".into(),
+        self.files.insert(
+            uuid,
             FileHeader {
-                offset: 0,
-                size: 1,
-                packed: 2,
+                type_id,
+                offset,
+                compression,
             },
         );
-        directory.insert(
-            "file2".into(),
-            FileHeader {
-                offset: 11,
-                size: 12,
-                packed: 13,
-            },
-        );
-        write_archive_directory(&mut file, &directory).unwrap();
 
-        data
+        Ok(())
     }
 
-    #[test]
-    fn write_directory() {
-        let data = prepare();
-        assert!(!data.is_empty());
+    fn try_align(&mut self) -> io::Result<u64> {
+        let offset = self.w.stream_position()?;
+        let offset_align = (offset & !(FILE_ALIGN - 1)) + FILE_ALIGN;
+
+        // Align if possible, current position if not.
+        Ok(self
+            .w
+            .seek(io::SeekFrom::Start(offset_align))
+            .unwrap_or(self.w.stream_position()?))
     }
 
-    #[test]
-    fn read_directory() {
-        let data = prepare();
-        let mut file = Cursor::new(&data);
-        let directory = read_archive_directory(&mut file).unwrap();
-        let file1 = directory.get("file1").unwrap();
-        let file2 = directory.get("file2").unwrap();
-        assert_eq!(file1.offset, 0);
-        assert_eq!(file1.size, 1);
-        assert_eq!(file1.packed, 2);
-        assert_eq!(file2.offset, 11);
-        assert_eq!(file2.size, 12);
-        assert_eq!(file2.packed, 13);
+    pub fn name(&mut self, uuid: Uuid, name: &str) -> Result<(), VfsError> {
+        if self.files.contains_key(&uuid) {
+            self.names.insert(name.into(), uuid);
+
+            Ok(())
+        } else {
+            Err(VfsError::AssetNotFound(uuid))
+        }
+    }
+
+    pub fn tag(&mut self, uuid: Uuid, tag: &str) -> Result<(), VfsError> {
+        if !self.files.contains_key(&uuid) {
+            return Err(VfsError::AssetNotFound(uuid));
+        }
+        if !self.tags.contains_key(tag) {
+            self.tags.insert(tag.into(), HashSet::new());
+        }
+        self.tags.get_mut(tag).unwrap().insert(uuid);
+
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> io::Result<()> {
+        let offset = self.try_align()?;
+
+        self.names.serialize(&mut self.w)?;
+        self.files.serialize(&mut self.w)?;
+        self.tags.serialize(&mut self.w)?;
+
+        self.w.write_u64::<LittleEndian>(offset)?;
+
+        Ok(())
     }
 }

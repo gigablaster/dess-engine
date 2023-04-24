@@ -14,7 +14,11 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod client;
+mod serialization;
 mod time;
 
+pub mod traits;
+
 pub use client::*;
+pub use serialization::*;
 pub use time::*;
