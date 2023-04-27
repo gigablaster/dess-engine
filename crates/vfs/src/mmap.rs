@@ -15,13 +15,7 @@ impl MappedFile {
         Ok(Self { mmap })
     }
 
-    pub fn part(&self, from: usize, to: usize) -> &[u8] {
-        &self.mmap.as_ref()[from..to]
-    }
-}
-
-impl AsRef<[u8]> for MappedFile {
-    fn as_ref(&self) -> &[u8] {
+    pub fn data(&self) -> &[u8] {
         self.mmap.as_ref()
     }
 }
