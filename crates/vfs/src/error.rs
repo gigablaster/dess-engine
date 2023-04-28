@@ -1,6 +1,8 @@
 use std::io;
 
-use lz4_flex::block::{CompressError, DecompressError};
+use lz4_flex::{
+    frame,
+};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -10,8 +12,7 @@ pub enum VfsError {
     InvalidFormat,
     AssetNotFound(Uuid),
     NameNotFound(String),
-    Compression(CompressError),
-    Decompression(DecompressError),
+    Compression(frame::Error),
 }
 
 impl From<io::Error> for VfsError {
@@ -20,14 +21,8 @@ impl From<io::Error> for VfsError {
     }
 }
 
-impl From<CompressError> for VfsError {
-    fn from(value: CompressError) -> Self {
+impl From<frame::Error> for VfsError {
+    fn from(value: frame::Error) -> Self {
         VfsError::Compression(value)
-    }
-}
-
-impl From<DecompressError> for VfsError {
-    fn from(value: DecompressError) -> Self {
-        VfsError::Decompression(value)
     }
 }

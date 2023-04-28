@@ -7,10 +7,7 @@ use log::{error, info};
 
 use uuid::Uuid;
 
-use crate::{
-    archive::{Archive, LoadedData, PackedArchive},
-    VfsError,
-};
+use crate::{packed::PackedArchive, Archive, DataReader, VfsError};
 
 #[derive(Debug, Default)]
 pub struct Vfs {
@@ -33,7 +30,7 @@ impl Vfs {
         Ok(())
     }
 
-    pub fn named(&self, name: &str) -> Result<Box<dyn LoadedData>, VfsError> {
+    pub fn named(&self, name: &str) -> Result<Box<dyn DataReader>, VfsError> {
         for archive in &self.archives {
             if let Some(uuid) = archive.named(name) {
                 return archive.load(uuid);
@@ -43,7 +40,7 @@ impl Vfs {
         Err(VfsError::NameNotFound(name.into()))
     }
 
-    pub fn get(&self, uuid: Uuid) -> Result<Box<dyn LoadedData>, VfsError> {
+    pub fn get(&self, uuid: Uuid) -> Result<Box<dyn DataReader>, VfsError> {
         for archive in &self.archives {
             let res = archive.load(uuid);
             match res {

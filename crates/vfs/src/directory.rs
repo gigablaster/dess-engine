@@ -7,7 +7,7 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use common::traits::{BinaryDeserialization, BinarySerialization};
 use four_cc::FourCC;
-use lz4_flex::compress;
+use lz4_flex::frame::FrameEncoder;
 use uuid::Uuid;
 
 use crate::VfsError;
@@ -18,8 +18,8 @@ const FILE_ALIGN: u64 = 4096;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Compression {
-    None(usize),
-    LZ4(usize, usize),
+    None(u32),
+    LZ4(u32, u32),
 }
 
 impl BinarySerialization for Compression {
@@ -44,10 +44,10 @@ impl BinaryDeserialization for Compression {
     fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         let byte = r.read_u8()?;
         let result = match byte {
-            0 => Compression::None(r.read_u32::<LittleEndian>()? as usize),
+            0 => Compression::None(r.read_u32::<LittleEndian>()?),
             1 => {
-                let uncompressed = r.read_u32::<LittleEndian>()? as usize;
-                let compressed = r.read_u32::<LittleEndian>()? as usize;
+                let uncompressed = r.read_u32::<LittleEndian>()?;
+                let compressed = r.read_u32::<LittleEndian>()?;
 
                 Compression::LZ4(uncompressed, compressed)
             }
@@ -195,14 +195,15 @@ impl<W: Write + Seek> DirectoryBaker<W> {
     ) -> Result<(), VfsError> {
         let offset = self.try_align()?;
         let compression = if packed {
-            let compressed = compress(data);
-            self.w.write_all(&compressed)?;
+            let mut compressor = FrameEncoder::new(&mut self.w);
+            compressor.write_all(data)?;
+            compressor.finish()?;
 
-            Compression::LZ4(data.len(), compressed.len())
+            Compression::LZ4(data.len() as _, (self.w.stream_position()? - offset) as _)
         } else {
             self.w.write_all(data)?;
 
-            Compression::None(data.len())
+            Compression::None(data.len() as _)
         };
 
         self.files.insert(

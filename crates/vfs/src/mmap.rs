@@ -1,9 +1,12 @@
-use std::{fs::File, io, path::Path};
+use std::{cmp::min, fs::File, io, path::Path, sync::Arc};
 
+use four_cc::FourCC;
 use memmap2::{Mmap, MmapOptions};
 
+use crate::{DataReader, DataTypeId};
+
 #[derive(Debug)]
-pub struct MappedFile {
+pub(crate) struct MappedFile {
     mmap: Mmap,
 }
 
@@ -19,3 +22,65 @@ impl MappedFile {
         self.mmap.as_ref()
     }
 }
+
+#[derive(Debug)]
+pub(crate) struct MappedFileSlice {
+    file: Arc<MappedFile>,
+    from: usize,
+    to: usize,
+    cursor: usize,
+}
+
+impl MappedFileSlice {
+    pub fn new(file: &Arc<MappedFile>, from: usize, size: usize) -> Self {
+        Self {
+            file: file.clone(),
+            from,
+            to: from + size,
+            cursor: 0,
+        }
+    }
+}
+
+impl io::Read for MappedFileSlice {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let from = self.from + self.cursor;
+        let to = min(from + buf.len(), self.to);
+        if from >= to {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "Can't read outside of mapped area",
+            ));
+        }
+        let size = to - from;
+        buf.copy_from_slice(&self.file.data()[from..to]);
+        self.cursor += size;
+
+        Ok(size)
+    }
+}
+
+pub(crate) struct MappedFileSliceReader {
+    type_id: FourCC,
+    file: MappedFileSlice,
+}
+
+impl DataTypeId for MappedFileSliceReader {
+    fn type_id(&self) -> FourCC {
+        self.type_id
+    }
+}
+
+impl io::Read for MappedFileSliceReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.file.read(buf)
+    }
+}
+
+impl MappedFileSliceReader {
+    pub fn new(file: MappedFileSlice, type_id: FourCC) -> Self {
+        Self { type_id, file }
+    }
+}
+
+impl DataReader for MappedFileSliceReader {}
