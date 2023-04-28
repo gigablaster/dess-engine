@@ -5,23 +5,16 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use crc::{Crc, CRC_32_CKSUM};
 use four_cc::FourCC;
 use uuid::Uuid;
 
 use crate::traits::{BinaryDeserialization, BinarySerialization};
-
-const CHECKER: Crc<u32> = Crc::<u32>::new(&CRC_32_CKSUM);
 
 impl BinaryDeserialization for String {
     fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         let count = r.read_u16::<LittleEndian>()?;
         let mut buffer = vec![0; count as _];
         r.read_exact(&mut buffer)?;
-        let crc = r.read_u32::<LittleEndian>()?;
-        if crc != CHECKER.checksum(&buffer) {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Bad CRC"));
-        }
 
         String::from_utf8(buffer)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "UTF8 coversion failed"))
@@ -33,8 +26,6 @@ impl BinarySerialization for String {
         let bytes = self.as_bytes();
         w.write_u16::<LittleEndian>(bytes.len() as _)?;
         w.write_all(bytes)?;
-        let crc = CHECKER.checksum(bytes);
-        w.write_u32::<LittleEndian>(crc)?;
 
         Ok(())
     }
@@ -161,5 +152,24 @@ where
         }
 
         Ok(set)
+    }
+}
+
+impl BinarySerialization for Vec<u8> {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        w.write_u32::<LittleEndian>(self.len() as _)?;
+        w.write_all(self)?;
+
+        Ok(())
+    }
+}
+
+impl BinaryDeserialization for Vec<u8> {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let len = r.read_u32::<LittleEndian>()? as _;
+        let mut result = vec![0u8; len];
+        r.read_exact(&mut result)?;
+
+        Ok(result)
     }
 }

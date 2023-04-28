@@ -1,8 +1,6 @@
 use std::io;
 
-use lz4_flex::{
-    frame,
-};
+use lz4_flex::frame;
 use uuid::Uuid;
 
 #[derive(Debug)]
