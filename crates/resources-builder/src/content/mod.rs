@@ -6,6 +6,7 @@ pub use texture::*;
 
 use crate::ImportError;
 
+#[derive(Debug, Clone)]
 pub enum Content {
     ColorTexture(Texture),
     NormalTexture(Texture),

@@ -4,12 +4,14 @@ use crate::ImportError;
 
 use super::{Content, ContentImporter};
 
+#[derive(Debug, Clone)]
 pub enum TextureData {
     Rgb(RgbImage),
     Rgba(RgbaImage),
     Gray(GrayImage),
 }
 
+#[derive(Debug, Clone)]
 pub struct Texture {
     pub width: u16,
     pub height: u16,
