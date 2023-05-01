@@ -2,6 +2,7 @@ use crate::ImportError;
 
 use super::{Content, ContentImporter, LoadedContent};
 
+#[derive(Debug)]
 pub struct ImageImporter {}
 
 impl ContentImporter for ImageImporter {

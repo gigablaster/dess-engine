@@ -6,6 +6,7 @@ use uuid::Uuid;
 mod builder;
 mod content;
 
+#[derive(Debug)]
 pub enum ImportError {
     IO(io::Error),
     Unsupported,

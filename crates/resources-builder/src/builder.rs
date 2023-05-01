@@ -1,18 +1,22 @@
 use std::{
     collections::{HashMap, HashSet},
+    fmt::Debug,
     fs::File,
-    io::{self, Write},
+    io,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
 
 use chrono::{DateTime, Local};
 
-use log::info;
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{content::LoadedContent, BuildError};
+use crate::{
+    content::{ContentImporterFactory, LoadedContent},
+    BuildError,
+};
 
 pub trait Context {
     fn uuid(&self, path: &Path) -> Uuid;
@@ -28,13 +32,23 @@ pub trait Context {
         content: LoadedContent,
         builder: &dyn ContentBuilder,
     ) -> Result<(), BuildError>;
+    fn import(&self, path: &Path) -> Option<LoadedContent>;
+    fn builder(
+        &self,
+        content: &LoadedContent,
+        prefered: Option<&str>,
+    ) -> Option<Box<dyn ContentBuilder>>;
 }
 
 pub trait ProcessedResource {
     fn write(&self, file: File) -> io::Result<()>;
 }
 
-pub trait ContentBuilder {
+pub trait ContentBuilderFactory: Debug {
+    fn builder(&self, content: &LoadedContent) -> Option<Box<dyn ContentBuilder>>;
+}
+
+pub trait ContentBuilder: Debug {
     fn build(
         &self,
         content: LoadedContent,
@@ -79,7 +93,7 @@ impl BuildCache {
             if asset.main != entry.main {
                 return Ok(true);
             }
-            // Main must not be never
+            // Main must not be newer
             let modified = DateTime::<Local>::from(asset.main.metadata()?.modified()?);
             if modified > entry.timestamp {
                 return Ok(true);
@@ -174,6 +188,8 @@ pub struct BuildContext {
     cache: BuildCache,
     root_assets: HashMap<String, Uuid>,
     assets: HashMap<Uuid, AssetInfo>,
+    importers: Vec<Box<dyn ContentImporterFactory>>,
+    builders: HashMap<String, Box<dyn ContentBuilderFactory>>,
 }
 
 impl BuildContext {
@@ -190,6 +206,8 @@ impl BuildContext {
             cache,
             root_assets: HashMap::new(),
             assets: HashMap::new(),
+            importers: Vec::new(),
+            builders: HashMap::new(),
         })))
     }
 
@@ -252,5 +270,47 @@ impl Context for Arc<Mutex<BuildContext>> {
         builder.build(content, self)?;
 
         Ok(())
+    }
+
+    fn import(&self, path: &Path) -> Option<LoadedContent> {
+        let importer = {
+            let builder = self.lock().unwrap();
+            builder
+                .importers
+                .iter()
+                .find_map(|factory| factory.importer(path))
+        };
+        if let Some(importer) = importer {
+            match importer.import(path) {
+                Ok(content) => Some(content),
+                Err(err) => {
+                    error!("Failed to import {:?} - {:?}", path, err);
+                    None
+                }
+            }
+        } else {
+            error!("No importer for {:?}", path);
+            None
+        }
+    }
+
+    fn builder(
+        &self,
+        content: &LoadedContent,
+        prefered: Option<&str>,
+    ) -> Option<Box<dyn ContentBuilder>> {
+        let builder = self.lock().unwrap();
+        if let Some(prefered) = prefered {
+            if let Some(factory) = builder.builders.get(prefered) {
+                factory.builder(content)
+            } else {
+                None
+            }
+        } else {
+            builder
+                .builders
+                .iter()
+                .find_map(|(_, builder)| builder.builder(content))
+        }
     }
 }

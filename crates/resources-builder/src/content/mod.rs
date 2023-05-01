@@ -1,6 +1,9 @@
 mod texture;
 
-use std::path::{Path, PathBuf};
+use std::{
+    fmt::Debug,
+    path::{Path, PathBuf},
+};
 
 pub use texture::*;
 
@@ -16,6 +19,10 @@ pub struct LoadedContent {
     pub content: Content,
 }
 
-pub trait ContentImporter {
+pub trait ContentImporter: Debug {
     fn import(&self, path: &Path) -> Result<LoadedContent, ImportError>;
+}
+
+pub trait ContentImporterFactory: Debug {
+    fn importer(&self, path: &Path) -> Option<Box<dyn ContentImporter>>;
 }
