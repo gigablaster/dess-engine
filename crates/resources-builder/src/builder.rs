@@ -211,12 +211,20 @@ impl BuildContext {
         })))
     }
 
-    fn flush(&mut self) -> Result<(), BuildError> {
+    pub fn flush(&mut self) -> Result<(), BuildError> {
         self.cache.set_named(&self.root_assets);
         let mut cache_file = File::create(self.cache_dir.join("cache.json"))?;
         serde_json::to_writer(&mut cache_file, &self.cache)?;
 
         Ok(())
+    }
+
+    pub fn add_importer(&mut self, importer: Box<dyn ContentImporterFactory>) {
+        self.importers.push(importer);
+    }
+
+    pub fn add_processor(&mut self, name: &str, processor: Box<dyn ContentBuilderFactory>) {
+        self.builders.insert(name.into(), processor);
     }
 }
 
