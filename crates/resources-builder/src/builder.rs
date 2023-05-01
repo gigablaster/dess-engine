@@ -1,19 +1,45 @@
 use std::{
     collections::{HashMap, HashSet},
     fs::File,
+    io::{self, Write},
     path::{Path, PathBuf},
+    sync::{Arc, Mutex},
 };
 
 use chrono::{DateTime, Local};
-use common::traits::BinarySerialization;
+
 use log::info;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{content::Content, BuildError};
+use crate::{content::LoadedContent, BuildError};
 
-pub trait ContentBuilder<T: BinarySerialization> {
-    fn build(content: Content, context: &mut BuildContext) -> Result<T, BuildError>;
+pub trait Context {
+    fn uuid(&self, path: &Path) -> Uuid;
+    fn name(&self, uuid: Uuid, name: &str) -> Result<(), BuildError>;
+    fn build<T: ProcessedResource, F: FnOnce() -> Result<T, BuildError>>(
+        &self,
+        uuid: Uuid,
+        asset: AssetInfo,
+        cb: F,
+    ) -> Result<(), BuildError>;
+    fn process(
+        &self,
+        content: LoadedContent,
+        builder: &dyn ContentBuilder,
+    ) -> Result<(), BuildError>;
+}
+
+pub trait ProcessedResource {
+    fn write(&self, file: File) -> io::Result<()>;
+}
+
+pub trait ContentBuilder {
+    fn build(
+        &self,
+        content: LoadedContent,
+        context: &Arc<Mutex<BuildContext>>,
+    ) -> Result<Box<dyn ProcessedResource>, BuildError>;
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -117,9 +143,9 @@ impl BuildCache {
 
 #[derive(Debug, Clone)]
 pub struct AssetInfo {
-    main: PathBuf,
-    sources: HashSet<PathBuf>,
-    dependencies: HashSet<Uuid>,
+    pub main: PathBuf,
+    pub sources: HashSet<PathBuf>,
+    pub dependencies: HashSet<Uuid>,
 }
 
 impl AssetInfo {
@@ -151,7 +177,7 @@ pub struct BuildContext {
 }
 
 impl BuildContext {
-    pub fn new(cache: &Path) -> Result<Self, BuildError> {
+    pub fn new(cache: &Path) -> Result<Arc<Mutex<Self>>, BuildError> {
         let cache_dir = PathBuf::from(cache);
         if !cache_dir.is_dir() {
             return Err(BuildError::WrongCache);
@@ -159,58 +185,71 @@ impl BuildContext {
         let cache_file = File::open(cache.join("cache.json"))?;
         let cache = serde_json::from_reader(cache_file)?;
 
-        Ok(Self {
+        Ok(Arc::new(Mutex::new(Self {
             cache_dir,
             cache,
             root_assets: HashMap::new(),
             assets: HashMap::new(),
-        })
+        })))
     }
 
-    pub fn flush(&mut self) -> Result<(), BuildError> {
+    fn flush(&mut self) -> Result<(), BuildError> {
         self.cache.set_named(&self.root_assets);
         let mut cache_file = File::create(self.cache_dir.join("cache.json"))?;
         serde_json::to_writer(&mut cache_file, &self.cache)?;
 
         Ok(())
     }
+}
 
-    pub fn uuid(&mut self, path: &Path) -> Uuid {
-        self.cache.get_or_create_uuid(path)
+impl Context for Arc<Mutex<BuildContext>> {
+    fn uuid(&self, path: &Path) -> Uuid {
+        let mut builder = self.lock().unwrap();
+        builder.cache.get_or_create_uuid(path)
     }
 
-    pub fn name(&mut self, uuid: Uuid, name: &str) -> Result<(), BuildError> {
-        if self.root_assets.contains_key(name) {
+    fn name(&self, uuid: Uuid, name: &str) -> Result<(), BuildError> {
+        let mut builder = self.lock().unwrap();
+        if builder.root_assets.contains_key(name) {
             Err(BuildError::NameIsUsed(name.into()))
         } else {
-            self.root_assets.insert(name.into(), uuid);
+            builder.root_assets.insert(name.into(), uuid);
             Ok(())
         }
     }
 
-    pub fn build<T: BinarySerialization, F: FnOnce() -> Result<T, BuildError>>(
-        &mut self,
+    fn build<T: ProcessedResource, F: FnOnce() -> Result<T, BuildError>>(
+        &self,
         uuid: Uuid,
         asset: AssetInfo,
         cb: F,
     ) -> Result<(), BuildError> {
-        if self.cache.must_rebuild(uuid, &asset)? {
+        let must_rebuild = {
+            let builder = self.lock().unwrap();
+            builder.cache.must_rebuild(uuid, &asset)?
+        };
+        if must_rebuild {
             info!("Build asset {:?} -> {}", asset.main, uuid);
             let data = cb()?;
-            let file = self.cache_dir.join(uuid.as_braced().to_string());
-            let mut file = File::create(file)?;
-            data.serialize(&mut file)?;
-            self.cache.resource_built(uuid, asset)?;
+            let file = {
+                let builder = self.lock().unwrap();
+                builder.cache_dir.join(uuid.as_braced().to_string())
+            };
+            let file = File::create(file)?;
+            data.write(file)?;
+            let mut builder = self.lock().unwrap();
+            builder.cache.resource_built(uuid, asset)?;
         }
 
         Ok(())
     }
 
-    pub fn process<T: BinarySerialization, B: ContentBuilder<T>>(
-        &mut self,
-        content: Content,
+    fn process(
+        &self,
+        content: LoadedContent,
+        builder: &dyn ContentBuilder,
     ) -> Result<(), BuildError> {
-        B::build(content, self)?;
+        builder.build(content, self)?;
 
         Ok(())
     }
