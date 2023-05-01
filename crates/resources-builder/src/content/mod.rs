@@ -1,3 +1,4 @@
+mod text;
 mod texture;
 
 use std::{
@@ -5,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+pub use text::*;
 pub use texture::*;
 
 use crate::ImportError;
@@ -12,6 +14,7 @@ use crate::ImportError;
 #[derive(Debug, Clone)]
 pub enum Content {
     Image(image::DynamicImage),
+    Text(String),
 }
 
 #[derive(Debug, Clone)]

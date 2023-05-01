@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    content::{ContentImporterFactory, LoadedContent},
+    content::{ContentImporterFactory, ImageImporterFactory, LoadedContent, TextImporterFactory},
     BuildError,
 };
 
@@ -227,12 +227,12 @@ impl BuildContext {
         Ok(())
     }
 
-    pub fn add_importer(&mut self, importer: Box<dyn ContentImporterFactory>) {
-        self.importers.push(importer);
+    pub fn add_importer<T: ContentImporterFactory + Default + 'static>(&mut self) {
+        self.importers.push(Box::<T>::default());
     }
 
-    pub fn add_processor(&mut self, name: &str, processor: Box<dyn ContentBuilderFactory>) {
-        self.builders.insert(name.into(), processor);
+    pub fn add_processor<T: ContentBuilderFactory + Default + 'static>(&mut self, name: &str) {
+        self.builders.insert(name.into(), Box::<T>::default());
     }
 }
 
@@ -344,8 +344,11 @@ impl Context for Arc<Mutex<BuildContext>> {
     }
 }
 
-pub fn build_assets(contex: BuildContext, root: HashMap<String, PathBuf>) {
-    let context = Arc::new(Mutex::new(contex));
+pub fn build_assets(context: BuildContext, root: HashMap<String, PathBuf>) {
+    let mut context = context;
+    context.add_importer::<ImageImporterFactory>();
+    context.add_importer::<TextImporterFactory>();
+    let context = Arc::new(Mutex::new(context));
     root.iter().for_each(|(name, path)| {
         context.name(context.to_process(path), name).unwrap();
     });

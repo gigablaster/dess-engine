@@ -30,6 +30,12 @@ impl From<ImageError> for ImportError {
     }
 }
 
+impl From<io::Error> for ImportError {
+    fn from(value: io::Error) -> Self {
+        Self::IO(value)
+    }
+}
+
 impl From<io::Error> for BuildError {
     fn from(value: io::Error) -> Self {
         Self::IO(value)
