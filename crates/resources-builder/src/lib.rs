@@ -12,6 +12,7 @@ pub enum ImportError {
     Unsupported,
 }
 
+#[derive(Debug)]
 pub enum BuildError {
     IO(io::Error),
     BadJson(serde_json::Error),

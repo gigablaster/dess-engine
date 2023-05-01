@@ -862,6 +862,7 @@ dependencies = [
  "four-cc",
  "image",
  "log",
+ "rayon",
  "resources",
  "serde",
  "serde_json",

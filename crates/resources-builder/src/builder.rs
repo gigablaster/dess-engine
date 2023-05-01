@@ -3,6 +3,7 @@ use std::{
     fmt::Debug,
     fs::File,
     io,
+    mem::take,
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
@@ -10,6 +11,7 @@ use std::{
 use chrono::{DateTime, Local};
 
 use log::{error, info};
+use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -19,7 +21,7 @@ use crate::{
 };
 
 pub trait Context {
-    fn uuid(&self, path: &Path) -> Uuid;
+    fn to_process(&self, path: &Path) -> Uuid;
     fn name(&self, uuid: Uuid, name: &str) -> Result<(), BuildError>;
     fn build<T: ProcessedResource, F: FnOnce() -> Result<T, BuildError>>(
         &self,
@@ -38,13 +40,14 @@ pub trait Context {
         content: &LoadedContent,
         prefered: Option<&str>,
     ) -> Option<Box<dyn ContentBuilder>>;
+    fn take_waiting(&self) -> Option<HashSet<PathBuf>>;
 }
 
 pub trait ProcessedResource {
     fn write(&self, file: File) -> io::Result<()>;
 }
 
-pub trait ContentBuilderFactory: Debug {
+pub trait ContentBuilderFactory: Debug + Send + Sync {
     fn builder(&self, content: &LoadedContent) -> Option<Box<dyn ContentBuilder>>;
 }
 
@@ -187,28 +190,33 @@ pub struct BuildContext {
     cache_dir: PathBuf,
     cache: BuildCache,
     root_assets: HashMap<String, Uuid>,
-    assets: HashMap<Uuid, AssetInfo>,
     importers: Vec<Box<dyn ContentImporterFactory>>,
     builders: HashMap<String, Box<dyn ContentBuilderFactory>>,
+    processed: HashSet<PathBuf>,
+    waiting: HashSet<PathBuf>,
 }
 
 impl BuildContext {
-    pub fn new(cache: &Path) -> Result<Arc<Mutex<Self>>, BuildError> {
-        let cache_dir = PathBuf::from(cache);
+    pub fn new(cache: impl Into<PathBuf>) -> Result<Self, BuildError> {
+        let cache_dir: PathBuf = cache.into();
         if !cache_dir.is_dir() {
             return Err(BuildError::WrongCache);
         }
-        let cache_file = File::open(cache.join("cache.json"))?;
-        let cache = serde_json::from_reader(cache_file)?;
+        let cache = if let Ok(file) = File::open(cache_dir.join("cache.json")) {
+            serde_json::from_reader(file)?
+        } else {
+            BuildCache::default()
+        };
 
-        Ok(Arc::new(Mutex::new(Self {
+        Ok(Self {
             cache_dir,
             cache,
             root_assets: HashMap::new(),
-            assets: HashMap::new(),
             importers: Vec::new(),
             builders: HashMap::new(),
-        })))
+            processed: HashSet::new(),
+            waiting: HashSet::new(),
+        })
     }
 
     pub fn flush(&mut self) -> Result<(), BuildError> {
@@ -229,8 +237,11 @@ impl BuildContext {
 }
 
 impl Context for Arc<Mutex<BuildContext>> {
-    fn uuid(&self, path: &Path) -> Uuid {
+    fn to_process(&self, path: &Path) -> Uuid {
         let mut builder = self.lock().unwrap();
+        if !builder.processed.contains(path) {
+            builder.waiting.insert(path.into());
+        }
         builder.cache.get_or_create_uuid(path)
     }
 
@@ -251,7 +262,8 @@ impl Context for Arc<Mutex<BuildContext>> {
         cb: F,
     ) -> Result<(), BuildError> {
         let must_rebuild = {
-            let builder = self.lock().unwrap();
+            let mut builder = self.lock().unwrap();
+            builder.processed.insert(asset.main.clone());
             builder.cache.must_rebuild(uuid, &asset)?
         };
         if must_rebuild {
@@ -297,7 +309,6 @@ impl Context for Arc<Mutex<BuildContext>> {
                 }
             }
         } else {
-            error!("No importer for {:?}", path);
             None
         }
     }
@@ -320,5 +331,36 @@ impl Context for Arc<Mutex<BuildContext>> {
                 .iter()
                 .find_map(|(_, builder)| builder.builder(content))
         }
+    }
+
+    fn take_waiting(&self) -> Option<HashSet<PathBuf>> {
+        let mut builder = self.lock().unwrap();
+        let result = take(&mut builder.waiting);
+        if result.is_empty() {
+            None
+        } else {
+            Some(result)
+        }
+    }
+}
+
+pub fn build_assets(contex: BuildContext, root: HashMap<String, PathBuf>) {
+    let context = Arc::new(Mutex::new(contex));
+    root.iter().for_each(|(name, path)| {
+        context.name(context.to_process(path), name).unwrap();
+    });
+
+    while let Some(assets) = context.take_waiting() {
+        assets.par_iter().for_each(|path| {
+            if let Some(import) = context.import(path) {
+                if let Some(builder) = context.builder(&import, None) {
+                    context.process(import, Box::as_ref(&builder)).unwrap();
+                } else {
+                    error!("Can't find builder for {:?}", import);
+                }
+            } else {
+                error!("Can't import {:?}", path);
+            }
+        });
     }
 }
