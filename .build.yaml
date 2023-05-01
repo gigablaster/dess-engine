@@ -1,0 +1,13 @@
+image: ubuntu/lts
+packages:
+  - rust-all
+  - cmake
+sources:
+  - https://git.sr.ht/~gigablaster/dess-engine
+tasks:
+  - build: |
+      cd dess-engine
+      cargo build
+  - test: |
+      cd dess-engine
+      cargo test
