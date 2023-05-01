@@ -1,25 +1,20 @@
-use image::{DynamicImage, GrayImage, RgbImage, RgbaImage};
-
 use crate::ImportError;
 
-use super::{Content, ContentImporter};
+use super::{Content, ContentImporter, LoadedContent};
 
-#[derive(Debug, Clone)]
-pub enum TextureData {
-    Rgb(RgbImage),
-    Rgba(RgbaImage),
-    Gray(GrayImage),
+pub struct ImageImporter {}
+
+impl ContentImporter for ImageImporter {
+    fn import(&self, path: &std::path::Path) -> Result<LoadedContent, ImportError> {
+        let image = image::open(path)?;
+        Ok(LoadedContent {
+            path: path.into(),
+            content: Content::Image(image),
+        })
+    }
 }
 
-#[derive(Debug, Clone)]
-pub struct Texture {
-    pub width: u16,
-    pub height: u16,
-    pub data: TextureData,
-}
-
-pub struct TextureImporter {}
-
+/*
 impl ContentImporter for TextureImporter {
     fn import(&self, path: &std::path::Path) -> Result<Content, ImportError> {
         let img = image::open(path)?;
@@ -92,4 +87,4 @@ fn process_grayscale_map(image: DynamicImage) -> Texture {
         height,
         data,
     }
-}
+}*/
