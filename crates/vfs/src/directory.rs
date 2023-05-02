@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     io::{self, Read, Seek, Write},
     mem::size_of,
 };
@@ -7,19 +7,19 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use common::traits::{BinaryDeserialization, BinarySerialization};
 use four_cc::FourCC;
-use lz4_flex::frame::FrameEncoder;
-use uuid::Uuid;
+use zstd::stream;
 
 use crate::VfsError;
 
 const MAGICK: FourCC = FourCC(*b"dess");
 const VERSION: u32 = 1;
 const FILE_ALIGN: u64 = 4096;
+const COMPRESSION_LEVEL: i32 = 19;
 
 #[derive(Debug, Copy, Clone)]
 pub enum Compression {
     None(u32),
-    LZ4(u32, u32),
+    Zstd(u32, u32),
 }
 
 impl BinarySerialization for Compression {
@@ -29,7 +29,7 @@ impl BinarySerialization for Compression {
                 w.write_u8(0)?;
                 w.write_u32::<LittleEndian>(*size as u32)?
             }
-            Compression::LZ4(uncompressed, compressed) => {
+            Compression::Zstd(uncompressed, compressed) => {
                 w.write_u8(1)?;
                 w.write_u32::<LittleEndian>(*uncompressed as u32)?;
                 w.write_u32::<LittleEndian>(*compressed as u32)?;
@@ -49,7 +49,7 @@ impl BinaryDeserialization for Compression {
                 let uncompressed = r.read_u32::<LittleEndian>()?;
                 let compressed = r.read_u32::<LittleEndian>()?;
 
-                Compression::LZ4(uncompressed, compressed)
+                Compression::Zstd(uncompressed, compressed)
             }
             _ => {
                 return Err(io::Error::new(
@@ -65,7 +65,6 @@ impl BinaryDeserialization for Compression {
 
 #[derive(Debug, Clone)]
 pub struct FileHeader {
-    pub type_id: FourCC,
     pub offset: u64,
     pub compression: Compression,
 }
@@ -73,7 +72,6 @@ pub struct FileHeader {
 impl BinaryDeserialization for FileHeader {
     fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         Ok(Self {
-            type_id: FourCC::deserialize(r)?,
             offset: r.read_u64::<LittleEndian>()?,
             compression: Compression::deserialize(r)?,
         })
@@ -82,7 +80,6 @@ impl BinaryDeserialization for FileHeader {
 
 impl BinarySerialization for FileHeader {
     fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
-        self.type_id.serialize(w)?;
         w.write_u64::<LittleEndian>(self.offset)?;
         self.compression.serialize(w)?;
 
@@ -123,55 +120,28 @@ impl Default for RootHeader {
     }
 }
 
-#[derive(Debug)]
-pub struct Directory {
-    files: HashMap<Uuid, FileHeader>,
-    names: HashMap<String, Uuid>,
-    tags: HashMap<String, HashSet<Uuid>>,
-}
+pub type Directory = HashMap<String, FileHeader>;
 
-impl Directory {
-    pub fn load<R: Read + Seek>(r: &mut R) -> Result<Self, VfsError> {
-        let root_header = RootHeader::deserialize(r)?;
-        if root_header.magick != MAGICK {
-            return Err(VfsError::InvalidFormat);
-        }
-        if root_header.version > VERSION {
-            return Err(VfsError::InvalidVersiom);
-        }
-        r.seek(io::SeekFrom::End(-(size_of::<u64>() as i64)))?;
-        let offset = r.read_u64::<LittleEndian>()?;
-        r.seek(io::SeekFrom::Start(offset as _))?;
-
-        let names = HashMap::<String, Uuid>::deserialize(r)?;
-        let files = HashMap::<Uuid, FileHeader>::deserialize(r)?;
-        let tags = HashMap::<String, HashSet<Uuid>>::deserialize(r)?;
-
-        Ok(Self { names, files, tags })
+pub fn load_archive_directory<R: Read + Seek>(r: &mut R) -> Result<Directory, VfsError> {
+    let root_header = RootHeader::deserialize(r)?;
+    if root_header.magick != MAGICK {
+        return Err(VfsError::InvalidFormat);
     }
-
-    pub fn by_uuid(&self, uuid: Uuid) -> Option<&FileHeader> {
-        self.files.get(&uuid)
+    if root_header.version > VERSION {
+        return Err(VfsError::InvalidVersiom);
     }
+    r.seek(io::SeekFrom::End(-(size_of::<u64>() as i64)))?;
+    let offset = r.read_u64::<LittleEndian>()?;
+    r.seek(io::SeekFrom::Start(offset as _))?;
 
-    pub fn by_name(&self, name: &str) -> Option<&Uuid> {
-        self.names.get(name)
-    }
+    let files = HashMap::<String, FileHeader>::deserialize(r)?;
 
-    pub fn by_tag(&self, tag: &str) -> Option<&HashSet<Uuid>> {
-        if let Some(tagged) = self.tags.get(tag) {
-            Some(tagged)
-        } else {
-            None
-        }
-    }
+    Ok(files)
 }
 
 pub struct DirectoryBaker<W: Write + Seek> {
     w: W,
-    files: HashMap<Uuid, FileHeader>,
-    names: HashMap<String, Uuid>,
-    tags: HashMap<String, HashSet<Uuid>>,
+    files: HashMap<String, FileHeader>,
 }
 
 impl<W: Write + Seek> DirectoryBaker<W> {
@@ -181,25 +151,17 @@ impl<W: Write + Seek> DirectoryBaker<W> {
         Ok(Self {
             w,
             files: HashMap::new(),
-            names: HashMap::new(),
-            tags: HashMap::new(),
         })
     }
 
-    pub fn write(
-        &mut self,
-        type_id: FourCC,
-        data: &[u8],
-        uuid: Uuid,
-        packed: bool,
-    ) -> Result<(), VfsError> {
+    pub fn write(&mut self, name: &str, data: &[u8], packed: bool) -> Result<(), VfsError> {
         let offset = self.try_align()?;
         let compression = if packed {
-            let mut compressor = FrameEncoder::new(&mut self.w);
+            let mut compressor = stream::Encoder::new(&mut self.w, COMPRESSION_LEVEL)?;
             compressor.write_all(data)?;
             compressor.finish()?;
 
-            Compression::LZ4(data.len() as _, (self.w.stream_position()? - offset) as _)
+            Compression::Zstd(data.len() as _, (self.w.stream_position()? - offset) as _)
         } else {
             self.w.write_all(data)?;
 
@@ -207,9 +169,8 @@ impl<W: Write + Seek> DirectoryBaker<W> {
         };
 
         self.files.insert(
-            uuid,
+            name.into(),
             FileHeader {
-                type_id,
                 offset,
                 compression,
             },
@@ -227,39 +188,5 @@ impl<W: Write + Seek> DirectoryBaker<W> {
             .w
             .seek(io::SeekFrom::Start(offset_align))
             .unwrap_or(self.w.stream_position()?))
-    }
-
-    pub fn name(&mut self, uuid: Uuid, name: &str) -> Result<(), VfsError> {
-        if self.files.contains_key(&uuid) {
-            self.names.insert(name.into(), uuid);
-
-            Ok(())
-        } else {
-            Err(VfsError::AssetNotFound(uuid))
-        }
-    }
-
-    pub fn tag(&mut self, uuid: Uuid, tag: &str) -> Result<(), VfsError> {
-        if !self.files.contains_key(&uuid) {
-            return Err(VfsError::AssetNotFound(uuid));
-        }
-        if !self.tags.contains_key(tag) {
-            self.tags.insert(tag.into(), HashSet::new());
-        }
-        self.tags.get_mut(tag).unwrap().insert(uuid);
-
-        Ok(())
-    }
-
-    pub fn finish(mut self) -> io::Result<()> {
-        let offset = self.try_align()?;
-
-        self.names.serialize(&mut self.w)?;
-        self.files.serialize(&mut self.w)?;
-        self.tags.serialize(&mut self.w)?;
-
-        self.w.write_u64::<LittleEndian>(offset)?;
-
-        Ok(())
     }
 }

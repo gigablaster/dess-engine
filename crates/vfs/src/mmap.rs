@@ -1,9 +1,6 @@
 use std::{cmp::min, fs::File, io, path::Path, sync::Arc};
 
-use four_cc::FourCC;
 use memmap2::{Mmap, MmapOptions};
-
-use crate::{DataReader, DataTypeId};
 
 #[derive(Debug)]
 pub(crate) struct MappedFile {
@@ -61,14 +58,7 @@ impl io::Read for MappedFileSlice {
 }
 
 pub(crate) struct MappedFileSliceReader {
-    type_id: FourCC,
     file: MappedFileSlice,
-}
-
-impl DataTypeId for MappedFileSliceReader {
-    fn type_id(&self) -> FourCC {
-        self.type_id
-    }
 }
 
 impl io::Read for MappedFileSliceReader {
@@ -78,9 +68,7 @@ impl io::Read for MappedFileSliceReader {
 }
 
 impl MappedFileSliceReader {
-    pub fn new(file: MappedFileSlice, type_id: FourCC) -> Self {
-        Self { type_id, file }
+    pub fn new(file: MappedFileSlice) -> Self {
+        Self { file }
     }
 }
-
-impl DataReader for MappedFileSliceReader {}

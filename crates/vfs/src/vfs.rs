@@ -1,15 +1,10 @@
-use std::{
-    fs::{self},
-    path::Path,
-};
+use std::{fs, io::Read, path::Path};
 
 use log::{error, info};
 
-use uuid::Uuid;
+use crate::{packed::PackedArchive, Archive, VfsError};
 
-use crate::{packed::PackedArchive, Archive, DataReader, VfsError};
-
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct Vfs {
     archives: Vec<Box<dyn Archive>>,
 }
@@ -30,27 +25,16 @@ impl Vfs {
         Ok(())
     }
 
-    pub fn named(&self, name: &str) -> Result<Box<dyn DataReader>, VfsError> {
+    pub fn get(&self, name: &str) -> Result<Box<dyn Read>, VfsError> {
         for archive in &self.archives {
-            if let Some(uuid) = archive.named(name) {
-                return archive.load(uuid);
-            }
-        }
-
-        Err(VfsError::NameNotFound(name.into()))
-    }
-
-    pub fn get(&self, uuid: Uuid) -> Result<Box<dyn DataReader>, VfsError> {
-        for archive in &self.archives {
-            let res = archive.load(uuid);
-            match res {
-                Ok(data) => return Ok(data),
-                Err(VfsError::AssetNotFound(_)) => {}
+            match archive.load(name) {
+                Ok(r) => return Ok(r),
+                Err(VfsError::NotFound(_)) => {}
                 Err(err) => return Err(err),
             }
         }
 
-        Err(VfsError::AssetNotFound(uuid))
+        Err(VfsError::NotFound(name.into()))
     }
 
     fn add_archive(&mut self, path: &Path) -> Result<(), VfsError> {
