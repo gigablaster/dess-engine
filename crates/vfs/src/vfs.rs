@@ -1,8 +1,8 @@
-use std::{fs, io::Read, path::Path};
+use std::{fs, io::Read, path::{Path, PathBuf}};
 
 use log::{error, info};
 
-use crate::{packed::PackedArchive, Archive, VfsError};
+use crate::{packed::PackedArchive, Archive, VfsError, raw_fs::RawFsArchive};
 
 #[derive(Default)]
 pub struct Vfs {
@@ -10,7 +10,12 @@ pub struct Vfs {
 }
 
 impl Vfs {
-    pub fn scan(&mut self, root: &Path) -> Result<(), VfsError> {
+    pub fn scan(&mut self, root: impl Into<PathBuf>) -> Result<(), VfsError> {
+        let root = root.into();
+        let raw_data_path = root.join("data");
+        if raw_data_path.is_dir() {
+            self.archives.push(Box::new(RawFsArchive::new(raw_data_path)));
+        }
         let paths = fs::read_dir(root)?;
         for path in paths {
             let path = path?.path();
