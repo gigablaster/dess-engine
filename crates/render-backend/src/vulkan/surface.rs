@@ -13,8 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
-
 use ash::{
     extensions::khr,
     vk::{self, Handle},
@@ -25,25 +23,27 @@ use crate::BackendResult;
 
 use super::Instance;
 
-pub struct Surface {
+pub struct Surface<'a> {
+    pub(crate) window: &'a Window,
     pub(crate) raw: vk::SurfaceKHR,
     pub(crate) loader: khr::Surface,
 }
 
-impl Surface {
-    pub fn create(instance: &Instance, window: &Window) -> BackendResult<Arc<Self>> {
+impl<'a> Surface<'a> {
+    pub fn create(instance: &Instance, window: &'a Window) -> BackendResult<Self> {
         let surface = window.vulkan_create_surface(instance.raw.handle().as_raw() as usize)?;
         let surface = vk::SurfaceKHR::from_raw(surface);
         let loader = khr::Surface::new(&instance.entry, &instance.raw);
 
-        Ok(Arc::new(Self {
+        Ok(Self {
+            window,
             raw: surface,
             loader,
-        }))
+        })
     }
 }
 
-impl Drop for Surface {
+impl<'a> Drop for Surface<'a> {
     fn drop(&mut self) {
         unsafe { self.loader.destroy_surface(self.raw, None) };
     }

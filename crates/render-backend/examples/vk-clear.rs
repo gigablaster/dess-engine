@@ -13,13 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::{thread::sleep, time::Duration};
+
 use ash::vk;
 
-use render_backend::vulkan::{
-    Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
-    RenderPassAttachmentDesc, RenderPassDesc, Surface, Swapchain, SwapchainDesc,
+use render_backend::{
+    vulkan::{
+        Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
+        RenderPassAttachmentDesc, RenderPassDesc, Surface, Swapchain,
+    },
+    BackendError,
 };
-use sdl2::event::Event;
+use sdl2::event::{Event, WindowEvent};
 
 fn main() -> Result<(), String> {
     simple_logger::init().unwrap();
@@ -30,6 +35,7 @@ fn main() -> Result<(), String> {
     let window = video
         .window("vk-clear", 1280, 720)
         .position_centered()
+        .resizable()
         .vulkan()
         .build()
         .map_err(|x| x.to_string())?;
@@ -56,19 +62,10 @@ fn main() -> Result<(), String> {
         .unwrap();
 
     let device = Device::create(&instance, &pdevice).unwrap();
-    let desc = SwapchainDesc {
-        format: Swapchain::select_surface_format(
-            &Swapchain::enumerate_surface_formats(&device, &surface).unwrap(),
-        )
-        .unwrap(),
-        dims: vk::Extent2D {
-            width: window.size().0,
-            height: window.size().1,
-        },
-        vsync: true,
-    };
 
-    let color_attachment_desc = RenderPassAttachmentDesc::new(desc.format.format)
+    let mut swapchain = Swapchain::new(&device, surface).unwrap();
+
+    let color_attachment_desc = RenderPassAttachmentDesc::new(swapchain.backbuffer_format())
         .garbage_input()
         .initial_layout(vk::ImageLayout::UNDEFINED)
         .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
@@ -78,48 +75,81 @@ fn main() -> Result<(), String> {
     };
     let render_pass = RenderPass::new(&device, &render_pass_desc).unwrap();
 
-    let mut swapchain = Swapchain::new(&device, &surface, &desc).unwrap();
-
-    let _image = Image::new(
-        &device,
-        ImageDesc::new(vk::Format::R8G8B8A8_SRGB, ImageType::Tex2D, [256, 256])
-            .usage(vk::ImageUsageFlags::SAMPLED)
-            .flags(vk::ImageCreateFlags::empty()),
-        None,
-    )
-    .unwrap();
-
+    let mut skip_render = false;
     'running: loop {
+        let mut recreate_swapchain = false;
         for event in event_pump.poll_iter() {
             match event {
                 Event::Quit { .. } => break 'running,
+                Event::Window {
+                    win_event: WindowEvent::Resized(_w, _h),
+                    ..
+                } => recreate_swapchain = true,
+                Event::Window {
+                    win_event: WindowEvent::Minimized,
+                    ..
+                }
+                | Event::Window {
+                    win_event: WindowEvent::Hidden,
+                    ..
+                } => skip_render = true,
+                Event::Window {
+                    win_event: WindowEvent::Restored,
+                    ..
+                }
+                | Event::Window {
+                    win_event: WindowEvent::Shown,
+                    ..
+                } => skip_render = false,
                 _ => {}
             }
-            {
-                let frame = device.begin_frame().unwrap();
-                let image = swapchain.acquire_next_image().unwrap();
-                {
-                    let cb = frame.command_buffer.begin().unwrap();
-                    cb.begin_pass(
-                        [window.size().0, window.size().1],
-                        &render_pass,
-                        &[&image.image],
-                        None,
-                    );
-                    cb.clear(
-                        [window.size().0, window.size().1],
-                        &[vk::ClearColorValue {
-                            float32: [1.0, 0.0, 0.0, 1.0],
-                        }],
-                        None,
-                    );
-                    cb.end_pass();
-                }
-                device.submit_render(&frame.command_buffer, &image).unwrap();
-                device.end_frame(frame).unwrap();
-                swapchain.present_image(image);
-            }
         }
+        if skip_render {
+            sleep(Duration::from_millis(16));
+            continue;
+        }
+        let _image = Image::new(
+            &device,
+            ImageDesc::new(vk::Format::R8G8B8A8_SRGB, ImageType::Tex2D, [256, 256])
+                .usage(vk::ImageUsageFlags::SAMPLED)
+                .flags(vk::ImageCreateFlags::empty()),
+            None,
+        )
+        .unwrap();
+        let frame = device.begin_frame().unwrap();
+        let image = match swapchain.acquire_next_image() {
+            Ok(image) => Ok(image),
+            Err(BackendError::RecreateSwapchain) => {
+                swapchain.recreate().unwrap();
+                continue;
+            }
+            Err(err) => Err(err),
+        }
+        .unwrap();
+        if recreate_swapchain {
+            swapchain.recreate().unwrap();
+            continue;
+        }
+        {
+            let cb = frame.command_buffer.begin().unwrap();
+            cb.begin_pass(
+                [window.size().0, window.size().1],
+                &render_pass,
+                &[&image.image],
+                None,
+            );
+            cb.clear(
+                [window.size().0, window.size().1],
+                &[vk::ClearColorValue {
+                    float32: [1.0, 0.0, 0.0, 1.0],
+                }],
+                None,
+            );
+            cb.end_pass();
+        }
+        device.submit_render(&frame.command_buffer, &image).unwrap();
+        device.end_frame(frame).unwrap();
+        swapchain.present_image(image);
     }
     device.wait();
 

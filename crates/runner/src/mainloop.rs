@@ -16,9 +16,7 @@
 use ash::vk;
 use common::{Client, ClientState, TimeFilter};
 use log::{log, Level};
-use render_backend::vulkan::{
-    Device, Instance, PhysicalDeviceList, Surface, Swapchain, SwapchainDesc,
-};
+use render_backend::vulkan::{Device, Instance, PhysicalDeviceList, Surface, Swapchain};
 use sdl2::{
     event::Event,
     log::{set_output_function, Category, Priority},
@@ -61,19 +59,8 @@ pub fn run(client: impl Client) -> Result<(), String> {
         .unwrap();
 
     let device = Device::create(&instance, &pdevice).unwrap();
-    let desc = SwapchainDesc {
-        format: Swapchain::select_surface_format(
-            &Swapchain::enumerate_surface_formats(&device, &surface).unwrap(),
-        )
-        .unwrap(),
-        dims: vk::Extent2D {
-            width: window.size().0,
-            height: window.size().1,
-        },
-        vsync: true,
-    };
 
-    let _swapchain = Swapchain::new(&device, &surface, &desc).unwrap();
+    let _swapchain = Swapchain::new(&device, surface).unwrap();
 
     let result = {
         let mut time_filter = TimeFilter::new();

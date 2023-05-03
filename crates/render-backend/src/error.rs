@@ -23,6 +23,8 @@ pub enum BackendError {
     Allocation(AllocationError),
     NoExtension(String),
     Other(String),
+    RecreateSwapchain,
+    WaitForSurface,
 }
 
 impl From<LoadingError> for BackendError {

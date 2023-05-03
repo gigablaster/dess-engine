@@ -20,73 +20,40 @@ use log::info;
 
 use crate::{
     vulkan::{ImageDesc, ImageType},
-    BackendResult,
+    BackendError, BackendResult,
 };
 
 use super::{Device, Image, Surface};
 
-#[derive(Debug, Copy, Clone)]
-pub struct SwapchainDesc {
-    pub format: vk::SurfaceFormatKHR,
-    pub dims: vk::Extent2D,
-    pub vsync: bool,
-}
-
-pub struct Swapchain {
-    device: Arc<Device>,
-    pub loader: khr::Swapchain,
+struct SwapchainInner {
     pub raw: vk::SwapchainKHR,
-    pub desc: SwapchainDesc,
     pub images: Vec<Arc<Image>>,
+    pub loader: khr::Swapchain,
     pub acquire_semaphore: Vec<vk::Semaphore>,
     pub rendering_finished_semaphore: Vec<vk::Semaphore>,
     pub next_semaphore: usize,
+    pub dims: [u32; 2],
+    pub format: vk::Format,
 }
 
-pub struct SwapchainImage {
-    pub image: Arc<Image>,
-    pub image_index: u32,
-    pub acquire_semaphore: vk::Semaphore,
-    pub rendering_finished_semaphore: vk::Semaphore,
-}
-
-impl Swapchain {
-    pub fn enumerate_surface_formats(
-        device: &Device,
-        surface: &Surface,
-    ) -> BackendResult<Vec<vk::SurfaceFormatKHR>> {
-        Ok(unsafe {
-            surface
-                .loader
-                .get_physical_device_surface_formats(device.pdevice.raw, surface.raw)
-        }?)
-    }
-
-    pub fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
-        let prefered = [
-            vk::SurfaceFormatKHR {
-                format: vk::Format::A2B10G10R10_UNORM_PACK32,
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            },
-            vk::SurfaceFormatKHR {
-                format: vk::Format::B8G8R8A8_UNORM,
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            },
-        ];
-
-        prefered.into_iter().find(|format| formats.contains(format))
-    }
-
-    pub fn new(
-        device: &Arc<Device>,
-        surface: &Surface,
-        desc: &SwapchainDesc,
-    ) -> BackendResult<Self> {
+impl SwapchainInner {
+    pub fn new(device: &Arc<Device>, surface: &Surface) -> BackendResult<Self> {
         let surface_capabilities = unsafe {
             surface
                 .loader
                 .get_physical_device_surface_capabilities(device.pdevice.raw, surface.raw)
         }?;
+
+        let formats = Self::enumerate_surface_formats(device, surface)?;
+        let format = match Self::select_surface_format(&formats) {
+            Some(format) => format,
+            None => {
+                return Err(BackendError::Other(
+                    "Can't find suitable surface format".into(),
+                ))
+            }
+        };
+
         let mut desired_image_count = 3.max(surface_capabilities.min_image_count);
         if surface_capabilities.max_image_count != 0 {
             desired_image_count = desired_image_count.min(surface_capabilities.max_image_count);
@@ -94,22 +61,20 @@ impl Swapchain {
 
         info!("Swapchain image count {}", desired_image_count);
 
+        let window_resolution = surface.window.size();
         let surface_resolution = match surface_capabilities.current_extent.width {
-            u32::MAX => desc.dims,
+            u32::MAX => vk::Extent2D {
+                width: window_resolution.0,
+                height: window_resolution.1,
+            },
             _ => surface_capabilities.current_extent,
         };
 
         if surface_resolution.width == 0 || surface_resolution.height == 0 {
-            return Err(crate::BackendError::Other(
-                "Swapchain resolution can't be zero".to_owned(),
-            ));
+            return Err(crate::BackendError::WaitForSurface);
         }
 
-        let present_mode_preferences = if desc.vsync {
-            vec![vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO]
-        } else {
-            vec![vk::PresentModeKHR::MAILBOX, vk::PresentModeKHR::IMMEDIATE]
-        };
+        let present_mode_preferences = [vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO];
 
         let present_modes = unsafe {
             surface
@@ -117,7 +82,7 @@ impl Swapchain {
                 .get_physical_device_surface_present_modes(device.pdevice.raw, surface.raw)
         }?;
 
-        info!("Swapchain format: {:?}", desc.format.format);
+        info!("Swapchain format: {:?}", format.format);
 
         let present_mode = present_mode_preferences
             .into_iter()
@@ -138,8 +103,8 @@ impl Swapchain {
         let swapchain_create_info = vk::SwapchainCreateInfoKHR::builder()
             .surface(surface.raw)
             .min_image_count(desired_image_count)
-            .image_format(desc.format.format)
-            .image_color_space(desc.format.color_space)
+            .image_format(format.format)
+            .image_color_space(format.color_space)
             .image_extent(surface_resolution)
             .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -162,7 +127,7 @@ impl Swapchain {
                     image_type: ImageType::Tex2D,
                     usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
                     flags: vk::ImageCreateFlags::empty(),
-                    format: desc.format.format,
+                    format: format.format,
                     extent: [surface_resolution.width, surface_resolution.height],
                     tiling: vk::ImageTiling::OPTIMAL,
                     mip_levels: 1,
@@ -193,81 +158,147 @@ impl Swapchain {
             .collect();
 
         Ok(Self {
-            device: device.clone(),
             raw: swapchain,
-            loader,
-            desc: *desc,
             images,
             acquire_semaphore,
             rendering_finished_semaphore,
             next_semaphore: 0,
+            loader,
+            format: format.format,
+            dims: [surface_resolution.width, surface_resolution.height],
+        })
+    }
+
+    fn enumerate_surface_formats(
+        device: &Device,
+        surface: &Surface,
+    ) -> BackendResult<Vec<vk::SurfaceFormatKHR>> {
+        Ok(unsafe {
+            surface
+                .loader
+                .get_physical_device_surface_formats(device.pdevice.raw, surface.raw)
+        }?)
+    }
+
+    fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
+        let prefered = [
+            vk::SurfaceFormatKHR {
+                format: vk::Format::A2B10G10R10_UNORM_PACK32,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+            vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_UNORM,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+        ];
+
+        prefered.into_iter().find(|format| formats.contains(format))
+    }
+
+    pub fn cleanup(&mut self, device: &ash::Device) {
+        unsafe { self.loader.destroy_swapchain(self.raw, None) };
+        for semaphore in &self.acquire_semaphore {
+            unsafe { device.destroy_semaphore(*semaphore, None) };
+        }
+        for semaphore in &self.rendering_finished_semaphore {
+            unsafe { device.destroy_semaphore(*semaphore, None) };
+        }
+        for image in self.images.iter() {
+            image.destroy_all_views(&device);
+        }
+    }
+}
+
+pub struct Swapchain<'a> {
+    device: Arc<Device>,
+    surface: Surface<'a>,
+    inner: SwapchainInner,
+}
+
+pub struct SwapchainImage {
+    pub image: Arc<Image>,
+    pub image_index: u32,
+    pub acquire_semaphore: vk::Semaphore,
+    pub rendering_finished_semaphore: vk::Semaphore,
+}
+
+impl<'a> Swapchain<'a> {
+    pub fn new(device: &Arc<Device>, surface: Surface<'a>) -> BackendResult<Self> {
+        Ok(Self {
+            device: device.clone(),
+            inner: SwapchainInner::new(device, &surface)?,
+            surface,
         })
     }
 
     pub fn acquire_next_image(&mut self) -> BackendResult<SwapchainImage> {
-        let acquire_semaphore = self.acquire_semaphore[self.next_semaphore];
-        let rendering_finished_semaphore = self.rendering_finished_semaphore[self.next_semaphore];
+        let acquire_semaphore = self.inner.acquire_semaphore[self.inner.next_semaphore];
+        let rendering_finished_semaphore =
+            self.inner.rendering_finished_semaphore[self.inner.next_semaphore];
 
         let present_index = unsafe {
-            self.loader
-                .acquire_next_image(self.raw, u64::MAX, acquire_semaphore, vk::Fence::null())
+            self.inner.loader.acquire_next_image(
+                self.inner.raw,
+                u64::MAX,
+                acquire_semaphore,
+                vk::Fence::null(),
+            )
         };
 
         match present_index {
             Ok((present_index, _)) => {
-                assert_eq!(present_index as usize, self.next_semaphore);
+                assert_eq!(present_index as usize, self.inner.next_semaphore);
 
-                self.next_semaphore = (self.next_semaphore + 1) % self.images.len();
+                self.inner.next_semaphore =
+                    (self.inner.next_semaphore + 1) % self.inner.images.len();
                 Ok(SwapchainImage {
-                    image: self.images[present_index as usize].clone(),
+                    image: self.inner.images[present_index as usize].clone(),
                     image_index: present_index,
                     acquire_semaphore,
                     rendering_finished_semaphore,
                 })
             }
-            Err(err)
-                if err == vk::Result::ERROR_OUT_OF_DATE_KHR
-                    || err == vk::Result::SUBOPTIMAL_KHR =>
-            {
-                Err(crate::BackendError::Other(
-                    "Swapchain recreation needed".into(),
-                ))
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
+                Err(BackendError::RecreateSwapchain)
             }
-            _err => panic!("Shitshow"),
+            Err(err) => Err(BackendError::Vulkan(err)),
         }
     }
 
     pub fn present_image(&self, image: SwapchainImage) {
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(&[image.rendering_finished_semaphore])
-            .swapchains(&[self.raw])
+            .swapchains(&[self.inner.raw])
             .image_indices(&[image.image_index])
             .build();
 
         match unsafe {
-            self.loader
+            self.inner
+                .loader
                 .queue_present(self.device.graphics_queue.raw, &present_info)
         } {
             Ok(_) => (),
-            Err(err)
-                if err == vk::Result::ERROR_OUT_OF_DATE_KHR
-                    || err == vk::Result::SUBOPTIMAL_KHR => {}
-            _err => panic!("Fuckshit!"),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
+            _err => panic!("Can't present image by some reasons"),
         }
+    }
+
+    pub fn recreate(&mut self) -> BackendResult<()> {
+        self.device.wait();
+        info!("Recreate swapchain");
+        self.inner.cleanup(&self.device.raw);
+        self.inner = SwapchainInner::new(&self.device, &self.surface)?;
+
+        Ok(())
+    }
+
+    pub fn backbuffer_format(&self) -> vk::Format {
+        self.inner.format
     }
 }
 
-impl Drop for Swapchain {
+impl<'a> Drop for Swapchain<'a> {
     fn drop(&mut self) {
-        unsafe { self.loader.destroy_swapchain(self.raw, None) };
-        for semaphore in &self.acquire_semaphore {
-            unsafe { self.device.raw.destroy_semaphore(*semaphore, None) };
-        }
-        for semaphore in &self.rendering_finished_semaphore {
-            unsafe { self.device.raw.destroy_semaphore(*semaphore, None) };
-        }
-        for image in self.images.iter() {
-            image.destroy_all_views(&self.device.raw);
-        }
+        self.inner.cleanup(&self.device.raw);
     }
 }
