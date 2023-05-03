@@ -156,6 +156,7 @@ impl Swapchain {
         let images = images
             .iter()
             .map(|image| Image {
+                device: device.clone(),
                 raw: *image,
                 desc: ImageDesc {
                     image_type: ImageType::Tex2D,

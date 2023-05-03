@@ -16,6 +16,7 @@
 use std::{
     ffi::CStr,
     sync::{Arc, Mutex},
+    fmt::Debug
 };
 
 use ash::{extensions::khr, vk};
@@ -25,7 +26,7 @@ use gpu_allocator::{
 };
 use log::info;
 
-use crate::{BackendError, BackendResult, GpuResource};
+use crate::{BackendError, BackendResult, DropList};
 
 use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily, SwapchainImage};
 
@@ -43,6 +44,7 @@ pub struct Device {
     pub allocator: Arc<Mutex<Allocator>>,
     setup_cb: Mutex<CommandBuffer>,
     frames: [Mutex<Arc<FrameContext>>; 2],
+    drop_lists: [Mutex<DropList>; 2],
 }
 
 impl Device {
@@ -122,6 +124,11 @@ impl Device {
             Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
         ];
 
+        let drop_lists = [
+            Mutex::new(DropList::default()),
+            Mutex::new(DropList::default()),
+        ];
+
         Ok(Arc::new(Self {
             instance: instance.clone(),
             pdevice: pdevice.clone(),
@@ -131,6 +138,7 @@ impl Device {
             setup_cb: Mutex::new(setup_cb),
             raw: device,
             frames,
+            drop_lists
         }))
     }
 
@@ -151,6 +159,8 @@ impl Device {
                     self.raw
                         .wait_for_fences(&[frame0.command_buffer.fence], true, u64::MAX)
                 }?;
+                let mut allocator = self.allocator.lock().unwrap();
+                self.drop_lists[0].lock().unwrap().free(&self.raw, &mut allocator);
             } else {
                 return Err(BackendError::Other(
                     "Unable to begin frame: frame data is being held by user code".into(),
@@ -168,6 +178,7 @@ impl Device {
             let mut frame1 = self.frames[1].lock().unwrap();
             let frame1 = Arc::get_mut(&mut frame1).unwrap();
             std::mem::swap(frame0, frame1);
+            std::mem::swap(&mut self.drop_lists[0].lock().unwrap(), &mut self.drop_lists[1].lock().unwrap());
             Ok(())
         } else {
             Err(BackendError::Other(
@@ -195,6 +206,11 @@ impl Device {
     pub fn wait(&self) {
         unsafe { self.raw.device_wait_idle().unwrap() };
     }
+
+    pub(crate) fn drop_resources<F: FnOnce(&mut DropList)>(&self, cb: F) {
+        let mut list = self.drop_lists[0].lock().unwrap();
+        cb(&mut list);
+    }
 }
 
 impl Drop for Device {
@@ -204,12 +220,22 @@ impl Drop for Device {
         self.setup_cb
             .lock()
             .unwrap()
-            .free(&self.raw, &mut allocator);
+            .free(&self.raw);
+        self.drop_lists.iter().for_each(|list| {
+            let mut list = list.lock().unwrap();
+            list.free(&self.raw, &mut allocator);
+        });
         self.frames.iter().for_each(|frame| {
             let mut frame = frame.lock().unwrap();
             let frame = Arc::get_mut(&mut frame).unwrap();
-            frame.free(&self.raw, &mut allocator);
+            frame.free(&self.raw);
         });
         unsafe { self.raw.destroy_device(None) };
+    }
+}
+
+impl Debug for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Vulkan Device")
     }
 }

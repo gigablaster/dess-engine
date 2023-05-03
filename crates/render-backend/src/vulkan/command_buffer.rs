@@ -16,7 +16,7 @@
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 
-use crate::{BackendResult, GpuResource};
+use crate::BackendResult;
 
 use super::{
     Device, FramebufferCacheKey, Image, ImageViewDesc, QueueFamily, RenderPass, MAX_ATTACHMENTS,
@@ -76,6 +76,13 @@ impl CommandBuffer {
             device: &self.device,
             cb: self.raw,
         })
+    }
+
+    pub(crate) fn free(&mut self, device: &ash::Device) {
+        unsafe {
+            device.destroy_command_pool(self.pool, None);
+            device.destroy_fence(self.fence, None);
+        }
     }
 }
 
@@ -206,15 +213,6 @@ impl<'a> CommandBufferGenerator<'a> {
 
     pub fn end_pass(&self) {
         unsafe { self.device.cmd_end_render_pass(self.cb) };
-    }
-}
-
-impl GpuResource for CommandBuffer {
-    fn free(&mut self, device: &ash::Device, _allocator: &mut gpu_allocator::vulkan::Allocator) {
-        unsafe {
-            device.destroy_command_pool(self.pool, None);
-            device.destroy_fence(self.fence, None);
-        }
     }
 }
 

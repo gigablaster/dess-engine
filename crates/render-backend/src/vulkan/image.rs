@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{collections::HashMap, sync::{Mutex, Arc}};
 
 use ash::vk;
 use gpu_allocator::{
@@ -21,7 +21,7 @@ use gpu_allocator::{
     MemoryLocation,
 };
 
-use crate::{BackendError, BackendResult, GpuResource};
+use crate::{BackendError, BackendResult};
 
 use super::Device;
 
@@ -127,6 +127,7 @@ impl ImageViewDesc {
 
 #[derive(Debug)]
 pub struct Image {
+    pub(crate) device: Arc<Device>,
     pub(crate) raw: vk::Image,
     pub desc: ImageDesc,
     pub(crate) allocation: Option<Allocation>,
@@ -134,7 +135,7 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn new(device: &Device, image_desc: ImageDesc, name: Option<&str>) -> BackendResult<Self> {
+    pub fn new(device: &Arc<Device>, image_desc: ImageDesc, name: Option<&str>) -> BackendResult<Self> {
         let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
         let allocation = device
@@ -155,6 +156,7 @@ impl Image {
         }?;
 
         Ok(Self {
+            device: device.clone(),
             raw: image,
             desc: image_desc,
             allocation: Some(allocation),
@@ -317,13 +319,18 @@ impl ImageDesc {
     }
 }
 
-impl GpuResource for Image {
-    fn free(&mut self, device: &ash::Device, allocator: &mut gpu_allocator::vulkan::Allocator) {
-        self.destroy_all_views(device);
-        if let Some(allocation) = self.allocation.take() {
-            allocator.free(allocation).ok();
-        }
-        unsafe { device.destroy_image(self.raw, None) };
+impl Drop for Image {
+    fn drop(&mut self) {
+        self.device.drop_resources(|list| {
+            self.views.lock().unwrap().iter().for_each(|view| {
+                list.drop_image_view(*view.1);
+            });
+            if let Some(allocation) = self.allocation.take() {
+                list.drop_memory(allocation);
+                // If memory isn't there then image was created by swapchain.
+                list.drop_image(self.raw);
+            }
+        });
     }
 }
 

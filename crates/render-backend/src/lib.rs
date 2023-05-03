@@ -14,8 +14,8 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod error;
-mod gpuresource;
+mod droplist;
 pub mod vulkan;
 
 pub use error::*;
-pub use gpuresource::*;
+use droplist::*;

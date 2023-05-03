@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use crate::{BackendResult, GpuResource};
+use crate::BackendResult;
 
 use super::{CommandBuffer, QueueFamily};
 
@@ -31,10 +31,9 @@ impl FrameContext {
             queue_family: *queue_family,
         })
     }
-}
 
-impl GpuResource for FrameContext {
-    fn free(&mut self, device: &ash::Device, allocator: &mut gpu_allocator::vulkan::Allocator) {
-        self.command_buffer.free(device, allocator);
+    pub(crate) fn free(&mut self, device: &ash::Device) {
+        self.command_buffer.free(device);
     }
 }
+
