@@ -2,7 +2,6 @@
 members=[
     "crates/common",
     "crates/vfs",
-    "crates/resources",
     "crates/runner",
     "crates/render-backend",
     "crates/render",
