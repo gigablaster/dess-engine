@@ -1,5 +1,8 @@
 use ash::vk;
-use gpu_allocator::vulkan::{Allocation, Allocator};
+use gpu_alloc_ash::AshMemoryDevice;
+use log::debug;
+
+use crate::{Allocation, Allocator};
 
 #[derive(Debug, Default)]
 pub(crate) struct DropList {
@@ -44,9 +47,9 @@ impl DropList {
         self.buffer_views_to_free.drain(..).for_each(|view| {
             unsafe { device.destroy_buffer_view(view, None) };
         });
+        let device = AshMemoryDevice::wrap(device);
         self.memory_to_free.drain(..).for_each(|mem| {
-            allocator.free(mem).unwrap();
+            unsafe { allocator.dealloc(device, mem) };
         });
     }
 }
-

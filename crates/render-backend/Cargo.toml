@@ -10,7 +10,8 @@ ash = "0.37"
 sdl2 = { version = "0.35", features = ["bundled"] }
 common = { path = "../common" }
 log = "0.4"
-gpu-allocator = { version = "0.22", default-features = false, features = ["vulkan"]}
+gpu-alloc = "0.5"
+gpu-alloc-ash = "0.5"
 arrayvec = "0.7"
 
 [[example]]

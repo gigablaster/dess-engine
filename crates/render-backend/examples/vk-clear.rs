@@ -16,8 +16,8 @@
 use ash::vk;
 
 use render_backend::vulkan::{
-    Device, Instance, PhysicalDeviceList, RenderPass, RenderPassAttachmentDesc, RenderPassDesc,
-    Surface, Swapchain, SwapchainDesc,
+    Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
+    RenderPassAttachmentDesc, RenderPassDesc, Surface, Swapchain, SwapchainDesc,
 };
 use sdl2::event::Event;
 
@@ -79,6 +79,15 @@ fn main() -> Result<(), String> {
     let render_pass = RenderPass::new(&device, &render_pass_desc).unwrap();
 
     let mut swapchain = Swapchain::new(&device, &surface, &desc).unwrap();
+
+    let image = Image::new(
+        &device,
+        ImageDesc::new(vk::Format::R8G8B8A8_SRGB, ImageType::Tex2D, [256, 256])
+            .usage(vk::ImageUsageFlags::SAMPLED)
+            .flags(vk::ImageCreateFlags::empty()),
+        None,
+    )
+    .unwrap();
 
     'running: loop {
         for event in event_pump.poll_iter() {

@@ -13,15 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::{Mutex, Arc}};
-
-use ash::vk;
-use gpu_allocator::{
-    vulkan::{Allocation, AllocationCreateDesc, AllocationScheme},
-    MemoryLocation,
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
 };
 
-use crate::{BackendError, BackendResult};
+use ash::vk;
+use gpu_alloc::{Request, UsageFlags};
+use log::debug;
+
+use crate::{Allocation, BackendError, BackendResult};
 
 use super::Device;
 
@@ -135,24 +136,29 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn new(device: &Arc<Device>, image_desc: ImageDesc, name: Option<&str>) -> BackendResult<Self> {
+    pub fn new(
+        device: &Arc<Device>,
+        image_desc: ImageDesc,
+        name: Option<&str>,
+    ) -> BackendResult<Self> {
         let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
-        let allocation = device
-            .allocator
-            .lock()
-            .unwrap()
-            .allocate(&AllocationCreateDesc {
-                name: name.unwrap_or("image"),
-                requirements,
-                location: MemoryLocation::GpuOnly,
-                linear: false,
-                allocation_scheme: AllocationScheme::GpuAllocatorManaged,
-            })?;
+        let allocation = device.allocate(|allocator, device| unsafe {
+            allocator.alloc(
+                device,
+                Request {
+                    size: requirements.size,
+                    align_mask: requirements.alignment,
+                    usage: UsageFlags::FAST_DEVICE_ACCESS,
+                    memory_types: !0,
+                },
+            )
+        })?;
+
         unsafe {
             device
                 .raw
-                .bind_image_memory(image, allocation.memory(), allocation.offset())
+                .bind_image_memory(image, *allocation.memory(), allocation.offset())
         }?;
 
         Ok(Self {
@@ -325,9 +331,9 @@ impl Drop for Image {
             self.views.lock().unwrap().iter().for_each(|view| {
                 list.drop_image_view(*view.1);
             });
+            // If memory isn't there then image was created by swapchain or something external
             if let Some(allocation) = self.allocation.take() {
                 list.drop_memory(allocation);
-                // If memory isn't there then image was created by swapchain.
                 list.drop_image(self.raw);
             }
         });

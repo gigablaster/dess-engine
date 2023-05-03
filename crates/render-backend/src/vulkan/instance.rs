@@ -89,6 +89,10 @@ impl Instance {
         names
     }
 
+    pub fn vulkan_version() -> u32 {
+        vk::make_api_version(0, 1, 1, 0)
+    }
+
     fn create(builder: &InstanceBuilder, window: &Window) -> BackendResult<Arc<Self>> {
         let entry = unsafe { ash::Entry::load()? };
 
@@ -105,7 +109,7 @@ impl Instance {
             .collect::<Vec<_>>();
 
         let app_desc = vk::ApplicationInfo::builder()
-            .api_version(vk::make_api_version(0, 1, 1, 0))
+            .api_version(Self::vulkan_version())
             .build();
 
         let instance_desc = vk::InstanceCreateInfo::builder()

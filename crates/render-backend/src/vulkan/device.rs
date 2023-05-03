@@ -15,18 +15,16 @@
 
 use std::{
     ffi::CStr,
+    fmt::Debug,
     sync::{Arc, Mutex},
-    fmt::Debug
 };
 
 use ash::{extensions::khr, vk};
-use gpu_allocator::{
-    vulkan::{Allocator, AllocatorCreateDesc},
-    AllocatorDebugSettings,
-};
-use log::info;
+use gpu_alloc::Config;
+use gpu_alloc_ash::{device_properties, AshMemoryDevice};
+use log::{debug, info};
 
-use crate::{BackendError, BackendResult, DropList};
+use crate::{Allocator, BackendError, BackendResult, DropList};
 
 use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily, SwapchainImage};
 
@@ -103,20 +101,10 @@ impl Device {
 
         info!("Created a Vulkan device");
 
-        let allocator = Allocator::new(&AllocatorCreateDesc {
-            instance: instance.raw.clone(),
-            device: device.clone(),
-            physical_device: pdevice.raw,
-            debug_settings: AllocatorDebugSettings {
-                log_leaks_on_shutdown: true,
-                log_memory_information: true,
-                log_allocations: true,
-                ..Default::default()
-            },
-            buffer_device_address: false,
-        })
-        .map_err(|err| err.to_string())?;
-
+        let device_properties =
+            unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw)? };
+        let allocator_config = Config::i_am_potato();
+        let allocator = Allocator::new(allocator_config, device_properties);
         let setup_cb = CommandBuffer::new(&device, &transfer_queue)?;
 
         let frames = [
@@ -138,7 +126,7 @@ impl Device {
             setup_cb: Mutex::new(setup_cb),
             raw: device,
             frames,
-            drop_lists
+            drop_lists,
         }))
     }
 
@@ -160,7 +148,10 @@ impl Device {
                         .wait_for_fences(&[frame0.command_buffer.fence], true, u64::MAX)
                 }?;
                 let mut allocator = self.allocator.lock().unwrap();
-                self.drop_lists[0].lock().unwrap().free(&self.raw, &mut allocator);
+                self.drop_lists[0]
+                    .lock()
+                    .unwrap()
+                    .free(&self.raw, &mut allocator);
             } else {
                 return Err(BackendError::Other(
                     "Unable to begin frame: frame data is being held by user code".into(),
@@ -178,7 +169,10 @@ impl Device {
             let mut frame1 = self.frames[1].lock().unwrap();
             let frame1 = Arc::get_mut(&mut frame1).unwrap();
             std::mem::swap(frame0, frame1);
-            std::mem::swap(&mut self.drop_lists[0].lock().unwrap(), &mut self.drop_lists[1].lock().unwrap());
+            std::mem::swap(
+                &mut self.drop_lists[0].lock().unwrap(),
+                &mut self.drop_lists[1].lock().unwrap(),
+            );
             Ok(())
         } else {
             Err(BackendError::Other(
@@ -211,16 +205,19 @@ impl Device {
         let mut list = self.drop_lists[0].lock().unwrap();
         cb(&mut list);
     }
+
+    pub(crate) fn allocate<T, F: FnOnce(&mut Allocator, &AshMemoryDevice) -> T>(&self, cb: F) -> T {
+        let mut allocator = self.allocator.lock().unwrap();
+        let device = AshMemoryDevice::wrap(&self.raw);
+        cb(&mut allocator, &device)
+    }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle().ok() };
         let mut allocator = self.allocator.lock().unwrap();
-        self.setup_cb
-            .lock()
-            .unwrap()
-            .free(&self.raw);
+        self.setup_cb.lock().unwrap().free(&self.raw);
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
             list.free(&self.raw, &mut allocator);
@@ -230,6 +227,7 @@ impl Drop for Device {
             let frame = Arc::get_mut(&mut frame).unwrap();
             frame.free(&self.raw);
         });
+        unsafe { allocator.cleanup(AshMemoryDevice::wrap(&self.raw)) };
         unsafe { self.raw.destroy_device(None) };
     }
 }

@@ -13,9 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod error;
 mod droplist;
+mod error;
 pub mod vulkan;
 
-pub use error::*;
+use ash::vk;
 use droplist::*;
+pub use error::*;
+use gpu_alloc::{GpuAllocator, MemoryBlock};
+
+type Allocator = GpuAllocator<vk::DeviceMemory>;
+type Allocation = MemoryBlock<vk::DeviceMemory>;

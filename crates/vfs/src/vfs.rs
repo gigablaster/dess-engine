@@ -13,11 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fs, io::Read, path::{Path, PathBuf}};
+use std::{
+    fs,
+    io::Read,
+    path::{Path, PathBuf},
+};
 
 use log::{error, info};
 
-use crate::{packed::PackedArchive, Archive, VfsError, raw_fs::RawFsArchive};
+use crate::{packed::PackedArchive, raw_fs::RawFsArchive, Archive, VfsError};
 
 #[derive(Default)]
 pub struct Vfs {
@@ -29,7 +33,8 @@ impl Vfs {
         let root = root.into();
         let raw_data_path = root.join("data");
         if raw_data_path.is_dir() {
-            self.archives.push(Box::new(RawFsArchive::new(raw_data_path)));
+            self.archives
+                .push(Box::new(RawFsArchive::new(raw_data_path)));
         }
         let paths = fs::read_dir(root)?;
         for path in paths {

@@ -36,4 +36,3 @@ impl FrameContext {
         self.command_buffer.free(device);
     }
 }
-

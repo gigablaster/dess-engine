@@ -13,12 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{path::PathBuf, fs::File, io::Read};
+use std::{fs::File, io::Read, path::PathBuf};
 
 use crate::{Archive, VfsError};
 
 pub struct RawFsArchive {
-    root: PathBuf
+    root: PathBuf,
 }
 
 impl RawFsArchive {

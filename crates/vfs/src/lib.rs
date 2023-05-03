@@ -17,8 +17,8 @@ mod directory;
 mod error;
 mod mmap;
 mod packed;
-mod vfs;
 mod raw_fs;
+mod vfs;
 
 pub use error::*;
 use lazy_static::lazy_static;

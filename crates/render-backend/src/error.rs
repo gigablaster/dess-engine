@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::{vk, LoadingError};
-use gpu_allocator::AllocationError;
+use gpu_alloc::AllocationError;
 
 #[derive(Debug)]
 pub enum BackendError {
