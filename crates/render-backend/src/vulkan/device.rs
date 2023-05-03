@@ -22,7 +22,7 @@ use std::{
 use ash::{extensions::khr, vk};
 use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
-use log::{debug, info};
+use log::info;
 
 use crate::{Allocator, BackendError, BackendResult, DropList};
 
@@ -209,7 +209,7 @@ impl Device {
     pub(crate) fn allocate<T, F: FnOnce(&mut Allocator, &AshMemoryDevice) -> T>(&self, cb: F) -> T {
         let mut allocator = self.allocator.lock().unwrap();
         let device = AshMemoryDevice::wrap(&self.raw);
-        cb(&mut allocator, &device)
+        cb(&mut allocator, device)
     }
 }
 

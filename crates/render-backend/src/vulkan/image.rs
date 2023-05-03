@@ -20,7 +20,6 @@ use std::{
 
 use ash::vk;
 use gpu_alloc::{Request, UsageFlags};
-use log::debug;
 
 use crate::{Allocation, BackendError, BackendResult};
 
@@ -139,7 +138,7 @@ impl Image {
     pub fn new(
         device: &Arc<Device>,
         image_desc: ImageDesc,
-        name: Option<&str>,
+        _name: Option<&str>,
     ) -> BackendResult<Self> {
         let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };

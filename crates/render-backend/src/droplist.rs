@@ -1,6 +1,5 @@
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
-use log::debug;
 
 use crate::{Allocation, Allocator};
 

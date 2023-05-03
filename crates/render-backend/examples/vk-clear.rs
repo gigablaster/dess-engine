@@ -80,7 +80,7 @@ fn main() -> Result<(), String> {
 
     let mut swapchain = Swapchain::new(&device, &surface, &desc).unwrap();
 
-    let image = Image::new(
+    let _image = Image::new(
         &device,
         ImageDesc::new(vk::Format::R8G8B8A8_SRGB, ImageType::Tex2D, [256, 256])
             .usage(vk::ImageUsageFlags::SAMPLED)
