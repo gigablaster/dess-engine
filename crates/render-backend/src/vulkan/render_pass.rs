@@ -15,11 +15,13 @@
 
 use std::{
     collections::HashMap,
+    slice,
     sync::{Arc, Mutex},
 };
 
 use arrayvec::ArrayVec;
 use ash::vk;
+use log::info;
 
 use crate::BackendResult;
 
@@ -180,7 +182,7 @@ impl FramebufferCache {
         key: &FramebufferCacheKey,
     ) -> BackendResult<vk::Framebuffer> {
         let [width, height] = key.dims;
-        let mut formats = Vec::new(); // We must retain formats in their places in memory.
+        let mut formats = ArrayVec::<_, MAX_ATTACHMENTS>::new();
         let attachments = self
             .attachment_descs
             .iter()
@@ -193,7 +195,7 @@ impl FramebufferCache {
                     .height(height as _)
                     .flags(image_desc.create_flags)
                     .layer_count(1)
-                    .view_formats(&[formats[index]])
+                    .view_formats(slice::from_ref(&formats[index]))
                     .usage(image_desc.usage_flags)
                     .build()
             })
@@ -214,6 +216,8 @@ impl FramebufferCache {
         fbo_create_info.attachment_count = attachments.len() as _;
 
         let fbo = unsafe { device.create_framebuffer(&fbo_create_info, None) }?;
+
+        info!("DONE!");
 
         Ok(fbo)
     }
