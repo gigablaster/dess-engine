@@ -21,7 +21,6 @@ use std::{
 
 use arrayvec::ArrayVec;
 use ash::vk;
-use log::info;
 
 use crate::BackendResult;
 
@@ -216,8 +215,6 @@ impl FramebufferCache {
         fbo_create_info.attachment_count = attachments.len() as _;
 
         let fbo = unsafe { device.create_framebuffer(&fbo_create_info, None) }?;
-
-        info!("DONE!");
 
         Ok(fbo)
     }
