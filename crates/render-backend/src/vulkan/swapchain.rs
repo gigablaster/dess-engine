@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::sync::Arc;
+use std::{slice, sync::Arc};
 
 use ash::{extensions::khr, vk};
 use log::info;
@@ -267,9 +267,9 @@ impl<'a> Swapchain<'a> {
 
     pub fn present_image(&self, image: SwapchainImage) {
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(&[image.rendering_finished_semaphore])
-            .swapchains(&[self.inner.raw])
-            .image_indices(&[image.image_index])
+            .wait_semaphores(slice::from_ref(&image.rendering_finished_semaphore))
+            .swapchains(slice::from_ref(&self.inner.raw))
+            .image_indices(slice::from_ref(&image.image_index))
             .build();
 
         match unsafe {

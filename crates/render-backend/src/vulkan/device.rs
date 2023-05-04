@@ -16,6 +16,7 @@
 use std::{
     ffi::CStr,
     fmt::Debug,
+    slice,
     sync::{Arc, Mutex},
 };
 
@@ -144,8 +145,11 @@ impl Device {
         {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
                 unsafe {
-                    self.raw
-                        .wait_for_fences(&[frame0.command_buffer.fence], true, u64::MAX)
+                    self.raw.wait_for_fences(
+                        slice::from_ref(&frame0.command_buffer.fence),
+                        true,
+                        u64::MAX,
+                    )
                 }?;
                 let mut allocator = self.allocator.lock().unwrap();
                 self.drop_lists[0]
@@ -184,14 +188,17 @@ impl Device {
     pub fn submit_render(&self, cb: &CommandBuffer, image: &SwapchainImage) -> BackendResult<()> {
         let submit_info = vk::SubmitInfo::builder()
             .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
-            .wait_semaphores(&[image.acquire_semaphore])
-            .signal_semaphores(&[image.rendering_finished_semaphore])
-            .command_buffers(&[cb.raw])
+            .wait_semaphores(slice::from_ref(&image.acquire_semaphore))
+            .signal_semaphores(slice::from_ref(&image.rendering_finished_semaphore))
+            .command_buffers(slice::from_ref(&cb.raw))
             .build();
         unsafe {
-            self.raw.reset_fences(&[cb.fence])?;
-            self.raw
-                .queue_submit(self.graphics_queue.raw, &[submit_info], cb.fence)?;
+            self.raw.reset_fences(slice::from_ref(&cb.fence))?;
+            self.raw.queue_submit(
+                self.graphics_queue.raw,
+                slice::from_ref(&submit_info),
+                cb.fence,
+            )?;
         }
 
         Ok(())
