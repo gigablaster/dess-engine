@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 ash = "0.37"
-sdl2 = { version = "0.35", features = ["bundled"] }
+sdl2 = "0.35"
 common = { path = "../common" }
 render = { path = "../render" }
 render-backend = { path = "../render-backend" }
