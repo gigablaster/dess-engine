@@ -169,6 +169,20 @@ impl Image {
         })
     }
 
+    pub fn subresource(
+        &self,
+        layer: u32,
+        mip: u32,
+        aspect: vk::ImageAspectFlags,
+    ) -> vk::ImageSubresourceRange {
+        vk::ImageSubresourceRange::builder()
+            .base_array_layer(layer)
+            .level_count(1)
+            .base_mip_level(mip)
+            .aspect_mask(aspect)
+            .build()
+    }
+
     pub fn get_or_create_view(&self, view_desc: ImageViewDesc) -> BackendResult<vk::ImageView> {
         let mut views = self.views.lock().unwrap();
         if let Some(view) = views.get(&view_desc) {

@@ -13,6 +13,7 @@ log = "0.4"
 gpu-alloc = "0.5"
 gpu-alloc-ash = "0.5"
 arrayvec = "0.7"
+vk-sync = "0.1"
 
 [[example]]
 name = "vk-clear"

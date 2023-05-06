@@ -58,7 +58,7 @@ impl RenderPassAttachmentDesc {
     }
 
     pub fn clear_input(mut self) -> Self {
-        self.load_op = vk::AttachmentLoadOp::DONT_CARE;
+        self.load_op = vk::AttachmentLoadOp::CLEAR;
         self
     }
 
@@ -95,7 +95,8 @@ impl FboCacheKey {
         let dims = color_attachments
             .iter()
             .chain(depth_attachment.iter())
-            .find_map(|image| Some(image.desc.extent));
+            .map(|image| image.desc.extent)
+            .next();
         if let Some(dims) = dims {
             let attachments = color_attachments
                 .iter()
@@ -157,7 +158,6 @@ impl FboCache {
             .attachments
             .iter()
             .copied()
-            .map(|attachment| attachment)
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
 
         let fbo_desc = vk::FramebufferCreateInfo::builder()
@@ -251,5 +251,12 @@ impl RenderPass {
 
     pub fn clear_fbos(&self) {
         self.fbo_cache.clear();
+    }
+}
+
+impl Drop for RenderPass {
+    fn drop(&mut self) {
+        self.fbo_cache.clear();
+        unsafe { self.device.raw.destroy_render_pass(self.raw, None) };
     }
 }

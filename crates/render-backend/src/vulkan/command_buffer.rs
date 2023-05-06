@@ -13,18 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::slice;
+
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
+use vk_sync::GlobalBarrier;
 
 use crate::BackendResult;
 
 use super::{
-    Device, FboCacheKey, RenderPass, MAX_ATTACHMENTS,
-    MAX_COLOR_ATTACHMENTS, QueueFamily, Image,
+    Device, FboCacheKey, Image, QueueFamily, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
 pub struct CommandBuffer {
-    device: ash::Device,
     pub raw: vk::CommandBuffer,
     pub fence: vk::Fence,
     pub pool: vk::CommandPool,
@@ -55,136 +56,125 @@ impl CommandBuffer {
         let fence = unsafe { device.create_fence(&fence_create_info, None)? };
 
         Ok(Self {
-            device: device.clone(),
             raw: command_buffer,
             fence,
             pool,
         })
     }
 
-    pub fn begin(&self) -> BackendResult<CommandBufferGenerator> {
-        unsafe {
-            self.device
-                .reset_command_buffer(self.raw, vk::CommandBufferResetFlags::empty())
-        }?;
-        let begin_info = vk::CommandBufferBeginInfo::builder()
-            .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
-            .build();
-        unsafe { self.device.begin_command_buffer(self.raw, &begin_info) }?;
-
-        Ok(CommandBufferGenerator {
-            device: &self.device,
-            cb: self.raw,
-        })
+    pub fn record<'a>(&'a self, device: &'a Device) -> BackendResult<CommandBufferRecorder<'a>> {
+        CommandBufferRecorder::new(&device.raw, &self.raw)
     }
 
-    pub(crate) fn free(&mut self, device: &ash::Device) {
+    pub fn free(&self, device: &ash::Device) {
         unsafe {
+            device.free_command_buffers(self.pool, slice::from_ref(&self.raw));
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
         }
     }
 }
 
-pub struct CommandBufferGenerator<'a> {
-    device: &'a ash::Device,
-    cb: vk::CommandBuffer,
+pub struct RenderPassAttachment<'a> {
+    pub image: &'a Image,
+    pub clear: vk::ClearValue,
 }
 
-impl<'a> Drop for CommandBufferGenerator<'a> {
-    fn drop(&mut self) {
-        unsafe { self.device.end_command_buffer(self.cb) }.unwrap();
+impl<'a> RenderPassAttachment<'a> {
+    pub fn new(image: &'a Image, clear: vk::ClearValue) -> Self {
+        Self { image, clear }
     }
 }
 
-impl<'a> CommandBufferGenerator<'a> {
-    pub fn begin_pass(
+pub struct CommandBufferRecorder<'a> {
+    pub device: &'a ash::Device,
+    pub cb: &'a vk::CommandBuffer,
+}
+
+impl<'a> CommandBufferRecorder<'a> {
+    pub(self) fn new(device: &'a ash::Device, cb: &'a vk::CommandBuffer) -> BackendResult<Self> {
+        unsafe { device.reset_command_buffer(*cb, vk::CommandBufferResetFlags::empty()) }?;
+
+        let begin_info = vk::CommandBufferBeginInfo::builder()
+            .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+            .build();
+        unsafe { device.begin_command_buffer(*cb, &begin_info) }?;
+        Ok(Self { device, cb })
+    }
+
+    pub fn render_pass(
         &self,
-        dims: [u32; 2],
         render_pass: &RenderPass,
-        color_attachments: &[&Image],
-        depth_attachment: Option<&Image>,
-    ) {
-        let _color_attachment_descs = color_attachments
+        color_attachments: &[RenderPassAttachment],
+        depth_attachment: Option<RenderPassAttachment>,
+    ) -> RenderPassRecorder {
+        let clear_values = color_attachments
             .iter()
-            .map(|image| &image.desc)
-            .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
-        let key = FboCacheKey::new(color_attachments, depth_attachment);
-
-        let [width, height] = dims;
-        let framebuffer = render_pass.fbo_cache.get_or_create(key).unwrap();
-
-        let begin_pass_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(render_pass.raw)
-            .framebuffer(framebuffer)
-            .render_area(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D {
-                    width: width as _,
-                    height: height as _,
-                },
-            })
-            .build();
-
-        unsafe {
-            self.device.cmd_begin_render_pass(
-                self.cb,
-                &begin_pass_info,
-                vk::SubpassContents::INLINE,
-            )
-        };
-    }
-
-    pub fn clear(
-        &self,
-        dims: [u32; 2],
-        colors: &[vk::ClearColorValue],
-        depth: Option<vk::ClearDepthStencilValue>,
-    ) {
-        let attachments = colors
-            .iter()
-            .enumerate()
-            .map(|(index, value)| {
-                vk::ClearAttachment::builder()
-                    .aspect_mask(vk::ImageAspectFlags::COLOR)
-                    .color_attachment(index as _)
-                    .clear_value(vk::ClearValue { color: *value })
-                    .build()
-            })
-            .chain(depth.as_ref().map(|depth| {
-                vk::ClearAttachment::builder()
-                    .aspect_mask(vk::ImageAspectFlags::DEPTH)
-                    .clear_value(vk::ClearValue {
-                        depth_stencil: *depth,
-                    })
-                    .build()
-            }))
+            .chain(depth_attachment.iter())
+            .map(|attachment| attachment.clear)
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+        let color_attachments = color_attachments
+            .iter()
+            .map(|attachment| attachment.image)
+            .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
+        let depth_attachment = depth_attachment
+            .iter()
+            .map(|attachment| attachment.image)
+            .next();
+        let key = FboCacheKey::new(&color_attachments, depth_attachment);
+        let dims = color_attachments
+            .iter()
+            .chain(depth_attachment.iter())
+            .map(|image| image.desc.extent)
+            .next();
+        if let Some(dims) = dims {
+            let framebuffer = render_pass.fbo_cache.get_or_create(key).unwrap();
 
-        let rect = vk::ClearRect::builder()
-            .rect(vk::Rect2D {
-                offset: vk::Offset2D { x: 0, y: 0 },
-                extent: vk::Extent2D {
-                    width: dims[0],
-                    height: dims[1],
-                },
-            })
-            .base_array_layer(0)
-            .layer_count(1)
-            .build();
-        unsafe {
-            self.device
-                .cmd_clear_attachments(self.cb, &attachments, &[rect])
-        };
-    }
+            let begin_pass_info = vk::RenderPassBeginInfo::builder()
+                .render_pass(render_pass.raw)
+                .framebuffer(framebuffer)
+                .clear_values(&clear_values)
+                .render_area(vk::Rect2D {
+                    offset: vk::Offset2D { x: 0, y: 0 },
+                    extent: vk::Extent2D {
+                        width: dims[0] as _,
+                        height: dims[1] as _,
+                    },
+                })
+                .build();
 
-    pub fn end_pass(&self) {
-        unsafe { self.device.cmd_end_render_pass(self.cb) };
+            unsafe {
+                self.device.cmd_begin_render_pass(
+                    *self.cb,
+                    &begin_pass_info,
+                    vk::SubpassContents::INLINE,
+                )
+            };
+
+            RenderPassRecorder {
+                device: self.device,
+                cb: self.cb,
+            }
+        } else {
+            panic!("Can't start render pass without attachments");
+        }
     }
 }
 
-impl Device {
-    pub fn create_command_buffer(&self) -> BackendResult<CommandBuffer> {
-        CommandBuffer::new(&self.raw, &self.graphics_queue.family)
+impl<'a> Drop for CommandBufferRecorder<'a> {
+    fn drop(&mut self) {
+        unsafe { self.device.end_command_buffer(*self.cb) }.unwrap();
     }
 }
+
+pub struct RenderPassRecorder<'a> {
+    pub device: &'a ash::Device,
+    pub cb: &'a vk::CommandBuffer,
+}
+
+impl<'a> Drop for RenderPassRecorder<'a> {
+    fn drop(&mut self) {
+        unsafe { self.device.cmd_end_render_pass(*self.cb) };
+    }
+}
+

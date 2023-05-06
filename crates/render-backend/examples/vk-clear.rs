@@ -20,7 +20,7 @@ use ash::vk;
 use render_backend::{
     vulkan::{
         Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
-        RenderPassAttachmentDesc, RenderPassLayout, Surface, Swapchain,
+        RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Surface, Swapchain,
     },
     BackendError,
 };
@@ -66,7 +66,7 @@ fn main() -> Result<(), String> {
     let mut swapchain = Swapchain::new(&device, surface).unwrap();
 
     let color_attachment_desc =
-        RenderPassAttachmentDesc::new(swapchain.backbuffer_format()).garbage_input();
+        RenderPassAttachmentDesc::new(swapchain.backbuffer_format()).clear_input();
     let render_pass_desc = RenderPassLayout {
         color_attachments: &[color_attachment_desc],
         depth_attachment: None,
@@ -131,21 +131,16 @@ fn main() -> Result<(), String> {
             continue;
         }
         {
-            let cb = frame.command_buffer.begin().unwrap();
-            cb.begin_pass(
-                [window.size().0, window.size().1],
-                &render_pass,
-                &[&image.image],
-                None,
-            );
-            cb.clear(
-                [window.size().0, window.size().1],
-                &[vk::ClearColorValue {
-                    float32: [1.0, 0.0, 0.0, 1.0],
-                }],
-                None,
-            );
-            cb.end_pass();
+            let recorder = frame.command_buffer.record(&device).unwrap();
+            let attachments = [RenderPassAttachment::new(
+                &image.image,
+                vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [1.0, 0.5, 0.25, 1.0],
+                    },
+                },
+            )];
+            let pass = recorder.render_pass(&render_pass, &attachments, None);
         }
         device.submit_render(&frame.command_buffer, &image).unwrap();
         device.end_frame(frame).unwrap();
