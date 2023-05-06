@@ -19,8 +19,8 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use crate::BackendResult;
 
 use super::{
-    Device, FramebufferCacheKey, Image, ImageViewDesc, QueueFamily, RenderPass, MAX_ATTACHMENTS,
-    MAX_COLOR_ATTACHMENTS,
+    Device, FboCacheKey, RenderPass, MAX_ATTACHMENTS,
+    MAX_COLOR_ATTACHMENTS, QueueFamily, Image,
 };
 
 pub struct CommandBuffer {
@@ -103,48 +103,16 @@ impl<'a> CommandBufferGenerator<'a> {
         dims: [u32; 2],
         render_pass: &RenderPass,
         color_attachments: &[&Image],
-        depth_attachment: Option<Image>,
+        depth_attachment: Option<&Image>,
     ) {
-        let color_attachment_descs = color_attachments
+        let _color_attachment_descs = color_attachments
             .iter()
             .map(|image| &image.desc)
             .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
-        let image_attachments = color_attachments
-            .iter()
-            .map(|image| {
-                let desc = ImageViewDesc::default()
-                    .level_count(1)
-                    .base_mip_level(0)
-                    .format(image.desc.format)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .aspect_mask(vk::ImageAspectFlags::COLOR);
-                image.get_or_create_view(self.device, desc).unwrap()
-            })
-            .chain(depth_attachment.as_ref().map(|image| {
-                let desc = ImageViewDesc::default()
-                    .level_count(1)
-                    .base_mip_level(0)
-                    .format(image.desc.format)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .aspect_mask(vk::ImageAspectFlags::DEPTH);
-                image.get_or_create_view(self.device, desc).unwrap()
-            }))
-            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+        let key = FboCacheKey::new(color_attachments, depth_attachment);
 
-        let key = FramebufferCacheKey::new(
-            dims,
-            &color_attachment_descs,
-            depth_attachment.map(|image| image.desc).as_ref(),
-        );
-
-        let mut pass_attachments_info = vk::RenderPassAttachmentBeginInfoKHR::builder()
-            .attachments(&image_attachments)
-            .build();
         let [width, height] = dims;
-        let framebuffer = render_pass
-            .framebuffer_cache
-            .get_or_create(&self.device, key)
-            .unwrap();
+        let framebuffer = render_pass.fbo_cache.get_or_create(key).unwrap();
 
         let begin_pass_info = vk::RenderPassBeginInfo::builder()
             .render_pass(render_pass.raw)
@@ -156,7 +124,6 @@ impl<'a> CommandBufferGenerator<'a> {
                     height: height as _,
                 },
             })
-            .push_next(&mut pass_attachments_info)
             .build();
 
         unsafe {

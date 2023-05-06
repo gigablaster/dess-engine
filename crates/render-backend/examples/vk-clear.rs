@@ -20,7 +20,7 @@ use ash::vk;
 use render_backend::{
     vulkan::{
         Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
-        RenderPassAttachmentDesc, RenderPassDesc, Surface, Swapchain,
+        RenderPassAttachmentDesc, RenderPassLayout, Surface, Swapchain,
     },
     BackendError,
 };
@@ -65,15 +65,13 @@ fn main() -> Result<(), String> {
 
     let mut swapchain = Swapchain::new(&device, surface).unwrap();
 
-    let color_attachment_desc = RenderPassAttachmentDesc::new(swapchain.backbuffer_format())
-        .garbage_input()
-        .initial_layout(vk::ImageLayout::UNDEFINED)
-        .final_layout(vk::ImageLayout::PRESENT_SRC_KHR);
-    let render_pass_desc = RenderPassDesc {
+    let color_attachment_desc =
+        RenderPassAttachmentDesc::new(swapchain.backbuffer_format()).garbage_input();
+    let render_pass_desc = RenderPassLayout {
         color_attachments: &[color_attachment_desc],
         depth_attachment: None,
     };
-    let render_pass = RenderPass::new(&device, &render_pass_desc).unwrap();
+    let render_pass = RenderPass::new(&device, render_pass_desc).unwrap();
 
     let mut skip_render = false;
     'running: loop {
@@ -120,6 +118,7 @@ fn main() -> Result<(), String> {
         let image = match swapchain.acquire_next_image() {
             Ok(image) => Ok(image),
             Err(BackendError::RecreateSwapchain) => {
+                render_pass.clear_fbos();
                 swapchain.recreate().unwrap();
                 continue;
             }
@@ -127,6 +126,7 @@ fn main() -> Result<(), String> {
         }
         .unwrap();
         if recreate_swapchain {
+            render_pass.clear_fbos();
             swapchain.recreate().unwrap();
             continue;
         }

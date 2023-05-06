@@ -204,7 +204,7 @@ impl SwapchainInner {
             unsafe { device.destroy_semaphore(*semaphore, None) };
         }
         for image in self.images.iter() {
-            image.destroy_all_views(&device);
+            image.destroy_all_views();
         }
     }
 }

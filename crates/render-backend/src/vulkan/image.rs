@@ -169,11 +169,7 @@ impl Image {
         })
     }
 
-    pub fn get_or_create_view(
-        &self,
-        device: &ash::Device,
-        view_desc: ImageViewDesc,
-    ) -> BackendResult<vk::ImageView> {
+    pub fn get_or_create_view(&self, view_desc: ImageViewDesc) -> BackendResult<vk::ImageView> {
         let mut views = self.views.lock().unwrap();
         if let Some(view) = views.get(&view_desc) {
             Ok(*view)
@@ -190,7 +186,7 @@ impl Image {
                 ..view_desc.build(self)
             };
 
-            let view = unsafe { device.create_image_view(&create_info, None) }?;
+            let view = unsafe { self.device.raw.create_image_view(&create_info, None) }?;
 
             views.insert(view_desc, view);
 
@@ -198,10 +194,10 @@ impl Image {
         }
     }
 
-    pub fn destroy_all_views(&self, device: &ash::Device) {
+    pub fn destroy_all_views(&self) {
         let mut views = self.views.lock().unwrap();
         views.iter().for_each(|(_, view)| {
-            unsafe { device.destroy_image_view(*view, None) };
+            unsafe { self.device.raw.destroy_image_view(*view, None) };
         });
         views.clear();
     }

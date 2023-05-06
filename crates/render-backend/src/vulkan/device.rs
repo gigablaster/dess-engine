@@ -54,11 +54,7 @@ impl Device {
             ));
         };
 
-        let device_extension_names = vec![
-            khr::Swapchain::name().as_ptr(),
-            vk::KhrImagelessFramebufferFn::name().as_ptr(),
-            vk::KhrImageFormatListFn::name().as_ptr(),
-        ];
+        let device_extension_names = vec![khr::Swapchain::name().as_ptr()];
 
         for ext in &device_extension_names {
             let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
@@ -70,11 +66,7 @@ impl Device {
         let graphics_queue = pdevice.get_queue(vk::QueueFlags::GRAPHICS)?;
         let transfer_queue = pdevice.get_queue(vk::QueueFlags::TRANSFER)?;
 
-        let mut imageless_framebuffer_address =
-            vk::PhysicalDeviceImagelessFramebufferFeaturesKHR::default();
-        let mut features = vk::PhysicalDeviceFeatures2::builder()
-            .push_next(&mut imageless_framebuffer_address)
-            .build();
+        let mut features = vk::PhysicalDeviceFeatures2::builder().build();
 
         unsafe {
             instance

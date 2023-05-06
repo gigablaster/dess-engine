@@ -15,7 +15,6 @@
 
 use std::{
     collections::HashMap,
-    slice,
     sync::{Arc, Mutex},
 };
 
@@ -24,19 +23,23 @@ use ash::vk;
 
 use crate::BackendResult;
 
-use super::{Device, ImageDesc};
+use super::{Device, Image, ImageViewDesc};
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Default)]
+pub struct RenderPassLayout<'a> {
+    pub color_attachments: &'a [RenderPassAttachmentDesc],
+    pub depth_attachment: Option<RenderPassAttachmentDesc>,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct RenderPassAttachmentDesc {
-    pub format: vk::Format,
-    pub load_op: vk::AttachmentLoadOp,
-    pub store_op: vk::AttachmentStoreOp,
-    pub samples: vk::SampleCountFlags,
-    pub initial_layout: vk::ImageLayout,
-    pub final_layout: vk::ImageLayout,
+    format: vk::Format,
+    load_op: vk::AttachmentLoadOp,
+    store_op: vk::AttachmentStoreOp,
+    samples: vk::SampleCountFlags,
 }
 
 impl RenderPassAttachmentDesc {
@@ -46,19 +49,7 @@ impl RenderPassAttachmentDesc {
             load_op: vk::AttachmentLoadOp::LOAD,
             store_op: vk::AttachmentStoreOp::STORE,
             samples: vk::SampleCountFlags::TYPE_1,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            final_layout: vk::ImageLayout::GENERAL,
         }
-    }
-
-    pub fn initial_layout(mut self, value: vk::ImageLayout) -> Self {
-        self.initial_layout = value;
-        self
-    }
-
-    pub fn final_layout(mut self, value: vk::ImageLayout) -> Self {
-        self.final_layout = value;
-        self
     }
 
     pub fn garbage_input(mut self) -> Self {
@@ -67,7 +58,7 @@ impl RenderPassAttachmentDesc {
     }
 
     pub fn clear_input(mut self) -> Self {
-        self.load_op = vk::AttachmentLoadOp::CLEAR;
+        self.load_op = vk::AttachmentLoadOp::DONT_CARE;
         self
     }
 
@@ -93,207 +84,172 @@ impl RenderPassAttachmentDesc {
     }
 }
 
-#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
-pub struct AttachmentDesc {
-    pub usage_flags: vk::ImageUsageFlags,
-    pub create_flags: vk::ImageCreateFlags,
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct FboCacheKey {
+    dims: [u32; 2],
+    attachments: ArrayVec<vk::ImageView, MAX_ATTACHMENTS>,
 }
 
-#[derive(Debug, Clone, Hash, Eq, PartialEq)]
-pub struct FramebufferCacheKey {
-    pub dims: [u32; 2],
-    pub attachments: ArrayVec<AttachmentDesc, MAX_ATTACHMENTS>,
-}
-
-impl FramebufferCacheKey {
-    pub fn new<'a>(
-        dims: [u32; 2],
-        color_attachments: &[&'a ImageDesc],
-        depth_stencil_attachment: Option<&'a ImageDesc>,
-    ) -> Self {
-        let attachments = color_attachments
+impl FboCacheKey {
+    pub fn new(color_attachments: &[&Image], depth_attachment: Option<&Image>) -> Self {
+        let dims = color_attachments
             .iter()
-            .chain(depth_stencil_attachment.as_ref().into_iter())
-            .map(|attachment| AttachmentDesc {
-                usage_flags: attachment.usage,
-                create_flags: attachment.flags,
-            })
-            .collect();
+            .chain(depth_attachment.iter())
+            .find_map(|image| Some(image.desc.extent));
+        if let Some(dims) = dims {
+            let attachments = color_attachments
+                .iter()
+                .map(|image| {
+                    let desc = ImageViewDesc::default()
+                        .format(image.desc.format)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .level_count(1)
+                        .base_mip_level(0)
+                        .aspect_mask(vk::ImageAspectFlags::COLOR);
+                    image.get_or_create_view(desc).unwrap()
+                })
+                .chain(depth_attachment.iter().map(|image| {
+                    let desc = ImageViewDesc::default()
+                        .format(image.desc.format)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .level_count(1)
+                        .base_mip_level(0)
+                        .aspect_mask(vk::ImageAspectFlags::DEPTH);
+                    image.get_or_create_view(desc).unwrap()
+                }))
+                .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
 
-        Self { dims, attachments }
+            Self { dims, attachments }
+        } else {
+            panic!("Can't create FboCacheKey without attachments");
+        }
     }
 }
 
-pub struct FramebufferCache {
+pub(crate) struct FboCache {
+    device: Arc<Device>,
+    entries: Mutex<HashMap<FboCacheKey, vk::Framebuffer>>,
     render_pass: vk::RenderPass,
-    entries: Mutex<HashMap<FramebufferCacheKey, vk::Framebuffer>>,
-    attachment_descs: ArrayVec<RenderPassAttachmentDesc, MAX_ATTACHMENTS>,
 }
 
-impl FramebufferCache {
-    pub fn new(
-        render_pass: vk::RenderPass,
-        color_attachments: &[RenderPassAttachmentDesc],
-        depth_stencil_attachment: Option<RenderPassAttachmentDesc>,
-    ) -> Self {
-        let mut attachment_descs = ArrayVec::new();
-        attachment_descs
-            .try_extend_from_slice(color_attachments)
-            .unwrap();
-        if let Some(depth_stencil) = depth_stencil_attachment {
-            attachment_descs.push(depth_stencil);
-        }
-
+impl FboCache {
+    pub fn new(device: &Arc<Device>, render_pass: vk::RenderPass) -> Self {
         Self {
-            render_pass,
+            device: device.clone(),
             entries: Default::default(),
-            attachment_descs,
+            render_pass,
         }
     }
 
-    pub fn get_or_create(
-        &self,
-        device: &ash::Device,
-        key: FramebufferCacheKey,
-    ) -> BackendResult<vk::Framebuffer> {
+    pub fn get_or_create(&self, key: FboCacheKey) -> BackendResult<vk::Framebuffer> {
         let mut entries = self.entries.lock().unwrap();
-
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
         } else {
-            let fbo = self.create_fbo(device, &key)?;
+            let fbo = self.create_fbo(&key)?;
             entries.insert(key, fbo);
             Ok(fbo)
         }
     }
 
-    pub fn clear(&self, device: &ash::Device) {
-        let mut entries = self.entries.lock().unwrap();
-        entries.iter().for_each(|(_, fbo)| {
-            unsafe { device.destroy_framebuffer(*fbo, None) };
-        });
-        entries.clear();
+    fn create_fbo(&self, key: &FboCacheKey) -> BackendResult<vk::Framebuffer> {
+        let attachments = key
+            .attachments
+            .iter()
+            .copied()
+            .map(|attachment| attachment)
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+
+        let fbo_desc = vk::FramebufferCreateInfo::builder()
+            .render_pass(self.render_pass)
+            .width(key.dims[0] as _)
+            .height(key.dims[1] as _)
+            .layers(1)
+            .attachments(&attachments)
+            .build();
+
+        Ok(unsafe { self.device.raw.create_framebuffer(&fbo_desc, None) }?)
     }
 
-    fn create_fbo(
-        &self,
-        device: &ash::Device,
-        key: &FramebufferCacheKey,
-    ) -> BackendResult<vk::Framebuffer> {
-        let [width, height] = key.dims;
-        let mut formats = ArrayVec::<_, MAX_ATTACHMENTS>::new();
-        let attachments = self
-            .attachment_descs
-            .iter()
-            .zip(key.attachments.iter())
-            .map(|(attachment_desc, image_desc)| {
-                let index = formats.len();
-                formats.push(attachment_desc.format);
-                vk::FramebufferAttachmentImageInfo::builder()
-                    .width(width as _)
-                    .height(height as _)
-                    .flags(image_desc.create_flags)
-                    .layer_count(1)
-                    .view_formats(slice::from_ref(&formats[index]))
-                    .usage(image_desc.usage_flags)
-                    .build()
-            })
-            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
-        let mut imagess_desc = vk::FramebufferAttachmentsCreateInfo::builder()
-            .attachment_image_infos(&attachments)
-            .build();
-
-        let mut fbo_create_info = vk::FramebufferCreateInfo::builder()
-            .flags(vk::FramebufferCreateFlags::IMAGELESS)
-            .render_pass(self.render_pass)
-            .width(width as _)
-            .height(height as _)
-            .layers(1)
-            .push_next(&mut imagess_desc)
-            .build();
-
-        fbo_create_info.attachment_count = attachments.len() as _;
-
-        let fbo = unsafe { device.create_framebuffer(&fbo_create_info, None) }?;
-
-        Ok(fbo)
+    pub fn clear(&self) {
+        let mut entries = self.entries.lock().unwrap();
+        entries
+            .drain()
+            .for_each(|(_, fbo)| unsafe { self.device.raw.destroy_framebuffer(fbo, None) });
     }
 }
-#[derive(Debug)]
-pub struct RenderPassDesc<'a> {
-    pub color_attachments: &'a [RenderPassAttachmentDesc],
-    pub depth_attachment: Option<RenderPassAttachmentDesc>,
+
+impl Drop for FboCache {
+    fn drop(&mut self) {
+        self.clear();
+    }
 }
 
 pub struct RenderPass {
     device: Arc<Device>,
     pub(crate) raw: vk::RenderPass,
-    pub framebuffer_cache: FramebufferCache,
+    pub(crate) fbo_cache: FboCache,
 }
 
 impl RenderPass {
-    pub fn new(device: &Arc<Device>, desc: &RenderPassDesc) -> BackendResult<Arc<RenderPass>> {
-        let attachment_refs = desc
+    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> BackendResult<Self> {
+        let attachments = layout
             .color_attachments
             .iter()
-            .map(|a| a.build(a.initial_layout, a.final_layout))
-            .chain(
-                desc.depth_attachment
-                    .as_ref()
-                    .map(|a| a.build(a.initial_layout, a.final_layout)),
-            )
+            .map(|desc| {
+                desc.build(
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                )
+            })
+            .chain(layout.depth_attachment.iter().map(|desc| {
+                desc.build(
+                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                )
+            }))
             .collect::<Vec<_>>();
 
-        let color_attachment_refs = (0..desc.color_attachments.len() as u32)
+        let color_attacmnet_refs = (0..layout.color_attachments.len())
             .map(|index| vk::AttachmentReference {
-                attachment: index,
+                attachment: index as _,
                 layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             })
-            .collect::<Vec<_>>();
+            .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
 
-        let depth_attachment_ref = vk::AttachmentReference {
-            attachment: desc.color_attachments.len() as u32,
-            layout: vk::ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
-        };
-
-        let mut subpass_description = vk::SubpassDescription::builder()
-            .color_attachments(&color_attachment_refs)
+        let mut subpass_desc = vk::SubpassDescription::builder()
+            .color_attachments(&color_attacmnet_refs)
             .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS);
 
-        if desc.depth_attachment.is_some() {
-            subpass_description =
-                subpass_description.depth_stencil_attachment(&depth_attachment_ref);
+        let depth_attachment_ref = if layout.depth_attachment.is_some() {
+            Some(vk::AttachmentReference {
+                attachment: color_attacmnet_refs.len() as _,
+                layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+            })
+        } else {
+            None
+        };
+
+        if let Some(depth_attachment_ref) = depth_attachment_ref.as_ref() {
+            subpass_desc = subpass_desc.depth_stencil_attachment(depth_attachment_ref);
         }
 
-        let subpass_description = subpass_description.build();
-
-        let subpasses = [subpass_description];
-
-        let render_pass_create_info = vk::RenderPassCreateInfo::builder()
-            .attachments(&attachment_refs)
+        let subpasses = [subpass_desc.build(); 1];
+        let render_pass_info = vk::RenderPassCreateInfo::builder()
+            .attachments(&attachments)
             .subpasses(&subpasses)
             .build();
 
-        let render_pass = unsafe {
-            device
-                .raw
-                .create_render_pass(&render_pass_create_info, None)
-        }?;
+        let render_pass = unsafe { device.raw.create_render_pass(&render_pass_info, None) }?;
 
-        let framebuffer_cache =
-            FramebufferCache::new(render_pass, desc.color_attachments, desc.depth_attachment);
-
-        Ok(Arc::new(Self {
+        Ok(Self {
             device: device.clone(),
             raw: render_pass,
-            framebuffer_cache,
-        }))
+            fbo_cache: FboCache::new(device, render_pass),
+        })
     }
-}
 
-impl Drop for RenderPass {
-    fn drop(&mut self) {
-        self.framebuffer_cache.clear(&self.device.raw);
-        unsafe { self.device.raw.destroy_render_pass(self.raw, None) };
+    pub fn clear_fbos(&self) {
+        self.fbo_cache.clear();
     }
 }
