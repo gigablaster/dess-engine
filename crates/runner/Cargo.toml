@@ -10,7 +10,6 @@ ash = "0.37"
 sdl2 = "0.35"
 common = { path = "../common" }
 render = { path = "../render" }
-render-backend = { path = "../render-backend" }
 log = "0.4"
 simple_logger = "4.0"
 anyhow = "1.0"

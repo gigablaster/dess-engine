@@ -3,6 +3,5 @@ members=[
     "crates/common",
     "crates/vfs",
     "crates/runner",
-    "crates/render-backend",
     "crates/render",
 ]

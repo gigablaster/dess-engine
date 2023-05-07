@@ -16,7 +16,7 @@
 use ash::vk;
 use common::{Client, ClientState, TimeFilter};
 use log::{log, Level};
-use render_backend::vulkan::{Device, Instance, PhysicalDeviceList, Surface, Swapchain};
+use render::vulkan::{Device, Instance, PhysicalDeviceList, Surface, Swapchain};
 use sdl2::{
     event::Event,
     log::{set_output_function, Category, Priority},
