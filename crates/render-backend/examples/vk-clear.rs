@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use core::slice;
 use std::{thread::sleep, time::Duration};
 
 use ash::vk;
@@ -25,6 +26,7 @@ use render_backend::{
     BackendError,
 };
 use sdl2::event::{Event, WindowEvent};
+use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
 
 fn main() -> Result<(), String> {
     simple_logger::init().unwrap();
@@ -118,20 +120,38 @@ fn main() -> Result<(), String> {
         let image = match swapchain.acquire_next_image() {
             Ok(image) => Ok(image),
             Err(BackendError::RecreateSwapchain) => {
-                render_pass.clear_fbos();
                 swapchain.recreate().unwrap();
+                render_pass.clear_fbos();
                 continue;
             }
             Err(err) => Err(err),
         }
         .unwrap();
         if recreate_swapchain {
-            render_pass.clear_fbos();
             swapchain.recreate().unwrap();
+            render_pass.clear_fbos();
             continue;
         }
         {
             let recorder = frame.command_buffer.record(&device).unwrap();
+            let barrier = ImageBarrier {
+                previous_accesses: &[AccessType::Nothing],
+                next_accesses: &[AccessType::ColorAttachmentWrite],
+                previous_layout: vk_sync::ImageLayout::Optimal,
+                next_layout: vk_sync::ImageLayout::Optimal,
+                discard_contents: true,
+                src_queue_family_index: 0,
+                dst_queue_family_index: 0,
+                image: image.image.raw,
+                range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
+            };
+            pipeline_barrier(
+                recorder.device,
+                *recorder.cb,
+                None,
+                &[],
+                slice::from_ref(&barrier),
+            );
             let attachments = [RenderPassAttachment::new(
                 &image.image,
                 vk::ClearValue {
@@ -140,7 +160,28 @@ fn main() -> Result<(), String> {
                     },
                 },
             )];
-            let pass = recorder.render_pass(&render_pass, &attachments, None);
+            {
+                let _pass = recorder.render_pass(&render_pass, &attachments, None);
+            }
+
+            let barrier = ImageBarrier {
+                previous_accesses: &[AccessType::ColorAttachmentWrite],
+                next_accesses: &[AccessType::Present],
+                previous_layout: vk_sync::ImageLayout::Optimal,
+                next_layout: vk_sync::ImageLayout::Optimal,
+                discard_contents: true,
+                src_queue_family_index: 0,
+                dst_queue_family_index: 0,
+                image: image.image.raw,
+                range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
+            };
+            pipeline_barrier(
+                recorder.device,
+                *recorder.cb,
+                None,
+                &[],
+                slice::from_ref(&barrier),
+            );
         }
         device.submit_render(&frame.command_buffer, &image).unwrap();
         device.end_frame(frame).unwrap();

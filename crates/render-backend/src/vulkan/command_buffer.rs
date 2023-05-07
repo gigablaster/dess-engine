@@ -17,7 +17,7 @@ use std::slice;
 
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
-use vk_sync::GlobalBarrier;
+
 
 use crate::BackendResult;
 
@@ -177,4 +177,3 @@ impl<'a> Drop for RenderPassRecorder<'a> {
         unsafe { self.device.cmd_end_render_pass(*self.cb) };
     }
 }
-

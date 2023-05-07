@@ -12,5 +12,5 @@ common = { path = "../common" }
 log = "0.4"
 simple_logger = "4.0"
 anyhow = "1.0"
-puffin = "0.14"
+puffin = "0.15"
 gpu-allocator = { version = "0.22", default-features = false, features = ["vulkan"]}

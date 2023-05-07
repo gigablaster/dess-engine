@@ -128,7 +128,7 @@ impl ImageViewDesc {
 #[derive(Debug)]
 pub struct Image {
     pub(crate) device: Arc<Device>,
-    pub(crate) raw: vk::Image,
+    pub raw: vk::Image,
     pub desc: ImageDesc,
     pub(crate) allocation: Option<Allocation>,
     pub(crate) views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
@@ -177,6 +177,7 @@ impl Image {
     ) -> vk::ImageSubresourceRange {
         vk::ImageSubresourceRange::builder()
             .base_array_layer(layer)
+            .layer_count(1)
             .level_count(1)
             .base_mip_level(mip)
             .aspect_mask(aspect)
