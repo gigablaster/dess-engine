@@ -156,7 +156,7 @@ impl Device {
                     .lock()
                     .unwrap()
                     .free(&self.raw, &mut allocator);
-                frame0.reset();
+                frame0.reset()?;
             } else {
                 return Err(BackendError::Other(
                     "Unable to begin frame: frame data is being held by user code".into(),

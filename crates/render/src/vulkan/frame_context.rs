@@ -15,13 +15,14 @@
 
 use ash::vk;
 
-use crate::BackendResult;
+use crate::{BackendError, BackendResult};
 
 use super::{CommandBuffer, QueueFamily};
 
 pub struct FrameContext {
     pub device: ash::Device,
     pub presentation_cb: CommandBuffer,
+    pub main_cb: CommandBuffer,
     pub queue_family: QueueFamily,
     pub pool: vk::CommandPool,
 }
@@ -38,6 +39,7 @@ impl FrameContext {
         Ok(Self {
             device: device.clone(),
             presentation_cb: CommandBuffer::new(device, pool)?,
+            main_cb: CommandBuffer::new(device, pool)?,
             queue_family: *queue_family,
             pool,
         })
@@ -45,13 +47,16 @@ impl FrameContext {
 
     pub(crate) fn free(&mut self, device: &ash::Device) {
         self.presentation_cb.free(device);
+        self.main_cb.free(device);
         unsafe { self.device.destroy_command_pool(self.pool, None) };
     }
 
-    pub(crate) fn reset(&self) {
+    pub(crate) fn reset(&self) -> BackendResult<()> {
         unsafe {
             self.device
                 .reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())
-        };
+        }?;
+
+        Ok(())
     }
 }
