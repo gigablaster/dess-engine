@@ -18,7 +18,6 @@ use std::slice;
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 
-
 use crate::BackendResult;
 
 use super::{
@@ -32,14 +31,7 @@ pub struct CommandBuffer {
 }
 
 impl CommandBuffer {
-    pub(crate) fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
-        let pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family.index)
-            .build();
-
-        let pool = unsafe { device.create_command_pool(&pool_create_info, None)? };
-
+    pub(crate) fn new(device: &ash::Device, pool: vk::CommandPool) -> BackendResult<Self> {
         let command_buffer_allocation_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .command_pool(pool)
@@ -69,7 +61,6 @@ impl CommandBuffer {
     pub fn free(&self, device: &ash::Device) {
         unsafe {
             device.free_command_buffers(self.pool, slice::from_ref(&self.raw));
-            device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
         }
     }
@@ -93,8 +84,6 @@ pub struct CommandBufferRecorder<'a> {
 
 impl<'a> CommandBufferRecorder<'a> {
     pub(self) fn new(device: &'a ash::Device, cb: &'a vk::CommandBuffer) -> BackendResult<Self> {
-        unsafe { device.reset_command_buffer(*cb, vk::CommandBufferResetFlags::empty()) }?;
-
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
             .build();

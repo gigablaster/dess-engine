@@ -41,6 +41,7 @@ pub struct Device {
     pub graphics_queue: Queue,
     pub transfer_queue: Queue,
     pub allocator: Arc<Mutex<Allocator>>,
+    setup_pool: vk::CommandPool,
     setup_cb: Mutex<CommandBuffer>,
     frames: [Mutex<Arc<FrameContext>>; 2],
     drop_lists: [Mutex<DropList>; 2],
@@ -98,7 +99,13 @@ impl Device {
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw)? };
         let allocator_config = Config::i_am_potato();
         let allocator = Allocator::new(allocator_config, device_properties);
-        let setup_cb = CommandBuffer::new(&device, &transfer_queue)?;
+        let pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(transfer_queue.index)
+            .build();
+
+        let setup_pool = unsafe { device.create_command_pool(&pool_create_info, None)? };
+        let setup_cb = CommandBuffer::new(&device, setup_pool)?;
 
         let frames = [
             Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
@@ -120,6 +127,7 @@ impl Device {
             raw: device,
             frames,
             drop_lists,
+            setup_pool,
         }))
     }
 
@@ -138,7 +146,7 @@ impl Device {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
                 unsafe {
                     self.raw.wait_for_fences(
-                        slice::from_ref(&frame0.command_buffer.fence),
+                        slice::from_ref(&frame0.presentation_cb.fence),
                         true,
                         u64::MAX,
                     )
@@ -148,6 +156,7 @@ impl Device {
                     .lock()
                     .unwrap()
                     .free(&self.raw, &mut allocator);
+                frame0.reset();
             } else {
                 return Err(BackendError::Other(
                     "Unable to begin frame: frame data is being held by user code".into(),
@@ -217,6 +226,7 @@ impl Drop for Device {
         unsafe { self.raw.device_wait_idle().ok() };
         let mut allocator = self.allocator.lock().unwrap();
         self.setup_cb.lock().unwrap().free(&self.raw);
+        unsafe { self.raw.destroy_command_pool(self.setup_pool, None) };
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
             list.free(&self.raw, &mut allocator);

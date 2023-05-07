@@ -13,26 +13,45 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use ash::vk;
+
 use crate::BackendResult;
 
 use super::{CommandBuffer, QueueFamily};
 
 pub struct FrameContext {
     pub device: ash::Device,
-    pub command_buffer: CommandBuffer,
+    pub presentation_cb: CommandBuffer,
     pub queue_family: QueueFamily,
+    pub pool: vk::CommandPool,
 }
 
 impl FrameContext {
     pub fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
+        let pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
+            .queue_family_index(queue_family.index)
+            .build();
+
+        let pool = unsafe { device.create_command_pool(&pool_create_info, None)? };
+
         Ok(Self {
             device: device.clone(),
-            command_buffer: CommandBuffer::new(device, queue_family)?,
+            presentation_cb: CommandBuffer::new(device, pool)?,
             queue_family: *queue_family,
+            pool,
         })
     }
 
     pub(crate) fn free(&mut self, device: &ash::Device) {
-        self.command_buffer.free(device);
+        self.presentation_cb.free(device);
+        unsafe { self.device.destroy_command_pool(self.pool, None) };
+    }
+
+    pub(crate) fn reset(&self) {
+        unsafe {
+            self.device
+                .reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())
+        };
     }
 }

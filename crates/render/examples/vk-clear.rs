@@ -133,7 +133,7 @@ fn main() -> Result<(), String> {
             continue;
         }
         {
-            let recorder = frame.command_buffer.record(&device).unwrap();
+            let recorder = frame.presentation_cb.record(&device).unwrap();
             let barrier = ImageBarrier {
                 previous_accesses: &[AccessType::Nothing],
                 next_accesses: &[AccessType::ColorAttachmentWrite],
@@ -183,7 +183,9 @@ fn main() -> Result<(), String> {
                 slice::from_ref(&barrier),
             );
         }
-        device.submit_render(&frame.command_buffer, &image).unwrap();
+        device
+            .submit_render(&frame.presentation_cb, &image)
+            .unwrap();
         device.end_frame(frame).unwrap();
         swapchain.present_image(image);
     }
