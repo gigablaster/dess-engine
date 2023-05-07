@@ -12,9 +12,11 @@ gpu-alloc = "0.5"
 gpu-alloc-ash = "0.5"
 arrayvec = "0.7"
 vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
+puffin = "0.15"
 
 [[example]]
 name = "vk-clear"
 
 [dev-dependencies]
 simple_logger = "4.0"
+puffin_http = "0.12"

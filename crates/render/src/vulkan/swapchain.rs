@@ -232,6 +232,7 @@ impl<'a> Swapchain<'a> {
     }
 
     pub fn acquire_next_image(&mut self) -> BackendResult<SwapchainImage> {
+        puffin::profile_scope!("wait for swapchain");
         let acquire_semaphore = self.inner.acquire_semaphore[self.inner.next_semaphore];
         let rendering_finished_semaphore =
             self.inner.rendering_finished_semaphore[self.inner.next_semaphore];
@@ -266,6 +267,7 @@ impl<'a> Swapchain<'a> {
     }
 
     pub fn present_image(&self, image: SwapchainImage) {
+        puffin::profile_scope!("present");
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(slice::from_ref(&image.presentation_finished))
             .swapchains(slice::from_ref(&self.inner.raw))
