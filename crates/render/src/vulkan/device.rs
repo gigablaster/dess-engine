@@ -20,6 +20,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use arrayvec::ArrayVec;
 use ash::{extensions::khr, vk};
 use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
@@ -32,6 +33,11 @@ use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily};
 pub struct Queue {
     pub raw: vk::Queue,
     pub family: QueueFamily,
+}
+
+pub struct SubmitWaitDesc {
+    pub semaphore: vk::Semaphore,
+    pub stage: vk::PipelineStageFlags,
 }
 
 pub struct Device {
@@ -189,12 +195,14 @@ impl Device {
     pub fn submit_transfer(
         &self,
         cb: &CommandBuffer,
-        wait: &[vk::Semaphore],
+        wait: &[SubmitWaitDesc],
         trigger: &[vk::Semaphore],
     ) -> BackendResult<()> {
+        let masks = wait.iter().map(|x| x.stage).collect::<ArrayVec<_, 8>>();
+        let semaphors = wait.iter().map(|x| x.semaphore).collect::<ArrayVec<_, 8>>();
         let submit_info = vk::SubmitInfo::builder()
-            .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
-            .wait_semaphores(wait)
+            .wait_dst_stage_mask(&masks)
+            .wait_semaphores(&semaphors)
             .signal_semaphores(trigger)
             .command_buffers(slice::from_ref(&cb.raw))
             .build();
@@ -213,12 +221,14 @@ impl Device {
     pub fn submit_render(
         &self,
         cb: &CommandBuffer,
-        wait: &[vk::Semaphore],
+        wait: &[SubmitWaitDesc],
         trigger: &[vk::Semaphore],
     ) -> BackendResult<()> {
+        let masks = wait.iter().map(|x| x.stage).collect::<ArrayVec<_, 8>>();
+        let semaphors = wait.iter().map(|x| x.semaphore).collect::<ArrayVec<_, 8>>();
         let submit_info = vk::SubmitInfo::builder()
-            .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
-            .wait_semaphores(wait)
+            .wait_dst_stage_mask(&masks)
+            .wait_semaphores(&semaphors)
             .signal_semaphores(trigger)
             .command_buffers(slice::from_ref(&cb.raw))
             .build();

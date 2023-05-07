@@ -21,7 +21,8 @@ use ash::vk;
 use render::{
     vulkan::{
         Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
-        RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Surface, Swapchain,
+        RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, SubmitWaitDesc, Surface,
+        Swapchain,
     },
     BackendError,
 };
@@ -123,33 +124,6 @@ fn main() -> Result<(), String> {
             sleep(Duration::from_millis(16));
             continue;
         }
-        let image = match swapchain.acquire_next_image() {
-            Ok(image) => Ok(image),
-            Err(BackendError::RecreateSwapchain) => {
-                rt = create_rt(
-                    &device,
-                    swapchain.backbuffer_format(),
-                    window.size().0,
-                    window.size().1,
-                );
-                swapchain.recreate().unwrap();
-                render_pass.clear_fbos();
-                continue;
-            }
-            Err(err) => Err(err),
-        }
-        .unwrap();
-        if recreate_swapchain {
-            rt = create_rt(
-                &device,
-                swapchain.backbuffer_format(),
-                window.size().0,
-                window.size().1,
-            );
-            swapchain.recreate().unwrap();
-            render_pass.clear_fbos();
-            continue;
-        }
         let frame = device.begin_frame().unwrap();
         {
             let recorder = frame.main_cb.record(&device).unwrap();
@@ -182,15 +156,37 @@ fn main() -> Result<(), String> {
             {
                 let _pass = recorder.render_pass(&render_pass, &attachments, None);
             }
-
         }
         device
-            .submit_render(
-                &frame.main_cb,
-                &[image.acquire_semaphore],
-                &[frame.render_finished],
-            )
+            .submit_render(&frame.main_cb, &[], &[frame.render_finished])
             .unwrap();
+        let image = match swapchain.acquire_next_image() {
+            Ok(image) => Ok(image),
+            Err(BackendError::RecreateSwapchain) => {
+                rt = create_rt(
+                    &device,
+                    swapchain.backbuffer_format(),
+                    window.size().0,
+                    window.size().1,
+                );
+                swapchain.recreate().unwrap();
+                render_pass.clear_fbos();
+                continue;
+            }
+            Err(err) => Err(err),
+        }
+        .unwrap();
+        if recreate_swapchain {
+            rt = create_rt(
+                &device,
+                swapchain.backbuffer_format(),
+                window.size().0,
+                window.size().1,
+            );
+            swapchain.recreate().unwrap();
+            render_pass.clear_fbos();
+            continue;
+        }
         {
             let recorder = frame.presentation_cb.record(&device).unwrap();
             let barrier = ImageBarrier {
@@ -300,7 +296,16 @@ fn main() -> Result<(), String> {
         device
             .submit_transfer(
                 &frame.presentation_cb,
-                &[frame.render_finished],
+                &[
+                    SubmitWaitDesc {
+                        stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        semaphore: frame.render_finished,
+                    },
+                    SubmitWaitDesc {
+                        stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        semaphore: image.acquire_semaphore,
+                    },
+                ],
                 &[image.presentation_finished],
             )
             .unwrap();
