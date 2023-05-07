@@ -27,11 +27,11 @@ use log::info;
 
 use crate::{Allocator, BackendError, BackendResult, DropList};
 
-use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily, SwapchainImage};
+use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily};
 
 pub struct Queue {
-    pub(crate) raw: vk::Queue,
-    pub(crate) family: QueueFamily,
+    pub raw: vk::Queue,
+    pub family: QueueFamily,
 }
 
 pub struct Device {
@@ -186,11 +186,40 @@ impl Device {
         }
     }
 
-    pub fn submit_render(&self, cb: &CommandBuffer, image: &SwapchainImage) -> BackendResult<()> {
+    pub fn submit_transfer(
+        &self,
+        cb: &CommandBuffer,
+        wait: &[vk::Semaphore],
+        trigger: &[vk::Semaphore],
+    ) -> BackendResult<()> {
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_dst_stage_mask(&[vk::PipelineStageFlags::TRANSFER])
+            .wait_semaphores(wait)
+            .signal_semaphores(trigger)
+            .command_buffers(slice::from_ref(&cb.raw))
+            .build();
+        unsafe {
+            self.raw.reset_fences(slice::from_ref(&cb.fence))?;
+            self.raw.queue_submit(
+                self.transfer_queue.raw,
+                slice::from_ref(&submit_info),
+                cb.fence,
+            )?;
+        }
+
+        Ok(())
+    }
+
+    pub fn submit_render(
+        &self,
+        cb: &CommandBuffer,
+        wait: &[vk::Semaphore],
+        trigger: &[vk::Semaphore],
+    ) -> BackendResult<()> {
         let submit_info = vk::SubmitInfo::builder()
             .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
-            .wait_semaphores(slice::from_ref(&image.acquire_semaphore))
-            .signal_semaphores(slice::from_ref(&image.rendering_finished_semaphore))
+            .wait_semaphores(wait)
+            .signal_semaphores(trigger)
             .command_buffers(slice::from_ref(&cb.raw))
             .build();
         unsafe {

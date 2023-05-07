@@ -106,7 +106,7 @@ impl SwapchainInner {
             .image_format(format.format)
             .image_color_space(format.color_space)
             .image_extent(surface_resolution)
-            .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
+            .image_usage(vk::ImageUsageFlags::TRANSFER_DST)
             .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
             .pre_transform(pre_transform)
             .composite_alpha(vk::CompositeAlphaFlagsKHR::OPAQUE)
@@ -219,7 +219,7 @@ pub struct SwapchainImage {
     pub image: Arc<Image>,
     pub image_index: u32,
     pub acquire_semaphore: vk::Semaphore,
-    pub rendering_finished_semaphore: vk::Semaphore,
+    pub presentation_finished: vk::Semaphore,
 }
 
 impl<'a> Swapchain<'a> {
@@ -255,7 +255,7 @@ impl<'a> Swapchain<'a> {
                     image: self.inner.images[present_index as usize].clone(),
                     image_index: present_index,
                     acquire_semaphore,
-                    rendering_finished_semaphore,
+                    presentation_finished: rendering_finished_semaphore,
                 })
             }
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {
@@ -267,7 +267,7 @@ impl<'a> Swapchain<'a> {
 
     pub fn present_image(&self, image: SwapchainImage) {
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(slice::from_ref(&image.rendering_finished_semaphore))
+            .wait_semaphores(slice::from_ref(&image.presentation_finished))
             .swapchains(slice::from_ref(&self.inner.raw))
             .image_indices(slice::from_ref(&image.image_index))
             .build();

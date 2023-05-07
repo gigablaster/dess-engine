@@ -20,9 +20,7 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 
 use crate::BackendResult;
 
-use super::{
-    Device, FboCacheKey, Image, QueueFamily, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
-};
+use super::{Device, FboCacheKey, Image, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS};
 
 pub struct CommandBuffer {
     pub raw: vk::CommandBuffer,

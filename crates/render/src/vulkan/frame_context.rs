@@ -15,7 +15,7 @@
 
 use ash::vk;
 
-use crate::{BackendError, BackendResult};
+use crate::BackendResult;
 
 use super::{CommandBuffer, QueueFamily};
 
@@ -25,6 +25,7 @@ pub struct FrameContext {
     pub main_cb: CommandBuffer,
     pub queue_family: QueueFamily,
     pub pool: vk::CommandPool,
+    pub render_finished: vk::Semaphore,
 }
 
 impl FrameContext {
@@ -36,19 +37,29 @@ impl FrameContext {
 
         let pool = unsafe { device.create_command_pool(&pool_create_info, None)? };
 
+        let semaphore_info = vk::SemaphoreCreateInfo::builder()
+            .flags(vk::SemaphoreCreateFlags::default())
+            .build();
+
+        let render_finished = unsafe { device.create_semaphore(&semaphore_info, None) }?;
+
         Ok(Self {
             device: device.clone(),
             presentation_cb: CommandBuffer::new(device, pool)?,
             main_cb: CommandBuffer::new(device, pool)?,
             queue_family: *queue_family,
             pool,
+            render_finished,
         })
     }
 
     pub(crate) fn free(&mut self, device: &ash::Device) {
         self.presentation_cb.free(device);
         self.main_cb.free(device);
-        unsafe { self.device.destroy_command_pool(self.pool, None) };
+        unsafe {
+            self.device.destroy_command_pool(self.pool, None);
+            self.device.destroy_semaphore(self.render_finished, None);
+        }
     }
 
     pub(crate) fn reset(&self) -> BackendResult<()> {
