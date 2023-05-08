@@ -350,4 +350,3 @@ impl Drop for Image {
     }
 }
 
-impl Device {}
