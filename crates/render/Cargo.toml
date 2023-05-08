@@ -7,7 +7,6 @@ edition = "2021"
 ash =  "0.37"
 sdl2 = "0.35"
 common = { path = "../common" }
-vfs = { path = "../vfs" }
 log = "0.4"
 gpu-alloc = "0.5"
 gpu-alloc-ash = "0.5"
@@ -22,6 +21,10 @@ byte-slice-cast = "1.2"
 [[example]]
 name = "vk-clear"
 
+[[example]]
+name = "vk-triangle"
+
 [dev-dependencies]
 simple_logger = "4.0"
 puffin_http = "0.12"
+vfs = { path = "../vfs" }
