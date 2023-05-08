@@ -349,4 +349,3 @@ impl Drop for Image {
         });
     }
 }
-

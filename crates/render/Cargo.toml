@@ -7,12 +7,17 @@ edition = "2021"
 ash =  "0.37"
 sdl2 = "0.35"
 common = { path = "../common" }
+vfs = { path = "../vfs" }
 log = "0.4"
 gpu-alloc = "0.5"
 gpu-alloc-ash = "0.5"
 arrayvec = "0.7"
 vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
 puffin = "0.15"
+rspirv = "0.11"
+rspirv-reflect = "0.7"
+shader-prepper = "0.2"
+byte-slice-cast = "1.2"
 
 [[example]]
 name = "vk-clear"

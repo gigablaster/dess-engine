@@ -19,17 +19,20 @@ mod frame_context;
 mod image;
 mod instance;
 mod physical_device;
+//mod pipeline;
 mod render_pass;
+mod shader;
 mod surface;
 mod swapchain;
 
 pub use command_buffer::*;
 pub use device::*;
 pub use frame_context::*;
-
 pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
+//pub use pipeline::*;
 pub use render_pass::*;
+pub use shader::*;
 pub use surface::*;
 pub use swapchain::*;

@@ -192,7 +192,7 @@ pub struct RenderPass {
 }
 
 impl RenderPass {
-    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> BackendResult<Self> {
+    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> BackendResult<Arc<Self>> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -242,11 +242,11 @@ impl RenderPass {
 
         let render_pass = unsafe { device.raw.create_render_pass(&render_pass_info, None) }?;
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             device: device.clone(),
             raw: render_pass,
             fbo_cache: FboCache::new(device, render_pass),
-        })
+        }))
     }
 
     pub fn clear_fbos(&self) {

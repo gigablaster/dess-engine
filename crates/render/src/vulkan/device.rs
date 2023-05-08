@@ -14,10 +14,11 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
+    collections::HashMap,
     ffi::CStr,
     fmt::Debug,
     slice,
-    sync::{Arc, Mutex}, collections::HashMap,
+    sync::{Arc, Mutex},
 };
 
 use arrayvec::ArrayVec;
@@ -34,7 +35,7 @@ use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily};
 pub struct SamplerDesc {
     pub texel_filter: vk::Filter,
     pub mipmap_mode: vk::SamplerMipmapMode,
-    pub address_mode: vk::SamplerAddressMode
+    pub address_mode: vk::SamplerAddressMode,
 }
 
 pub struct Queue {
@@ -131,7 +132,6 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
-
         Ok(Arc::new(Self {
             instance: instance.clone(),
             pdevice: pdevice.clone(),
@@ -149,8 +149,14 @@ impl Device {
 
     fn generate_samplers(device: &ash::Device) -> HashMap<SamplerDesc, vk::Sampler> {
         let texel_filters = [vk::Filter::NEAREST, vk::Filter::LINEAR];
-        let mipmap_modes = [vk::SamplerMipmapMode::NEAREST, vk::SamplerMipmapMode::LINEAR];
-        let address_modes = [vk::SamplerAddressMode::REPEAT, vk::SamplerAddressMode::CLAMP_TO_EDGE];
+        let mipmap_modes = [
+            vk::SamplerMipmapMode::NEAREST,
+            vk::SamplerMipmapMode::LINEAR,
+        ];
+        let address_modes = [
+            vk::SamplerAddressMode::REPEAT,
+            vk::SamplerAddressMode::CLAMP_TO_EDGE,
+        ];
         let mut result = HashMap::new();
         texel_filters.into_iter().for_each(|texel_filter| {
             mipmap_modes.into_iter().for_each(|mipmap_mode| {
@@ -167,9 +173,17 @@ impl Device {
                         .max_anisotropy(16.0)
                         .anisotropy_enable(anisotropy)
                         .build();
-                    let sampler = unsafe { device.create_sampler(&sampler_create_info, None).unwrap() };
+                    let sampler =
+                        unsafe { device.create_sampler(&sampler_create_info, None).unwrap() };
 
-                    result.insert(SamplerDesc { texel_filter, mipmap_mode, address_mode }, sampler);
+                    result.insert(
+                        SamplerDesc {
+                            texel_filter,
+                            mipmap_mode,
+                            address_mode,
+                        },
+                        sampler,
+                    );
                 })
             })
         });

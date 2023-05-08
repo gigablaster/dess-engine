@@ -15,6 +15,7 @@
 
 use ash::{vk, LoadingError};
 use gpu_alloc::AllocationError;
+use rspirv_reflect::ReflectError;
 
 #[derive(Debug)]
 pub enum BackendError {
@@ -23,6 +24,7 @@ pub enum BackendError {
     Allocation(AllocationError),
     NoExtension(String),
     Other(String),
+    Reflection(ReflectError),
     RecreateSwapchain,
     WaitForSurface,
 }
@@ -48,6 +50,12 @@ impl From<String> for BackendError {
 impl From<AllocationError> for BackendError {
     fn from(value: AllocationError) -> Self {
         BackendError::Allocation(value)
+    }
+}
+
+impl From<ReflectError> for BackendError {
+    fn from(value: ReflectError) -> Self {
+        BackendError::Reflection(value)
     }
 }
 
