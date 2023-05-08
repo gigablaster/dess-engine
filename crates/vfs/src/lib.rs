@@ -23,7 +23,11 @@ mod vfs;
 pub use error::*;
 use lazy_static::lazy_static;
 
-use std::{io::Read, path::Path, sync::Mutex};
+use std::{
+    io::Read,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use crate::vfs::Vfs;
 
@@ -35,7 +39,7 @@ pub trait Archive: Send + Sync {
     fn load(&self, name: &str) -> Result<Box<dyn Read>, VfsError>;
 }
 
-pub fn scan(root: &Path) -> Result<(), VfsError> {
+pub fn scan(root: impl Into<PathBuf>) -> Result<(), VfsError> {
     VFS.lock().unwrap().scan(root)
 }
 

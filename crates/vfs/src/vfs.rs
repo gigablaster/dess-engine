@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    fs,
+    env, fs,
     io::Read,
     path::{Path, PathBuf},
 };
@@ -33,6 +33,7 @@ impl Vfs {
         let root = root.into();
         let raw_data_path = root.join("data");
         if raw_data_path.is_dir() {
+            info!("Adding data at path {:?}", &raw_data_path);
             self.archives
                 .push(Box::new(RawFsArchive::new(raw_data_path)));
         }
@@ -40,7 +41,7 @@ impl Vfs {
         for path in paths {
             let path = path?.path();
             if path.is_file() && path.ends_with(".dess") {
-                info!("Scanning {:?}", path);
+                info!("Adding archive {:?}", path);
                 if let Err(err) = self.add_archive(&path) {
                     error!("Failed to add archive {:?} - {:?}", path, err);
                 }
