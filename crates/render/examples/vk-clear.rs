@@ -131,6 +131,33 @@ fn main() -> Result<(), String> {
             continue;
         }
         puffin::GlobalProfiler::lock().new_frame();
+        let image = match swapchain.acquire_next_image() {
+            Ok(image) => Ok(image),
+            Err(BackendError::RecreateSwapchain) => {
+                rt = create_rt(
+                    &device,
+                    swapchain.backbuffer_format(),
+                    window.size().0,
+                    window.size().1,
+                );
+                swapchain.recreate().unwrap();
+                render_pass.clear_fbos();
+                continue;
+            }
+            Err(err) => Err(err),
+        }
+        .unwrap();
+        if recreate_swapchain {
+            rt = create_rt(
+                &device,
+                swapchain.backbuffer_format(),
+                window.size().0,
+                window.size().1,
+            );
+            swapchain.recreate().unwrap();
+            render_pass.clear_fbos();
+            continue;
+        }
         let frame = device.begin_frame().unwrap();
         {
             {
@@ -167,35 +194,15 @@ fn main() -> Result<(), String> {
                 }
             }
             device
-                .submit_render(&frame.main_cb, &[], &[frame.render_finished])
+                .submit_render(
+                    &frame.main_cb,
+                    &[SubmitWaitDesc {
+                        semaphore: image.acquire_semaphore,
+                        stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    }],
+                    &[frame.render_finished],
+                )
                 .unwrap();
-        }
-        let image = match swapchain.acquire_next_image() {
-            Ok(image) => Ok(image),
-            Err(BackendError::RecreateSwapchain) => {
-                rt = create_rt(
-                    &device,
-                    swapchain.backbuffer_format(),
-                    window.size().0,
-                    window.size().1,
-                );
-                swapchain.recreate().unwrap();
-                render_pass.clear_fbos();
-                continue;
-            }
-            Err(err) => Err(err),
-        }
-        .unwrap();
-        if recreate_swapchain {
-            rt = create_rt(
-                &device,
-                swapchain.backbuffer_format(),
-                window.size().0,
-                window.size().1,
-            );
-            swapchain.recreate().unwrap();
-            render_pass.clear_fbos();
-            continue;
         }
         {
             puffin::profile_scope!("present cb");
@@ -308,16 +315,10 @@ fn main() -> Result<(), String> {
             device
                 .submit_transfer(
                     &frame.presentation_cb,
-                    &[
-                        SubmitWaitDesc {
-                            stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                            semaphore: frame.render_finished,
-                        },
-                        SubmitWaitDesc {
-                            stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                            semaphore: image.acquire_semaphore,
-                        },
-                    ],
+                    &[SubmitWaitDesc {
+                        stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        semaphore: frame.render_finished,
+                    }],
                     &[image.presentation_finished],
                 )
                 .unwrap();
