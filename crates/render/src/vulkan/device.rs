@@ -17,7 +17,7 @@ use std::{
     ffi::CStr,
     fmt::Debug,
     slice,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex}, collections::HashMap,
 };
 
 use arrayvec::ArrayVec;
@@ -29,6 +29,13 @@ use log::info;
 use crate::{Allocator, BackendError, BackendResult, DropList};
 
 use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily};
+
+#[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
+pub struct SamplerDesc {
+    pub texel_filter: vk::Filter,
+    pub mipmap_mode: vk::SamplerMipmapMode,
+    pub address_mode: vk::SamplerAddressMode
+}
 
 pub struct Queue {
     pub raw: vk::Queue,
@@ -47,6 +54,7 @@ pub struct Device {
     pub graphics_queue: Queue,
     pub transfer_queue: Queue,
     pub allocator: Arc<Mutex<Allocator>>,
+    samplers: HashMap<SamplerDesc, vk::Sampler>,
     setup_pool: vk::CommandPool,
     setup_cb: Mutex<CommandBuffer>,
     frames: [Mutex<Arc<FrameContext>>; 2],
@@ -123,6 +131,7 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
+
         Ok(Arc::new(Self {
             instance: instance.clone(),
             pdevice: pdevice.clone(),
@@ -130,11 +139,42 @@ impl Device {
             transfer_queue: Self::create_queue(&device, transfer_queue),
             allocator: Arc::new(Mutex::new(allocator)),
             setup_cb: Mutex::new(setup_cb),
+            samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
             drop_lists,
             setup_pool,
         }))
+    }
+
+    fn generate_samplers(device: &ash::Device) -> HashMap<SamplerDesc, vk::Sampler> {
+        let texel_filters = [vk::Filter::NEAREST, vk::Filter::LINEAR];
+        let mipmap_modes = [vk::SamplerMipmapMode::NEAREST, vk::SamplerMipmapMode::LINEAR];
+        let address_modes = [vk::SamplerAddressMode::REPEAT, vk::SamplerAddressMode::CLAMP_TO_EDGE];
+        let mut result = HashMap::new();
+        texel_filters.into_iter().for_each(|texel_filter| {
+            mipmap_modes.into_iter().for_each(|mipmap_mode| {
+                address_modes.into_iter().for_each(|address_mode| {
+                    let anisotropy = texel_filter == vk::Filter::LINEAR;
+                    let sampler_create_info = vk::SamplerCreateInfo::builder()
+                        .mag_filter(texel_filter)
+                        .min_filter(texel_filter)
+                        .mipmap_mode(mipmap_mode)
+                        .address_mode_u(address_mode)
+                        .address_mode_v(address_mode)
+                        .address_mode_w(address_mode)
+                        .max_lod(vk::LOD_CLAMP_NONE)
+                        .max_anisotropy(16.0)
+                        .anisotropy_enable(anisotropy)
+                        .build();
+                    let sampler = unsafe { device.create_sampler(&sampler_create_info, None).unwrap() };
+
+                    result.insert(SamplerDesc { texel_filter, mipmap_mode, address_mode }, sampler);
+                })
+            })
+        });
+
+        result
     }
 
     fn create_queue(device: &ash::Device, queue_family: QueueFamily) -> Queue {
@@ -258,6 +298,10 @@ impl Device {
         let device = AshMemoryDevice::wrap(&self.raw);
         cb(&mut allocator, device)
     }
+
+    pub fn get_sampler(&self, desc: SamplerDesc) -> Option<vk::Sampler> {
+        self.samplers.get(&desc).copied()
+    }
 }
 
 impl Drop for Device {
@@ -274,6 +318,9 @@ impl Drop for Device {
             let mut frame = frame.lock().unwrap();
             let frame = Arc::get_mut(&mut frame).unwrap();
             frame.free(&self.raw);
+        });
+        self.samplers.iter().for_each(|(_, sampler)| unsafe {
+            self.raw.destroy_sampler(*sampler, None);
         });
         unsafe { allocator.cleanup(AshMemoryDevice::wrap(&self.raw)) };
         unsafe { self.raw.destroy_device(None) };
