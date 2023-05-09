@@ -139,6 +139,11 @@ impl SwapchainInner {
             .map(Arc::new)
             .collect::<Vec<_>>();
 
+        images.iter().enumerate().for_each(|(index, image)| {
+            let name = format!("swapchain_image_{}", index);
+            device.set_object_name(image.raw, &name).unwrap();
+        });
+
         let acquire_semaphore = (0..images.len())
             .map(|_| unsafe {
                 device

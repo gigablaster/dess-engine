@@ -150,6 +150,14 @@ impl Instance {
         }))
     }
 
+    pub(crate) fn get_debug_utils(&self) -> Option<&DebugUtils> {
+        if let Some(debug_utils) = &self.debug_utils {
+            Some(debug_utils)
+        } else {
+            None
+        }
+    }
+
     fn get_vk_message_type(message_type: vk::DebugUtilsMessageTypeFlagsEXT) -> &'static str {
         match message_type {
             vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE => "VK:Performance",

@@ -19,18 +19,15 @@ use rspirv_reflect::{BindingCount, DescriptorInfo};
 
 use crate::BackendResult;
 
+#[derive(Debug, Clone)]
 pub struct Shader {
     pub raw: vk::ShaderModule,
-    pub stage: vk::PipelineStageFlags,
+    pub stage: vk::ShaderStageFlags,
     pub layouts: Vec<vk::DescriptorSetLayout>,
 }
 
 impl Shader {
-    fn new(
-        device: &ash::Device,
-        stage: vk::PipelineStageFlags,
-        code: &[u8],
-    ) -> BackendResult<Self> {
+    fn new(device: &ash::Device, stage: vk::ShaderStageFlags, code: &[u8]) -> BackendResult<Self> {
         let shader_create_info = vk::ShaderModuleCreateInfo::builder()
             .code(code.as_slice_of::<u32>().unwrap())
             .build();
@@ -45,11 +42,11 @@ impl Shader {
     }
 
     pub fn vertex(device: &ash::Device, code: &[u8]) -> BackendResult<Self> {
-        Self::new(device, vk::PipelineStageFlags::VERTEX_SHADER, code)
+        Self::new(device, vk::ShaderStageFlags::VERTEX, code)
     }
 
     pub fn fragment(device: &ash::Device, code: &[u8]) -> BackendResult<Self> {
-        Self::new(device, vk::PipelineStageFlags::FRAGMENT_SHADER, code)
+        Self::new(device, vk::ShaderStageFlags::FRAGMENT, code)
     }
 
     pub fn free(&self, device: &ash::Device) {
@@ -58,7 +55,7 @@ impl Shader {
 
     fn create_descriptor_set_layouts(
         device: &ash::Device,
-        stage: vk::PipelineStageFlags,
+        stage: vk::ShaderStageFlags,
         code: &[u8],
     ) -> BackendResult<Vec<vk::DescriptorSetLayout>> {
         let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
@@ -66,11 +63,6 @@ impl Shader {
         let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
         let mut layouts = Vec::with_capacity(8);
         let create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
-        let stage = match stage {
-            vk::PipelineStageFlags::VERTEX_SHADER => vk::ShaderStageFlags::VERTEX,
-            vk::PipelineStageFlags::FRAGMENT_SHADER => vk::ShaderStageFlags::FRAGMENT,
-            _ => unimplemented!("{:?}", stage),
-        };
         for index in 0..set_count {
             let set = sets.get(&index);
             if let Some(set) = set {

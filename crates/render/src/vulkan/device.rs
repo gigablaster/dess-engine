@@ -15,14 +15,17 @@
 
 use std::{
     collections::HashMap,
-    ffi::CStr,
+    ffi::{CStr, CString},
     fmt::Debug,
     slice,
     sync::{Arc, Mutex},
 };
 
 use arrayvec::ArrayVec;
-use ash::{extensions::khr, vk};
+use ash::{
+    extensions::khr,
+    vk::{self, Handle, ObjectType},
+};
 use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
@@ -315,6 +318,19 @@ impl Device {
 
     pub fn get_sampler(&self, desc: SamplerDesc) -> Option<vk::Sampler> {
         self.samplers.get(&desc).copied()
+    }
+
+    pub(crate) fn set_object_name<T: Handle>(&self, object: T, name: &str) -> BackendResult<()> {
+        if let Some(debug_utils) = self.instance.get_debug_utils() {
+            let name = CString::new(name).unwrap();
+            let name_info = vk::DebugUtilsObjectNameInfoEXT::builder()
+                .object_type(T::TYPE)
+                .object_handle(object.as_raw())
+                .object_name(&name)
+                .build();
+            unsafe { debug_utils.set_debug_utils_object_name(self.raw.handle(), &name_info) }?;
+        }
+        Ok(())
     }
 }
 

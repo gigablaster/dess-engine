@@ -13,39 +13,33 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, ops::Deref, sync::Arc};
+use std::ffi::CStr;
 
 use ash::vk;
 
 use crate::BackendResult;
 
-use super::{Device, RenderPass};
-
-pub struct PipelineShader {
-    pub stage: vk::PipelineStageFlags,
-    pub code: Vec<u8>,
-}
+use super::{RenderPass, Shader};
 
 pub struct Pipeline {
-    device: Arc<Device>,
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
 }
 
 pub struct PipelineDesc<'a> {
-    pub render_pass: Arc<RenderPass>,
+    pub render_pass: &'a RenderPass,
     pub depth_write: bool,
     pub face_cull: bool,
-    pub shaders: Vec<&'a PipelineShader>,
+    pub shaders: Vec<&'a Shader>
 }
 
 impl<'a> PipelineDesc<'a> {
-    pub fn new(render_pass: &Arc<RenderPass>) -> Self {
+    pub fn new(render_pass: &'a RenderPass) -> Self {
         Self {
-            render_pass: render_pass.clone(),
+            render_pass,
             depth_write: true,
             face_cull: true,
-            shaders: Vec::new(),
+            shaders: Vec::new()
         }
     }
 
@@ -59,8 +53,22 @@ impl<'a> PipelineDesc<'a> {
         self
     }
 
-    pub fn add_shader(mut self, shader: &'a PipelineShader) -> Self {
+    pub fn add_shader(mut self, shader: &'a Shader) -> Self {
         self.shaders.push(shader);
         self
+    }
+}
+
+impl Pipeline {
+    fn new(device: &ash::Device, desc: PipelineDesc) -> BackendResult<Self> {
+        let entry = CStr::from_bytes_with_nul(b"main\0").unwrap();
+        let shader_create_info = desc.shaders.iter().map(|shader| {
+            vk::PipelineShaderStageCreateInfo::builder()
+                .stage(shader.stage)
+                .module(shader.raw)
+                .name(entry)
+                .build()
+        }).collect::<Vec<_>>();
+
     }
 }

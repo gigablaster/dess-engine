@@ -138,7 +138,7 @@ impl Image {
     pub fn new(
         device: &Arc<Device>,
         image_desc: ImageDesc,
-        _name: Option<&str>,
+        name: Option<&str>,
     ) -> BackendResult<Self> {
         let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
         let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
@@ -159,6 +159,10 @@ impl Image {
                 .raw
                 .bind_image_memory(image, *allocation.memory(), allocation.offset())
         }?;
+
+        if let Some(name) = name {
+            device.set_object_name(image, name)?;
+        }
 
         Ok(Self {
             device: device.clone(),
@@ -209,7 +213,7 @@ impl Image {
         }
     }
 
-    pub fn destroy_all_views(&self) {
+    pub(crate) fn destroy_all_views(&self) {
         let mut views = self.views.lock().unwrap();
         views.iter().for_each(|(_, view)| {
             unsafe { self.device.raw.destroy_image_view(*view, None) };

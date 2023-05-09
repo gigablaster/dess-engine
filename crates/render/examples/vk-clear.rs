@@ -34,7 +34,7 @@ fn create_rt(device: &Arc<Device>, format: vk::Format, width: u32, height: u32) 
         .flags(vk::ImageCreateFlags::empty())
         .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC);
 
-    Image::new(&device, rt_desc, None).unwrap()
+    Image::new(&device, rt_desc, Some("rt")).unwrap()
 }
 
 fn main() -> Result<(), String> {
