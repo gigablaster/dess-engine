@@ -13,27 +13,27 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod buffer;
 mod command_buffer;
 mod device;
 mod frame_context;
 mod image;
 mod instance;
 mod physical_device;
-//mod pipeline;
-mod buffer;
+mod pipeline;
 mod render_pass;
 mod shader;
 mod surface;
 mod swapchain;
 
+pub use buffer::*;
 pub use command_buffer::*;
 pub use device::*;
 pub use frame_context::*;
 pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
-//pub use pipeline::*;
-pub use buffer::*;
+pub use pipeline::*;
 pub use render_pass::*;
 pub use shader::*;
 pub use surface::*;

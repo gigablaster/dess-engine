@@ -18,16 +18,44 @@ use std::{sync::Arc, thread::sleep, time::Duration};
 
 use ash::vk;
 
+use glam::Vec3;
 use render::{
     vulkan::{
-        Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
-        RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Shader, SubmitWaitDesc,
-        Surface, Swapchain,
+        Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, Pipeline, PipelineCache,
+        PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment, RenderPassAttachmentDesc,
+        RenderPassLayout, Shader, SubmitWaitDesc, Surface, Swapchain,
     },
     BackendError,
 };
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
+
+#[repr(C, packed)]
+struct Vertex {
+    pos: Vec3,
+    color: Vec3,
+}
+
+impl PipelineVertex for Vertex {
+    fn attribute_description() -> &'static [vk::VertexInputAttributeDescription] {
+        static desc: [vk::VertexInputAttributeDescription; 2] = [
+            vk::VertexInputAttributeDescription {
+                location: 0,
+                binding: 0,
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: 0,
+            },
+            vk::VertexInputAttributeDescription {
+                location: 1,
+                binding: 0,
+                format: vk::Format::R32G32B32_SFLOAT,
+                offset: 12,
+            },
+        ];
+
+        &desc
+    }
+}
 
 fn create_rt(device: &Arc<Device>, format: vk::Format, width: u32, height: u32) -> Image {
     let rt_desc = ImageDesc::new(format, ImageType::Tex2D, [width, height])
@@ -105,6 +133,11 @@ fn main() -> Result<(), String> {
         depth_attachment: None,
     };
     let render_pass = RenderPass::new(&device, render_pass_desc).unwrap();
+    let pipeline_cache = PipelineCache::new(&device.raw).unwrap();
+    let pipeline_desc = PipelineDesc::new(&render_pass)
+        .add_shader(&fragment_shader)
+        .add_shader(&vertex_shader);
+    let pipeline = Pipeline::new::<Vertex>(&device.raw, &pipeline_cache, pipeline_desc).unwrap();
 
     let mut rt = create_rt(
         &device,
@@ -344,6 +377,8 @@ fn main() -> Result<(), String> {
     }
     device.wait();
 
+    pipeline.free(&device.raw);
+    pipeline_cache.free(&device.raw);
     vertex_shader.free(&device.raw);
     fragment_shader.free(&device.raw);
 
