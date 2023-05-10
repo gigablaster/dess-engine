@@ -20,9 +20,9 @@ use ash::vk;
 
 use render::{
     vulkan::{
-        Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, RenderPass,
-        RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, SubmitWaitDesc, Surface,
-        Swapchain,
+        Device, FreeGpuResource, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList,
+        RenderPass, RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout,
+        SubmitWaitDesc, Surface, Swapchain,
     },
     BackendError,
 };
@@ -78,7 +78,7 @@ fn main() -> Result<(), String> {
         )
         .unwrap();
 
-    let device = Device::create(&instance, &pdevice).unwrap();
+    let device = Device::create(instance, pdevice).unwrap();
 
     let mut swapchain = Swapchain::new(&device, surface).unwrap();
 
@@ -88,7 +88,7 @@ fn main() -> Result<(), String> {
         color_attachments: &[color_attachment_desc],
         depth_attachment: None,
     };
-    let render_pass = RenderPass::new(&device, render_pass_desc).unwrap();
+    let render_pass = RenderPass::new(&device.raw, render_pass_desc).unwrap();
 
     let mut rt = create_rt(
         &device,
@@ -141,7 +141,7 @@ fn main() -> Result<(), String> {
                     window.size().1,
                 );
                 swapchain.recreate().unwrap();
-                render_pass.clear_fbos();
+                render_pass.clear_fbos(&device.raw);
                 continue;
             }
             Err(err) => Err(err),
@@ -155,7 +155,7 @@ fn main() -> Result<(), String> {
                 window.size().1,
             );
             swapchain.recreate().unwrap();
-            render_pass.clear_fbos();
+            render_pass.clear_fbos(&device.raw);
             continue;
         }
         let frame = device.begin_frame().unwrap();
@@ -190,7 +190,7 @@ fn main() -> Result<(), String> {
                     },
                 )];
                 {
-                    let _pass = recorder.render_pass(&render_pass, &attachments, None);
+                    let _pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
                 }
             }
             device
@@ -327,6 +327,7 @@ fn main() -> Result<(), String> {
         swapchain.present_image(image);
     }
     device.wait();
+    render_pass.free(&device.raw);
 
     Ok(())
 }

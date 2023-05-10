@@ -17,10 +17,9 @@ use ash::vk;
 
 use crate::BackendResult;
 
-use super::{CommandBuffer, QueueFamily};
+use super::{CommandBuffer, FreeGpuResource, QueueFamily};
 
 pub struct FrameContext {
-    pub device: ash::Device,
     pub presentation_cb: CommandBuffer,
     pub main_cb: CommandBuffer,
     pub queue_family: QueueFamily,
@@ -44,7 +43,6 @@ impl FrameContext {
         let render_finished = unsafe { device.create_semaphore(&semaphore_info, None) }?;
 
         Ok(Self {
-            device: device.clone(),
             presentation_cb: CommandBuffer::new(device, pool)?,
             main_cb: CommandBuffer::new(device, pool)?,
             queue_family: *queue_family,
@@ -53,21 +51,20 @@ impl FrameContext {
         })
     }
 
-    pub(crate) fn free(&mut self, device: &ash::Device) {
+    pub(crate) fn reset(&self, device: &ash::Device) -> BackendResult<()> {
+        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
+
+        Ok(())
+    }
+}
+
+impl FreeGpuResource for FrameContext {
+    fn free(&self, device: &ash::Device) {
         self.presentation_cb.free(device);
         self.main_cb.free(device);
         unsafe {
-            self.device.destroy_command_pool(self.pool, None);
-            self.device.destroy_semaphore(self.render_finished, None);
+            device.destroy_command_pool(self.pool, None);
+            device.destroy_semaphore(self.render_finished, None);
         }
-    }
-
-    pub(crate) fn reset(&self) -> BackendResult<()> {
-        unsafe {
-            self.device
-                .reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty())
-        }?;
-
-        Ok(())
     }
 }

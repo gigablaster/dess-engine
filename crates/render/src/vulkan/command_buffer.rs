@@ -20,7 +20,9 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 
 use crate::BackendResult;
 
-use super::{Device, FboCacheKey, Image, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS};
+use super::{
+    Device, FboCacheKey, FreeGpuResource, Image, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+};
 
 pub struct CommandBuffer {
     pub raw: vk::CommandBuffer,
@@ -55,8 +57,10 @@ impl CommandBuffer {
     pub fn record<'a>(&'a self, device: &'a Device) -> BackendResult<CommandBufferRecorder<'a>> {
         CommandBufferRecorder::new(&device.raw, &self.raw)
     }
+}
 
-    pub fn free(&self, device: &ash::Device) {
+impl FreeGpuResource for CommandBuffer {
+    fn free(&self, device: &ash::Device) {
         unsafe {
             device.free_command_buffers(self.pool, slice::from_ref(&self.raw));
             device.destroy_fence(self.fence, None);
@@ -91,6 +95,7 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn render_pass(
         &self,
+        device: &ash::Device,
         render_pass: &RenderPass,
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<RenderPassAttachment>,
@@ -115,7 +120,7 @@ impl<'a> CommandBufferRecorder<'a> {
             .map(|image| image.desc.extent)
             .next();
         if let Some(dims) = dims {
-            let framebuffer = render_pass.fbo_cache.get_or_create(key).unwrap();
+            let framebuffer = render_pass.fbo_cache.get_or_create(device, key).unwrap();
 
             let begin_pass_info = vk::RenderPassBeginInfo::builder()
                 .render_pass(render_pass.raw)

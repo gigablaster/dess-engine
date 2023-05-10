@@ -19,7 +19,7 @@ use ash::vk;
 
 use crate::{BackendError, BackendResult};
 
-use super::{RenderPass, Shader};
+use super::{FreeGpuResource, RenderPass, Shader};
 
 pub trait PipelineVertex: Sized {
     fn attribute_description() -> &'static [vk::VertexInputAttributeDescription];
@@ -81,28 +81,18 @@ impl<'a> PipelineDesc<'a> {
     }
 }
 
-pub struct PipelineCache {
-    pub raw: vk::PipelineCache,
-}
+pub fn create_pipeline_cache(device: &ash::Device) -> BackendResult<vk::PipelineCache> {
+    let cache_create_info = vk::PipelineCacheCreateInfo::builder().build();
 
-impl PipelineCache {
-    pub fn new(device: &ash::Device) -> BackendResult<Self> {
-        let cache_create_info = vk::PipelineCacheCreateInfo::builder().build();
+    let cache = unsafe { device.create_pipeline_cache(&cache_create_info, None) }?;
 
-        let cache = unsafe { device.create_pipeline_cache(&cache_create_info, None) }?;
-
-        Ok(Self { raw: cache })
-    }
-
-    pub fn free(&self, device: &ash::Device) {
-        unsafe { device.destroy_pipeline_cache(self.raw, None) };
-    }
+    Ok(cache)
 }
 
 impl Pipeline {
     pub fn new<V: PipelineVertex>(
         device: &ash::Device,
-        cache: &PipelineCache,
+        cache: &vk::PipelineCache,
         desc: PipelineDesc,
     ) -> BackendResult<Self> {
         let entry = CStr::from_bytes_with_nul(b"main\0").unwrap();
@@ -238,11 +228,7 @@ impl Pipeline {
             .build();
 
         let pipeline = unsafe {
-            device.create_graphics_pipelines(
-                cache.raw,
-                slice::from_ref(&pipeline_create_info),
-                None,
-            )
+            device.create_graphics_pipelines(*cache, slice::from_ref(&pipeline_create_info), None)
         }
         .map_err(|_| BackendError::Other("Shit happened".into()))?[0];
 
@@ -251,8 +237,10 @@ impl Pipeline {
             pipeline,
         })
     }
+}
 
-    pub fn free(&self, devive: &ash::Device) {
+impl FreeGpuResource for Pipeline {
+    fn free(&self, devive: &ash::Device) {
         unsafe {
             devive.destroy_pipeline(self.pipeline, None);
             devive.destroy_pipeline_layout(self.pipeline_layout, None);

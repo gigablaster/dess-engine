@@ -21,9 +21,10 @@ use ash::vk;
 use glam::Vec3;
 use render::{
     vulkan::{
-        Device, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList, Pipeline, PipelineCache,
-        PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment, RenderPassAttachmentDesc,
-        RenderPassLayout, Shader, SubmitWaitDesc, Surface, Swapchain,
+        create_pipeline_cache, Device, FreeGpuResource, Image, ImageDesc, ImageType, Instance,
+        PhysicalDeviceList, Pipeline, PipelineDesc, PipelineVertex, RenderPass,
+        RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Shader, SubmitWaitDesc,
+        Surface, Swapchain,
     },
     BackendError,
 };
@@ -74,7 +75,7 @@ fn main() -> Result<(), String> {
     let server_addr = format!("0.0.0.0:{}", puffin_http::DEFAULT_PORT);
     eprintln!("Serving demo profile data on {server_addr}");
 
-    vfs::scan(".");
+    vfs::scan(".").unwrap();
 
     let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
 
@@ -108,7 +109,7 @@ fn main() -> Result<(), String> {
         )
         .unwrap();
 
-    let device = Device::create(&instance, &pdevice).unwrap();
+    let device = Device::create(instance, pdevice).unwrap();
 
     let mut vertex_shader_data = Vec::new();
     vfs::get("shaders/simple.vert.spv")
@@ -132,8 +133,8 @@ fn main() -> Result<(), String> {
         color_attachments: &[color_attachment_desc],
         depth_attachment: None,
     };
-    let render_pass = RenderPass::new(&device, render_pass_desc).unwrap();
-    let pipeline_cache = PipelineCache::new(&device.raw).unwrap();
+    let render_pass = RenderPass::new(&device.raw, render_pass_desc).unwrap();
+    let pipeline_cache = create_pipeline_cache(&device.raw).unwrap();
     let pipeline_desc = PipelineDesc::new(&render_pass)
         .add_shader(&fragment_shader)
         .add_shader(&vertex_shader);
@@ -190,7 +191,7 @@ fn main() -> Result<(), String> {
                     window.size().1,
                 );
                 swapchain.recreate().unwrap();
-                render_pass.clear_fbos();
+                render_pass.clear_fbos(&device.raw);
                 continue;
             }
             Err(err) => Err(err),
@@ -204,7 +205,7 @@ fn main() -> Result<(), String> {
                 window.size().1,
             );
             swapchain.recreate().unwrap();
-            render_pass.clear_fbos();
+            render_pass.clear_fbos(&device.raw);
             continue;
         }
         let frame = device.begin_frame().unwrap();
@@ -239,7 +240,7 @@ fn main() -> Result<(), String> {
                     },
                 )];
                 {
-                    let _pass = recorder.render_pass(&render_pass, &attachments, None);
+                    let _pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
                 }
             }
             device
@@ -377,8 +378,8 @@ fn main() -> Result<(), String> {
     }
     device.wait();
 
+    unsafe { device.raw.destroy_pipeline_cache(pipeline_cache, None) };
     pipeline.free(&device.raw);
-    pipeline_cache.free(&device.raw);
     vertex_shader.free(&device.raw);
     fragment_shader.free(&device.raw);
 

@@ -115,7 +115,7 @@ impl SwapchainInner {
             .image_array_layers(1)
             .build();
 
-        let loader = khr::Swapchain::new(&device.instance.raw, &device.raw);
+        let loader = khr::Swapchain::new(device.instance(), &device.raw);
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?;
         let images = images

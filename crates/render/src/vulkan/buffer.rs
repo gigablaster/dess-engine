@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{iter::Take, mem::take, sync::Arc};
+use std::sync::Arc;
 
 use ash::vk;
 use gpu_alloc::{Request, UsageFlags};

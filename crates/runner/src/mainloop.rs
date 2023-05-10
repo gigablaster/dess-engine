@@ -58,7 +58,7 @@ pub fn run(client: impl Client) -> Result<(), String> {
         )
         .unwrap();
 
-    let device = Device::create(&instance, &pdevice).unwrap();
+    let device = Device::create(instance, pdevice).unwrap();
 
     let _swapchain = Swapchain::new(&device, surface).unwrap();
 

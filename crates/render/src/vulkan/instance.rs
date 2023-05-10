@@ -13,10 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    ffi::{c_void, CStr, CString},
-    sync::Arc,
-};
+use std::ffi::{c_void, CStr, CString};
 
 use ash::{
     extensions::ext::DebugUtils,
@@ -51,7 +48,7 @@ impl InstanceBuilder {
         self
     }
 
-    pub fn build(self, window: &Window) -> BackendResult<Arc<Instance>> {
+    pub fn build(self, window: &Window) -> BackendResult<Instance> {
         Instance::create(&self, window)
     }
 }
@@ -93,7 +90,7 @@ impl Instance {
         vk::make_api_version(0, 1, 1, 0)
     }
 
-    fn create(builder: &InstanceBuilder, window: &Window) -> BackendResult<Arc<Self>> {
+    fn create(builder: &InstanceBuilder, window: &Window) -> BackendResult<Self> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(builder);
@@ -142,12 +139,12 @@ impl Instance {
             (None, None)
         };
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             entry,
             raw: instance,
             debug_utils,
             debug_messenger,
-        }))
+        })
     }
 
     pub(crate) fn get_debug_utils(&self) -> Option<&DebugUtils> {

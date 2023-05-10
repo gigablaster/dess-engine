@@ -23,11 +23,7 @@ mod vfs;
 pub use error::*;
 use lazy_static::lazy_static;
 
-use std::{
-    io::Read,
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
+use std::{io::Read, path::PathBuf, sync::Mutex};
 
 use crate::vfs::Vfs;
 

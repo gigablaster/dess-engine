@@ -24,7 +24,7 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::{
     extensions::khr,
-    vk::{self, Handle, ObjectType},
+    vk::{self, Handle},
 };
 use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
@@ -32,7 +32,7 @@ use log::info;
 
 use crate::{Allocator, BackendError, BackendResult, DropList};
 
-use super::{CommandBuffer, FrameContext, Instance, PhysicalDevice, QueueFamily};
+use super::{CommandBuffer, FrameContext, FreeGpuResource, Instance, PhysicalDevice, QueueFamily};
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -52,12 +52,12 @@ pub struct SubmitWaitDesc {
 }
 
 pub struct Device {
-    pub(crate) instance: Arc<Instance>,
+    instance: Instance,
     pub raw: ash::Device,
     pub pdevice: PhysicalDevice,
     pub graphics_queue: Queue,
     pub transfer_queue: Queue,
-    pub allocator: Arc<Mutex<Allocator>>,
+    allocator: Arc<Mutex<Allocator>>,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     setup_pool: vk::CommandPool,
     setup_cb: Mutex<CommandBuffer>,
@@ -66,7 +66,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn create(instance: &Arc<Instance>, pdevice: &PhysicalDevice) -> BackendResult<Arc<Self>> {
+    pub fn create(instance: Instance, pdevice: PhysicalDevice) -> BackendResult<Arc<Self>> {
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER) {
             return Err(BackendError::Other(
                 "Device doesn't support graphics and transfer queues".into(),
@@ -136,8 +136,8 @@ impl Device {
         ];
 
         Ok(Arc::new(Self {
-            instance: instance.clone(),
-            pdevice: pdevice.clone(),
+            instance,
+            pdevice,
             graphics_queue: Self::create_queue(&device, graphics_queue),
             transfer_queue: Self::create_queue(&device, transfer_queue),
             allocator: Arc::new(Mutex::new(allocator)),
@@ -219,7 +219,7 @@ impl Device {
                     .lock()
                     .unwrap()
                     .free(&self.raw, &mut allocator);
-                frame0.reset()?;
+                frame0.reset(&self.raw)?;
             } else {
                 return Err(BackendError::Other(
                     "Unable to begin frame: frame data is being held by user code".into(),
@@ -299,6 +299,10 @@ impl Device {
         }
 
         Ok(())
+    }
+
+    pub fn instance(&self) -> &ash::Instance {
+        &self.instance.raw
     }
 
     pub fn wait(&self) {

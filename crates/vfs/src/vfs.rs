@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    env, fs,
+    fs,
     io::Read,
     path::{Path, PathBuf},
 };

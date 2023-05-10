@@ -13,17 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, sync::Mutex};
 
 use arrayvec::ArrayVec;
 use ash::vk;
 
 use crate::BackendResult;
 
-use super::{Device, Image, ImageViewDesc};
+use super::{FreeGpuResource, Image, ImageViewDesc};
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -128,32 +125,38 @@ impl FboCacheKey {
 }
 
 pub(crate) struct FboCache {
-    device: Arc<Device>,
     entries: Mutex<HashMap<FboCacheKey, vk::Framebuffer>>,
     render_pass: vk::RenderPass,
 }
 
 impl FboCache {
-    pub fn new(device: &Arc<Device>, render_pass: vk::RenderPass) -> Self {
+    pub fn new(render_pass: vk::RenderPass) -> Self {
         Self {
-            device: device.clone(),
             entries: Default::default(),
             render_pass,
         }
     }
 
-    pub fn get_or_create(&self, key: FboCacheKey) -> BackendResult<vk::Framebuffer> {
+    pub fn get_or_create(
+        &self,
+        device: &ash::Device,
+        key: FboCacheKey,
+    ) -> BackendResult<vk::Framebuffer> {
         let mut entries = self.entries.lock().unwrap();
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
         } else {
-            let fbo = self.create_fbo(&key)?;
+            let fbo = self.create_fbo(device, &key)?;
             entries.insert(key, fbo);
             Ok(fbo)
         }
     }
 
-    fn create_fbo(&self, key: &FboCacheKey) -> BackendResult<vk::Framebuffer> {
+    fn create_fbo(
+        &self,
+        device: &ash::Device,
+        key: &FboCacheKey,
+    ) -> BackendResult<vk::Framebuffer> {
         let attachments = key
             .attachments
             .iter()
@@ -168,31 +171,24 @@ impl FboCache {
             .attachments(&attachments)
             .build();
 
-        Ok(unsafe { self.device.raw.create_framebuffer(&fbo_desc, None) }?)
+        Ok(unsafe { device.create_framebuffer(&fbo_desc, None) }?)
     }
 
-    pub fn clear(&self) {
+    pub fn clear(&self, device: &ash::Device) {
         let mut entries = self.entries.lock().unwrap();
         entries
             .drain()
-            .for_each(|(_, fbo)| unsafe { self.device.raw.destroy_framebuffer(fbo, None) });
-    }
-}
-
-impl Drop for FboCache {
-    fn drop(&mut self) {
-        self.clear();
+            .for_each(|(_, fbo)| unsafe { device.destroy_framebuffer(fbo, None) });
     }
 }
 
 pub struct RenderPass {
-    device: Arc<Device>,
-    pub(crate) raw: vk::RenderPass,
+    pub raw: vk::RenderPass,
     pub(crate) fbo_cache: FboCache,
 }
 
 impl RenderPass {
-    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, layout: RenderPassLayout) -> BackendResult<Self> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -240,23 +236,22 @@ impl RenderPass {
             .subpasses(&subpasses)
             .build();
 
-        let render_pass = unsafe { device.raw.create_render_pass(&render_pass_info, None) }?;
+        let render_pass = unsafe { device.create_render_pass(&render_pass_info, None) }?;
 
         Ok(Self {
-            device: device.clone(),
             raw: render_pass,
-            fbo_cache: FboCache::new(device, render_pass),
+            fbo_cache: FboCache::new(render_pass),
         })
     }
 
-    pub fn clear_fbos(&self) {
-        self.fbo_cache.clear();
+    pub fn clear_fbos(&self, device: &ash::Device) {
+        self.fbo_cache.clear(device);
     }
 }
 
-impl Drop for RenderPass {
-    fn drop(&mut self) {
-        self.fbo_cache.clear();
-        unsafe { self.device.raw.destroy_render_pass(self.raw, None) };
+impl FreeGpuResource for RenderPass {
+    fn free(&self, device: &ash::Device) {
+        self.clear_fbos(device);
+        unsafe { device.destroy_render_pass(self.raw, None) };
     }
 }

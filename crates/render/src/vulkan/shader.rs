@@ -19,6 +19,8 @@ use rspirv_reflect::{BindingCount, DescriptorInfo};
 
 use crate::BackendResult;
 
+use super::FreeGpuResource;
+
 #[derive(Debug, Clone)]
 pub struct Shader {
     pub raw: vk::ShaderModule,
@@ -47,10 +49,6 @@ impl Shader {
 
     pub fn fragment(device: &ash::Device, code: &[u8]) -> BackendResult<Self> {
         Self::new(device, vk::ShaderStageFlags::FRAGMENT, code)
-    }
-
-    pub fn free(&self, device: &ash::Device) {
-        unsafe { device.destroy_shader_module(self.raw, None) }
     }
 
     fn create_descriptor_set_layouts(
@@ -142,5 +140,11 @@ impl Shader {
             .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
             .stage_flags(stage)
             .build()
+    }
+}
+
+impl FreeGpuResource for Shader {
+    fn free(&self, device: &ash::Device) {
+        unsafe { device.destroy_shader_module(self.raw, None) }
     }
 }
