@@ -111,19 +111,17 @@ fn main() -> Result<(), String> {
 
     let device = Device::create(instance, pdevice).unwrap();
 
-    let mut vertex_shader_data = Vec::new();
-    vfs::get("shaders/simple.vert.spv")
-        .unwrap()
-        .read_to_end(&mut vertex_shader_data)
-        .unwrap();
-    let vertex_shader = Shader::vertex(&device.raw, &vertex_shader_data).unwrap();
+    let vertex_shader = Shader::vertex(
+        &device.raw,
+        vfs::get("shaders/simple.vert.spv").unwrap().data(),
+    )
+    .unwrap();
 
-    let mut fragment_shader_data = Vec::new();
-    vfs::get("shaders/simple.frag.spv")
-        .unwrap()
-        .read_to_end(&mut fragment_shader_data)
-        .unwrap();
-    let fragment_shader = Shader::fragment(&device.raw, &fragment_shader_data).unwrap();
+    let fragment_shader = Shader::fragment(
+        &device.raw,
+        vfs::get("shaders/simple.frag.spv").unwrap().data(),
+    )
+    .unwrap();
 
     let mut swapchain = Swapchain::new(&device, surface).unwrap();
 

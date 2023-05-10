@@ -22,7 +22,6 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use common::traits::{BinaryDeserialization, BinarySerialization};
 use four_cc::FourCC;
-use zstd::stream;
 
 use crate::VfsError;
 
@@ -31,64 +30,17 @@ const VERSION: u32 = 1;
 const FILE_ALIGN: u64 = 4096;
 const COMPRESSION_LEVEL: i32 = 19;
 
-#[derive(Debug, Copy, Clone)]
-pub enum Compression {
-    None(u32),
-    Zstd(u32, u32),
-}
-
-impl BinarySerialization for Compression {
-    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
-        match self {
-            Compression::None(size) => {
-                w.write_u8(0)?;
-                w.write_u32::<LittleEndian>(*size as u32)?
-            }
-            Compression::Zstd(uncompressed, compressed) => {
-                w.write_u8(1)?;
-                w.write_u32::<LittleEndian>(*uncompressed as u32)?;
-                w.write_u32::<LittleEndian>(*compressed as u32)?;
-            }
-        };
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for Compression {
-    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
-        let byte = r.read_u8()?;
-        let result = match byte {
-            0 => Compression::None(r.read_u32::<LittleEndian>()?),
-            1 => {
-                let uncompressed = r.read_u32::<LittleEndian>()?;
-                let compressed = r.read_u32::<LittleEndian>()?;
-
-                Compression::Zstd(uncompressed, compressed)
-            }
-            _ => {
-                return Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "Compression format isn't supported",
-                ))
-            }
-        };
-
-        Ok(result)
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct FileHeader {
     pub offset: u64,
-    pub compression: Compression,
+    pub size: u32,
 }
 
 impl BinaryDeserialization for FileHeader {
     fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         Ok(Self {
             offset: r.read_u64::<LittleEndian>()?,
-            compression: Compression::deserialize(r)?,
+            size: r.read_u32::<LittleEndian>()?,
         })
     }
 }
@@ -96,7 +48,7 @@ impl BinaryDeserialization for FileHeader {
 impl BinarySerialization for FileHeader {
     fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
         w.write_u64::<LittleEndian>(self.offset)?;
-        self.compression.serialize(w)?;
+        w.write_u32::<LittleEndian>(self.size)?;
 
         Ok(())
     }
@@ -169,25 +121,15 @@ impl<W: Write + Seek> DirectoryBaker<W> {
         })
     }
 
-    pub fn write(&mut self, name: &str, data: &[u8], packed: bool) -> Result<(), VfsError> {
+    pub fn write(&mut self, name: &str, data: &[u8]) -> Result<(), VfsError> {
         let offset = self.try_align()?;
-        let compression = if packed {
-            let mut compressor = stream::Encoder::new(&mut self.w, COMPRESSION_LEVEL)?;
-            compressor.write_all(data)?;
-            compressor.finish()?;
-
-            Compression::Zstd(data.len() as _, (self.w.stream_position()? - offset) as _)
-        } else {
-            self.w.write_all(data)?;
-
-            Compression::None(data.len() as _)
-        };
+        self.w.write_all(data)?;
 
         self.files.insert(
             name.into(),
             FileHeader {
                 offset,
-                compression,
+                size: data.len() as _,
             },
         );
 

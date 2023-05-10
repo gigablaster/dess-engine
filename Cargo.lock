@@ -646,7 +646,6 @@ dependencies = [
  "lazy_static",
  "log",
  "memmap2",
- "zstd",
 ]
 
 [[package]]
