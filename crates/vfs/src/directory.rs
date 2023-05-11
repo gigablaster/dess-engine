@@ -122,6 +122,7 @@ impl<W: Write + Seek> DirectoryBaker<W> {
     }
 
     pub fn write(&mut self, name: &str, data: &[u8]) -> Result<(), VfsError> {
+        let name = name.replace('\\', "/").to_ascii_lowercase();
         let offset = self.try_align()?;
         self.w.write_all(data)?;
 
@@ -132,6 +133,13 @@ impl<W: Write + Seek> DirectoryBaker<W> {
                 size: data.len() as _,
             },
         );
+
+        Ok(())
+    }
+
+    pub fn finish(&mut self) -> Result<(), VfsError> {
+        self.try_align()?;
+        self.files.serialize(&mut self.w)?;
 
         Ok(())
     }

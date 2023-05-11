@@ -39,7 +39,16 @@ impl Vfs {
         let paths = fs::read_dir(root)?;
         for path in paths {
             let path = path?.path();
-            if path.is_file() && path.ends_with(".dess") {
+            let extension = if let Some(ext) = path.extension() {
+                if let Some(ext) = ext.to_str() {
+                    ext == "dess"
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            if path.is_file() && extension {
                 info!("Adding archive {:?}", path);
                 if let Err(err) = self.add_archive(&path) {
                     error!("Failed to add archive {:?} - {:?}", path, err);

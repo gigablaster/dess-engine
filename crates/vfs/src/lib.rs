@@ -20,6 +20,7 @@ mod packed;
 mod raw_fs;
 mod vfs;
 
+pub use directory::DirectoryBaker;
 pub use error::*;
 use lazy_static::lazy_static;
 
