@@ -29,14 +29,6 @@ use render::{
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
 
-fn create_rt(device: &Arc<Device>, format: vk::Format, width: u32, height: u32) -> Image {
-    let rt_desc = ImageDesc::new(format, ImageType::Tex2D, [width, height])
-        .flags(vk::ImageCreateFlags::empty())
-        .usage(vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::TRANSFER_SRC);
-
-    Image::new(&device, rt_desc, Some("rt")).unwrap()
-}
-
 fn main() -> Result<(), String> {
     simple_logger::init().unwrap();
     let sdl = sdl2::init()?;
@@ -90,13 +82,6 @@ fn main() -> Result<(), String> {
     };
     let render_pass = RenderPass::new(&device.raw, render_pass_desc).unwrap();
 
-    let mut rt = create_rt(
-        &device,
-        swapchain.backbuffer_format(),
-        window.size().0,
-        window.size().1,
-    );
-
     let mut skip_render = false;
     'running: loop {
         let mut recreate_swapchain = false;
@@ -134,12 +119,6 @@ fn main() -> Result<(), String> {
         let image = match swapchain.acquire_next_image() {
             Ok(image) => Ok(image),
             Err(BackendError::RecreateSwapchain) => {
-                rt = create_rt(
-                    &device,
-                    swapchain.backbuffer_format(),
-                    window.size().0,
-                    window.size().1,
-                );
                 swapchain.recreate().unwrap();
                 render_pass.clear_fbos(&device.raw);
                 continue;
@@ -148,12 +127,6 @@ fn main() -> Result<(), String> {
         }
         .unwrap();
         if recreate_swapchain {
-            rt = create_rt(
-                &device,
-                swapchain.backbuffer_format(),
-                window.size().0,
-                window.size().1,
-            );
             swapchain.recreate().unwrap();
             render_pass.clear_fbos(&device.raw);
             continue;
@@ -171,8 +144,8 @@ fn main() -> Result<(), String> {
                     discard_contents: true,
                     src_queue_family_index: device.graphics_queue.family.index,
                     dst_queue_family_index: device.graphics_queue.family.index,
-                    image: rt.raw,
-                    range: rt.subresource(0, 0, vk::ImageAspectFlags::COLOR),
+                    image: image.image.raw,
+                    range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
                 };
                 pipeline_barrier(
                     recorder.device,
@@ -182,7 +155,7 @@ fn main() -> Result<(), String> {
                     slice::from_ref(&barrier),
                 );
                 let attachments = [RenderPassAttachment::new(
-                    &rt,
+                    &image.image,
                     vk::ClearValue {
                         color: vk::ClearColorValue {
                             float32: [1.0, 0.5, 0.25, 1.0],
@@ -209,100 +182,15 @@ fn main() -> Result<(), String> {
             {
                 let recorder = frame.presentation_cb.record(&device).unwrap();
                 let barrier = ImageBarrier {
-                    previous_accesses: &[AccessType::ColorAttachmentWrite],
-                    next_accesses: &[AccessType::TransferRead],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: false,
-                    src_queue_family_index: device.graphics_queue.family.index,
-                    dst_queue_family_index: device.transfer_queue.family.index,
-                    image: rt.raw,
-                    range: rt.subresource(0, 0, vk::ImageAspectFlags::COLOR),
-                };
-                pipeline_barrier(
-                    recorder.device,
-                    *recorder.cb,
-                    None,
-                    &[],
-                    slice::from_ref(&barrier),
-                );
-                let barrier = ImageBarrier {
                     previous_accesses: &[AccessType::Nothing],
-                    next_accesses: &[AccessType::TransferWrite],
+                    next_accesses: &[AccessType::Present],
                     previous_layout: vk_sync::ImageLayout::Optimal,
                     next_layout: vk_sync::ImageLayout::Optimal,
                     discard_contents: true,
                     src_queue_family_index: 0,
-                    dst_queue_family_index: device.transfer_queue.family.index,
-                    image: image.image.raw,
-                    range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
-                };
-                pipeline_barrier(
-                    recorder.device,
-                    *recorder.cb,
-                    None,
-                    &[],
-                    slice::from_ref(&barrier),
-                );
-                let region = [vk::ImageCopy::builder()
-                    .src_subresource(vk::ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .dst_subresource(vk::ImageSubresourceLayers {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        mip_level: 0,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .src_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-                    .dst_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
-                    .extent(vk::Extent3D {
-                        width: window.size().0,
-                        height: window.size().1,
-                        depth: 1,
-                    })
-                    .build()];
-                unsafe {
-                    recorder.device.cmd_copy_image(
-                        frame.presentation_cb.raw,
-                        rt.raw,
-                        vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
-                        image.image.raw,
-                        vk::ImageLayout::TRANSFER_DST_OPTIMAL,
-                        &region,
-                    )
-                };
-                let barrier = ImageBarrier {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::Present],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: false,
-                    src_queue_family_index: device.transfer_queue.family.index,
                     dst_queue_family_index: device.graphics_queue.family.index,
                     image: image.image.raw,
                     range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
-                };
-                pipeline_barrier(
-                    recorder.device,
-                    *recorder.cb,
-                    None,
-                    &[],
-                    slice::from_ref(&barrier),
-                );
-                let barrier = ImageBarrier {
-                    previous_accesses: &[AccessType::TransferRead],
-                    next_accesses: &[AccessType::ColorAttachmentWrite],
-                    previous_layout: vk_sync::ImageLayout::Optimal,
-                    next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: true,
-                    src_queue_family_index: device.transfer_queue.family.index,
-                    dst_queue_family_index: device.graphics_queue.family.index,
-                    image: rt.raw,
-                    range: rt.subresource(0, 0, vk::ImageAspectFlags::COLOR),
                 };
                 pipeline_barrier(
                     recorder.device,
@@ -313,7 +201,7 @@ fn main() -> Result<(), String> {
                 );
             }
             device
-                .submit_transfer(
+                .submit_render(
                     &frame.presentation_cb,
                     &[SubmitWaitDesc {
                         stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
