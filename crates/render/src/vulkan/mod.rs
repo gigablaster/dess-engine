@@ -27,6 +27,7 @@ mod surface;
 mod swapchain;
 
 pub use buffer::*;
+pub use buffer::*;
 pub use command_buffer::*;
 pub use device::*;
 pub use frame_context::*;
@@ -38,7 +39,6 @@ pub use render_pass::*;
 pub use shader::*;
 pub use surface::*;
 pub use swapchain::*;
-pub use buffer::*;
 
 pub trait FreeGpuResource {
     fn free(&self, device: &ash::Device);

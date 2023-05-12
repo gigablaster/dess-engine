@@ -13,7 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{sync::Arc, io::{Write, self, Seek}, ptr::copy_nonoverlapping, slice::from_raw_parts, mem::size_of};
+use std::{
+    io::{self, Seek, Write},
+    mem::size_of,
+    ptr::copy_nonoverlapping,
+    slice::from_raw_parts,
+    sync::Arc,
+};
 
 use ash::vk;
 use gpu_alloc::{Request, UsageFlags};
@@ -37,16 +43,16 @@ impl BufferDesc {
             size,
             usage: vk::BufferUsageFlags::TRANSFER_SRC,
             memory_usage: UsageFlags::HOST_ACCESS,
-            aligment: None
+            aligment: None,
         }
     }
 
-    pub fn vertex<T:Sized>(count: usize) -> Self {
+    pub fn vertex<T: Sized>(count: usize) -> Self {
         Self {
             size: count * size_of::<T>(),
             usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
             memory_usage: UsageFlags::FAST_DEVICE_ACCESS,
-            aligment: None
+            aligment: None,
         }
     }
 
@@ -55,11 +61,10 @@ impl BufferDesc {
             size: count * size_of::<u16>(),
             usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
             memory_usage: UsageFlags::FAST_DEVICE_ACCESS,
-            aligment: None
+            aligment: None,
         }
     }
 }
-
 
 pub struct Buffer {
     device: Arc<Device>,
@@ -121,7 +126,11 @@ impl Buffer {
             let memory_device = AshMemoryDevice::wrap(&self.device.raw);
             let ptr = unsafe { allocation.map(memory_device, offset as _, size) }?;
 
-            Ok(MappedBuffer { data: ptr.as_ptr(), size, cursor: 0 })
+            Ok(MappedBuffer {
+                data: ptr.as_ptr(),
+                size,
+                cursor: 0,
+            })
         } else {
             Err(crate::BackendError::Other("Buffer isn't allocated".into()))
         }
@@ -153,14 +162,17 @@ impl Drop for Buffer {
 pub struct MappedBuffer {
     data: *mut u8,
     size: usize,
-    cursor: usize
+    cursor: usize,
 }
 
 impl Write for MappedBuffer {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let to_write = (self.size - self.cursor).min(buf.len());
         if to_write == 0 {
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "No space in buffer"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "No space in buffer",
+            ));
         }
 
         unsafe { copy_nonoverlapping(buf.as_ptr(), self.data.add(self.cursor), to_write) };
@@ -180,7 +192,7 @@ impl Seek for MappedBuffer {
         let offset = match pos {
             io::SeekFrom::Start(offset) => offset,
             io::SeekFrom::End(offset) => self.validate_offset(self.size as i64 + offset)?,
-            io::SeekFrom::Current(offset) => self.validate_offset(self.cursor as i64 + offset)?
+            io::SeekFrom::Current(offset) => self.validate_offset(self.cursor as i64 + offset)?,
         };
         self.cursor = offset as _;
         Ok(offset)
@@ -191,18 +203,21 @@ impl MappedBuffer {
     fn validate_offset(&self, offset: i64) -> io::Result<u64> {
         let offset = self.cursor as i64 + offset;
         if offset < 0 || offset >= self.size as _ {
-            Err(io::Error::new(io::ErrorKind::InvalidInput, "Can't seek outside of mapped buffer"))
+            Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Can't seek outside of mapped buffer",
+            ))
         } else {
             Ok(offset as u64)
         }
     }
 
-    pub fn push<T:Sized>(&mut self, data: &[T]) -> BackendResult<usize> {
+    pub fn push<T: Sized>(&mut self, data: &[T]) -> BackendResult<usize> {
         let ptr = data.as_ptr() as *const u8;
         let data = unsafe { from_raw_parts(ptr, data.len() * size_of::<T>()) };
         match self.write(data) {
             Ok(count) => Ok(count / size_of::<T>()),
-            Err(err) => Err(crate::BackendError::Other(err.to_string()))
+            Err(err) => Err(crate::BackendError::Other(err.to_string())),
         }
     }
 }

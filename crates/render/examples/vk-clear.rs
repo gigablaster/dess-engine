@@ -14,15 +14,14 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{sync::Arc, thread::sleep, time::Duration};
+use std::{thread::sleep, time::Duration};
 
 use ash::vk;
 
 use render::{
     vulkan::{
-        Device, FreeGpuResource, Image, ImageDesc, ImageType, Instance, PhysicalDeviceList,
-        RenderPass, RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout,
-        SubmitWaitDesc, Surface, Swapchain,
+        Device, FreeGpuResource, Instance, PhysicalDeviceList, RenderPass, RenderPassAttachment,
+        RenderPassAttachmentDesc, RenderPassLayout, SubmitWaitDesc, Surface, Swapchain,
     },
     BackendError,
 };

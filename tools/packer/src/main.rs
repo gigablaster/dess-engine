@@ -35,7 +35,9 @@ fn bake_directory(
             let mut data = Vec::new();
             let mut file = File::open(&path).unwrap();
             file.read_to_end(&mut data).unwrap();
-            writer.write(path.strip_prefix(root).unwrap().to_str().unwrap(), &data).unwrap();
+            writer
+                .write(path.strip_prefix(root).unwrap().to_str().unwrap(), &data)
+                .unwrap();
         }
         if path.is_dir() {
             bake_directory(writer, root, &path, exclude)
