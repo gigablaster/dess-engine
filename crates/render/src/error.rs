@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::{vk, LoadingError};
-use gpu_alloc::AllocationError;
+use gpu_alloc::{AllocationError, MapError};
 use rspirv_reflect::ReflectError;
 
 #[derive(Debug)]
@@ -22,6 +22,7 @@ pub enum BackendError {
     Loading(LoadingError),
     Vulkan(vk::Result),
     Allocation(AllocationError),
+    Mapping(MapError),
     NoExtension(String),
     Other(String),
     Reflection(ReflectError),
@@ -56,6 +57,12 @@ impl From<AllocationError> for BackendError {
 impl From<ReflectError> for BackendError {
     fn from(value: ReflectError) -> Self {
         BackendError::Reflection(value)
+    }
+}
+
+impl From<MapError> for BackendError {
+    fn from(value: MapError) -> Self {
+        BackendError::Mapping(value)
     }
 }
 
