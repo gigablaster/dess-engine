@@ -38,6 +38,7 @@ pub use render_pass::*;
 pub use shader::*;
 pub use surface::*;
 pub use swapchain::*;
+pub use buffer::*;
 
 pub trait FreeGpuResource {
     fn free(&self, device: &ash::Device);

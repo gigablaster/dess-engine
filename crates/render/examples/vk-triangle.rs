@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{sync::Arc, thread::sleep, time::Duration};
+use std::{sync::Arc, thread::sleep, time::Duration, mem::size_of};
 
 use ash::vk;
 
@@ -24,7 +24,7 @@ use render::{
         create_pipeline_cache, Device, FreeGpuResource, Image, ImageDesc, ImageType, Instance,
         PhysicalDeviceList, Pipeline, PipelineDesc, PipelineVertex, RenderPass,
         RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Shader, SubmitWaitDesc,
-        Surface, Swapchain,
+        Surface, Swapchain, Buffer, BufferDesc,
     },
     BackendError,
 };
@@ -129,6 +129,26 @@ fn main() -> Result<(), String> {
         .add_shader(&fragment_shader)
         .add_shader(&vertex_shader);
     let pipeline = Pipeline::new::<Vertex>(&device.raw, &pipeline_cache, pipeline_desc).unwrap();
+
+    let mut vertex_staging = Buffer::new(&device, BufferDesc::staging(3 * size_of::<Vertex>()), Some("Vertex staging")).unwrap();
+    let mut index_staging = Buffer::new(&device, BufferDesc::staging(3 * size_of::<u16>()), Some("Index staging")).unwrap();
+    let vertex_buffer = Buffer::new(&device, BufferDesc::vertex::<Vertex>(3), Some("Vertex buffer")).unwrap();
+    let index_buffer = Buffer::new(&device, BufferDesc::index(3), Some("Index buffer")).unwrap();
+
+    let vertices = [
+        Vertex { pos: Vec3::new(0.0, -0.5, 0.0), color: Vec3::new(1.0, 0.0, 0.0) },
+        Vertex { pos: Vec3::new(-0.5, 0.5, 0.0), color: Vec3::new(0.0, 1.0, 0.0) },
+        Vertex { pos: Vec3::new(0.5, 0.5, 0.0), color: Vec3::new(0.0, 0.0, 1.0) }
+    ];
+    let indices = [0u16, 1u16, 2u16];
+
+    let mut map = vertex_staging.map().unwrap();
+    map.push(&vertices);
+    vertex_staging.unmap().unwrap();
+
+    let mut map = index_staging.map().unwrap();
+    map.push(&indices).unwrap();
+    index_staging.unmap();
 
     let mut skip_render = false;
     'running: loop {

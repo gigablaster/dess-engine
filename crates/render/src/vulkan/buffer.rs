@@ -23,12 +23,43 @@ use crate::{Allocation, BackendResult};
 
 use super::Device;
 
+#[derive(Debug, Clone)]
 pub struct BufferDesc {
     pub size: usize,
     pub usage: vk::BufferUsageFlags,
     pub memory_usage: UsageFlags,
     pub aligment: Option<u64>,
 }
+
+impl BufferDesc {
+    pub fn staging(size: usize) -> Self {
+        Self {
+            size,
+            usage: vk::BufferUsageFlags::TRANSFER_SRC,
+            memory_usage: UsageFlags::HOST_ACCESS,
+            aligment: None
+        }
+    }
+
+    pub fn vertex<T:Sized>(count: usize) -> Self {
+        Self {
+            size: count * size_of::<T>(),
+            usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::VERTEX_BUFFER,
+            memory_usage: UsageFlags::FAST_DEVICE_ACCESS,
+            aligment: None
+        }
+    }
+
+    pub fn index(count: usize) -> Self {
+        Self {
+            size: count * size_of::<u16>(),
+            usage: vk::BufferUsageFlags::TRANSFER_DST | vk::BufferUsageFlags::INDEX_BUFFER,
+            memory_usage: UsageFlags::FAST_DEVICE_ACCESS,
+            aligment: None
+        }
+    }
+}
+
 
 pub struct Buffer {
     device: Arc<Device>,
@@ -81,7 +112,11 @@ impl Buffer {
         })
     }
 
-    pub fn map(&mut self, offset: usize, size: usize) -> BackendResult<MappedBuffer> {
+    pub fn map(&mut self) -> BackendResult<MappedBuffer> {
+        self.map_range(0, self.desc.size)
+    }
+
+    pub fn map_range(&mut self, offset: usize, size: usize) -> BackendResult<MappedBuffer> {
         if let Some(allocation) = &mut self.allocation {
             let memory_device = AshMemoryDevice::wrap(&self.device.raw);
             let ptr = unsafe { allocation.map(memory_device, offset as _, size) }?;
