@@ -28,7 +28,6 @@ use crate::VfsError;
 const MAGICK: FourCC = FourCC(*b"dess");
 const VERSION: u32 = 1;
 const FILE_ALIGN: u64 = 4096;
-const COMPRESSION_LEVEL: i32 = 19;
 
 #[derive(Debug, Clone)]
 pub struct FileHeader {
@@ -97,7 +96,9 @@ pub fn load_archive_directory<R: Read + Seek>(r: &mut R) -> Result<Directory, Vf
     if root_header.version > VERSION {
         return Err(VfsError::InvalidVersiom);
     }
-    r.seek(io::SeekFrom::End(-(size_of::<u64>() as i64)))?;
+    r.seek(io::SeekFrom::End(0))?;
+    let size = r.stream_position()?;
+    r.seek(io::SeekFrom::Start(size - size_of::<u64>() as u64))?;
     let offset = r.read_u64::<LittleEndian>()?;
     r.seek(io::SeekFrom::Start(offset as _))?;
 
@@ -127,7 +128,7 @@ impl<W: Write + Seek> DirectoryBaker<W> {
         self.w.write_all(data)?;
 
         self.files.insert(
-            name.into(),
+            name,
             FileHeader {
                 offset,
                 size: data.len() as _,
@@ -139,7 +140,9 @@ impl<W: Write + Seek> DirectoryBaker<W> {
 
     pub fn finish(&mut self) -> Result<(), VfsError> {
         self.try_align()?;
+        let offset = self.w.stream_position()?;
         self.files.serialize(&mut self.w)?;
+        self.w.write_u64::<LittleEndian>(offset)?;
 
         Ok(())
     }
@@ -153,5 +156,39 @@ impl<W: Write + Seek> DirectoryBaker<W> {
             .w
             .seek(io::SeekFrom::Start(offset_align))
             .unwrap_or(self.w.stream_position()?))
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::Cursor;
+
+    use crate::DirectoryBaker;
+
+    use super::load_archive_directory;
+
+    #[test]
+    fn empty_archive() {
+        let mut data = Vec::new();
+        let mut builder = DirectoryBaker::new(Cursor::new(&mut data)).unwrap();
+        builder.finish().unwrap();
+        load_archive_directory(&mut Cursor::new(&data)).unwrap();
+    }
+
+    #[test]
+    fn write_read() {
+        let mut data = Vec::new();
+        let mut builder = DirectoryBaker::new(Cursor::new(&mut data)).unwrap();
+        let data1 = b"Hello world!";
+        let data2 = b"Hi there!";
+        builder.write("file1", data1).unwrap();
+        builder.write("file2", data2).unwrap();
+        builder.finish().unwrap();
+        let dir = load_archive_directory(&mut Cursor::new(&data)).unwrap();
+        assert_eq!(2, dir.len());
+        let file1 = dir.get("file1").unwrap();
+        assert_eq!(data1.len() as u32, file1.size);
+        let file2 = dir.get("file2").unwrap();
+        assert_eq!(data2.len() as u32, file2.size);
     }
 }
