@@ -32,7 +32,10 @@ use log::info;
 
 use crate::{Allocator, BackendError, BackendResult, DropList};
 
-use super::{CommandBuffer, FrameContext, FreeGpuResource, Instance, PhysicalDevice, QueueFamily};
+use super::{
+    CommandBuffer, CommandBufferRecorder, FrameContext, FreeGpuResource, Instance, PhysicalDevice,
+    QueueFamily,
+};
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -334,6 +337,18 @@ impl Device {
                 .build();
             unsafe { debug_utils.set_debug_utils_object_name(self.raw.handle(), &name_info) }?;
         }
+        Ok(())
+    }
+
+    pub fn with_setup_cb<F: FnOnce(&CommandBufferRecorder)>(&self, cb: F) -> BackendResult<()> {
+        let setup_cb = self.setup_cb.lock().unwrap();
+        {
+            let recorder = setup_cb.record(self)?;
+            cb(&recorder);
+        }
+        self.submit_transfer(&setup_cb, &[], &[])?;
+        unsafe { self.raw.queue_wait_idle(self.transfer_queue.raw) }?;
+
         Ok(())
     }
 }

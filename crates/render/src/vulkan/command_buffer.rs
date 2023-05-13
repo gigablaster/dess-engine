@@ -21,13 +21,19 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use crate::BackendResult;
 
 use super::{
-    Device, FboCacheKey, FreeGpuResource, Image, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    Buffer, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass, MAX_ATTACHMENTS,
+    MAX_COLOR_ATTACHMENTS,
 };
 
 pub struct CommandBuffer {
     pub raw: vk::CommandBuffer,
     pub fence: vk::Fence,
     pub pool: vk::CommandPool,
+}
+
+pub enum QueueType {
+    RENDER,
+    TRANSFER,
 }
 
 impl CommandBuffer {
@@ -151,6 +157,31 @@ impl<'a> CommandBufferRecorder<'a> {
             panic!("Can't start render pass without attachments");
         }
     }
+
+    pub fn copy_buffers_range(
+        &self,
+        from: &Buffer,
+        to: &Buffer,
+        source: usize,
+        destination: usize,
+        size: usize,
+    ) {
+        assert!(source + size <= from.desc.size);
+        assert!(destination + size <= to.desc.size);
+        let region = vk::BufferCopy::builder()
+            .src_offset(source as _)
+            .dst_offset(destination as _)
+            .size(size as _)
+            .build();
+        unsafe {
+            self.device
+                .cmd_copy_buffer(*self.cb, from.raw, to.raw, slice::from_ref(&region))
+        };
+    }
+
+    pub fn copy_buffers(&self, from: &Buffer, to: &Buffer) {
+        self.copy_buffers_range(from, to, 0, 0, from.desc.size);
+    }
 }
 
 impl<'a> Drop for CommandBufferRecorder<'a> {
@@ -162,6 +193,65 @@ impl<'a> Drop for CommandBufferRecorder<'a> {
 pub struct RenderPassRecorder<'a> {
     pub device: &'a ash::Device,
     pub cb: &'a vk::CommandBuffer,
+}
+
+impl<'a> RenderPassRecorder<'a> {
+    pub fn bind_pipeline(&self, pipeline: &Pipeline) {
+        unsafe {
+            self.device.cmd_bind_pipeline(
+                *self.cb,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline.pipeline,
+            )
+        };
+    }
+
+    pub fn set_viewport(&self, viewport: vk::Viewport) {
+        unsafe {
+            self.device
+                .cmd_set_viewport(*self.cb, 0, slice::from_ref(&viewport))
+        };
+    }
+
+    pub fn set_scissor(&self, scissor: vk::Rect2D) {
+        unsafe {
+            self.device
+                .cmd_set_scissor(*self.cb, 0, slice::from_ref(&scissor))
+        };
+    }
+
+    pub fn bind_index_buffer(&self, buffer: &Buffer) {
+        unsafe {
+            self.device
+                .cmd_bind_index_buffer(*self.cb, buffer.raw, 0, vk::IndexType::UINT16)
+        };
+    }
+
+    pub fn bind_vertex_buffer(&self, buffer: &Buffer) {
+        unsafe {
+            self.device
+                .cmd_bind_vertex_buffers(*self.cb, 0, slice::from_ref(&buffer.raw), &[0u64])
+        };
+    }
+
+    pub fn draw(
+        &self,
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        vertex_offset: i32,
+    ) {
+        unsafe {
+            self.device.cmd_draw_indexed(
+                *self.cb,
+                index_count,
+                instance_count,
+                first_index,
+                vertex_offset,
+                0,
+            )
+        };
+    }
 }
 
 impl<'a> Drop for RenderPassRecorder<'a> {

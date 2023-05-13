@@ -302,6 +302,16 @@ impl<'a> Swapchain<'a> {
     pub fn backbuffer_format(&self) -> vk::Format {
         self.inner.format
     }
+
+    pub fn render_area(&self) -> vk::Rect2D {
+        vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D {
+                width: self.inner.dims[0],
+                height: self.inner.dims[1],
+            },
+        }
+    }
 }
 
 impl<'a> Drop for Swapchain<'a> {

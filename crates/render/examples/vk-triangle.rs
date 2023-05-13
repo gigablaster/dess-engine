@@ -29,7 +29,7 @@ use render::{
     BackendError,
 };
 use sdl2::event::{Event, WindowEvent};
-use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
+use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 #[repr(C, packed)]
 struct Vertex {
@@ -127,7 +127,8 @@ fn main() -> Result<(), String> {
     let pipeline_cache = create_pipeline_cache(&device.raw).unwrap();
     let pipeline_desc = PipelineDesc::new(&render_pass)
         .add_shader(&fragment_shader)
-        .add_shader(&vertex_shader);
+        .add_shader(&vertex_shader)
+        .face_cull(false);
     let pipeline = Pipeline::new::<Vertex>(&device.raw, &pipeline_cache, pipeline_desc).unwrap();
 
     let mut vertex_staging = Buffer::new(
@@ -142,13 +143,13 @@ fn main() -> Result<(), String> {
         Some("Index staging"),
     )
     .unwrap();
-    let _vertex_buffer = Buffer::new(
+    let vertex_buffer = Buffer::new(
         &device,
         BufferDesc::vertex::<Vertex>(3),
         Some("Vertex buffer"),
     )
     .unwrap();
-    let _index_buffer = Buffer::new(&device, BufferDesc::index(3), Some("Index buffer")).unwrap();
+    let index_buffer = Buffer::new(&device, BufferDesc::index(3), Some("Index buffer")).unwrap();
 
     let vertices = [
         Vertex {
@@ -173,6 +174,91 @@ fn main() -> Result<(), String> {
     let mut map = index_staging.map().unwrap();
     map.push(&indices).unwrap();
     index_staging.unmap();
+
+    device
+        .with_setup_cb(|recorder| {
+            let barriers = [
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferRead],
+                    next_accesses: &[AccessType::TransferRead],
+                    src_queue_family_index: device.graphics_queue.family.index,
+                    dst_queue_family_index: device.transfer_queue.family.index,
+                    buffer: vertex_staging.raw,
+                    offset: 0,
+                    size: vertex_staging.desc.size,
+                },
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferRead],
+                    next_accesses: &[AccessType::TransferRead],
+                    src_queue_family_index: device.graphics_queue.family.index,
+                    dst_queue_family_index: device.transfer_queue.family.index,
+                    buffer: index_staging.raw,
+                    offset: 0,
+                    size: index_staging.desc.size,
+                },
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferWrite],
+                    next_accesses: &[AccessType::TransferWrite],
+                    src_queue_family_index: device.graphics_queue.family.index,
+                    dst_queue_family_index: device.transfer_queue.family.index,
+                    buffer: vertex_buffer.raw,
+                    offset: 0,
+                    size: vertex_buffer.desc.size,
+                },
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferWrite],
+                    next_accesses: &[AccessType::TransferWrite],
+                    src_queue_family_index: device.graphics_queue.family.index,
+                    dst_queue_family_index: device.transfer_queue.family.index,
+                    buffer: index_buffer.raw,
+                    offset: 0,
+                    size: index_buffer.desc.size,
+                },
+            ];
+            pipeline_barrier(&device.raw, *recorder.cb, None, &barriers, &[]);
+            recorder.copy_buffers(&index_staging, &index_buffer);
+            recorder.copy_buffers(&vertex_staging, &vertex_buffer);
+            let barriers = [
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferRead],
+                    next_accesses: &[AccessType::TransferRead],
+                    src_queue_family_index: device.transfer_queue.family.index,
+                    dst_queue_family_index: device.graphics_queue.family.index,
+                    buffer: vertex_staging.raw,
+                    offset: 0,
+                    size: vertex_staging.desc.size,
+                },
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferRead],
+                    next_accesses: &[AccessType::TransferRead],
+                    src_queue_family_index: device.transfer_queue.family.index,
+                    dst_queue_family_index: device.graphics_queue.family.index,
+                    buffer: index_staging.raw,
+                    offset: 0,
+                    size: index_staging.desc.size,
+                },
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferWrite],
+                    next_accesses: &[AccessType::VertexBuffer],
+                    src_queue_family_index: device.transfer_queue.family.index,
+                    dst_queue_family_index: device.graphics_queue.family.index,
+                    buffer: vertex_buffer.raw,
+                    offset: 0,
+                    size: vertex_buffer.desc.size,
+                },
+                BufferBarrier {
+                    previous_accesses: &[AccessType::TransferWrite],
+                    next_accesses: &[AccessType::VertexBuffer],
+                    src_queue_family_index: device.transfer_queue.family.index,
+                    dst_queue_family_index: device.graphics_queue.family.index,
+                    buffer: index_buffer.raw,
+                    offset: 0,
+                    size: index_buffer.desc.size,
+                },
+            ];
+            pipeline_barrier(&device.raw, *recorder.cb, None, &barriers, &[]);
+        })
+        .unwrap();
 
     let mut skip_render = false;
     'running: loop {
@@ -250,12 +336,26 @@ fn main() -> Result<(), String> {
                     &image.image,
                     vk::ClearValue {
                         color: vk::ClearColorValue {
-                            float32: [1.0, 0.5, 0.25, 1.0],
+                            float32: [0.1, 0.1, 0.15, 1.0],
                         },
                     },
                 )];
                 {
-                    let _pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
+                    let pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
+                    let render_area = swapchain.render_area();
+                    pass.set_scissor(render_area);
+                    pass.set_viewport(vk::Viewport {
+                        x: 0.0,
+                        y: 0.0,
+                        width: render_area.extent.width as f32,
+                        height: render_area.extent.height as f32,
+                        min_depth: 0.0,
+                        max_depth: 1.0,
+                    });
+                    pass.bind_pipeline(&pipeline);
+                    pass.bind_index_buffer(&index_buffer);
+                    pass.bind_vertex_buffer(&vertex_buffer);
+                    pass.draw(3, 1, 0, 0);
                 }
             }
             device
@@ -307,6 +407,10 @@ fn main() -> Result<(), String> {
         swapchain.present_image(image);
     }
     device.wait();
+    drop(vertex_buffer);
+    drop(index_buffer);
+    drop(vertex_staging);
+    drop(index_staging);
 
     unsafe { device.raw.destroy_pipeline_cache(pipeline_cache, None) };
     pipeline.free(&device.raw);
