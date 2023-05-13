@@ -15,6 +15,7 @@
 
 mod droplist;
 mod error;
+mod ringbuffer;
 pub mod vulkan;
 
 use ash::vk;
@@ -22,6 +23,7 @@ pub use error::*;
 
 use droplist::*;
 use gpu_alloc::{GpuAllocator, MemoryBlock};
+pub use ringbuffer::*;
 
 pub type Allocator = GpuAllocator<vk::DeviceMemory>;
 pub type Allocation = MemoryBlock<vk::DeviceMemory>;

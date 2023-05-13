@@ -157,7 +157,7 @@ impl Buffer {
         SubBuffer {
             raw: self.raw,
             offset,
-            size
+            size,
         }
     }
 }
@@ -250,10 +250,11 @@ impl BufferView for Buffer {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct SubBuffer {
-    raw: vk::Buffer,
-    offset: u64,
-    size: u64
+    pub raw: vk::Buffer,
+    pub offset: u64,
+    pub size: u64,
 }
 
 impl BufferView for SubBuffer {
