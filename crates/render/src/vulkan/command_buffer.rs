@@ -21,8 +21,8 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use crate::BackendResult;
 
 use super::{
-    Buffer, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass, MAX_ATTACHMENTS,
-    MAX_COLOR_ATTACHMENTS,
+    Buffer, BufferView, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass,
+    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
 pub struct CommandBuffer {
@@ -220,17 +220,25 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_index_buffer(&self, buffer: &Buffer) {
+    pub fn bind_index_buffer(&self, buffer: &impl BufferView) {
         unsafe {
-            self.device
-                .cmd_bind_index_buffer(*self.cb, buffer.raw, 0, vk::IndexType::UINT16)
+            self.device.cmd_bind_index_buffer(
+                *self.cb,
+                buffer.buffer(),
+                buffer.offset(),
+                vk::IndexType::UINT16,
+            )
         };
     }
 
-    pub fn bind_vertex_buffer(&self, buffer: &Buffer) {
+    pub fn bind_vertex_buffer(&self, buffer: &impl BufferView) {
         unsafe {
-            self.device
-                .cmd_bind_vertex_buffers(*self.cb, 0, slice::from_ref(&buffer.raw), &[0u64])
+            self.device.cmd_bind_vertex_buffers(
+                *self.cb,
+                0,
+                slice::from_ref(&buffer.buffer()),
+                &[buffer.offset()],
+            )
         };
     }
 

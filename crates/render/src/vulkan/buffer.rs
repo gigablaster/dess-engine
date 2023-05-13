@@ -66,6 +66,12 @@ impl BufferDesc {
     }
 }
 
+pub trait BufferView {
+    fn buffer(&self) -> vk::Buffer;
+    fn offset(&self) -> u64;
+    fn size(&self) -> u64;
+}
+
 pub struct Buffer {
     device: Arc<Device>,
     pub raw: vk::Buffer,
@@ -146,6 +152,14 @@ impl Buffer {
             Err(crate::BackendError::Other("Buffer isn't allocated".into()))
         }
     }
+
+    pub fn sub(&self, offset: u64, size: u64) -> SubBuffer {
+        SubBuffer {
+            raw: self.raw,
+            offset,
+            size
+        }
+    }
 }
 
 impl Drop for Buffer {
@@ -219,5 +233,39 @@ impl MappedBuffer {
             Ok(count) => Ok(count / size_of::<T>()),
             Err(err) => Err(crate::BackendError::Other(err.to_string())),
         }
+    }
+}
+
+impl BufferView for Buffer {
+    fn buffer(&self) -> vk::Buffer {
+        self.raw
+    }
+
+    fn offset(&self) -> u64 {
+        0
+    }
+
+    fn size(&self) -> u64 {
+        self.desc.size as _
+    }
+}
+
+pub struct SubBuffer {
+    raw: vk::Buffer,
+    offset: u64,
+    size: u64
+}
+
+impl BufferView for SubBuffer {
+    fn size(&self) -> u64 {
+        self.size
+    }
+
+    fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    fn buffer(&self) -> vk::Buffer {
+        self.raw
     }
 }
