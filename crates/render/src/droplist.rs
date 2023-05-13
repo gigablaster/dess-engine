@@ -43,8 +43,8 @@ impl DropList {
         self.images_to_free.drain(..).for_each(|image| {
             unsafe { device.destroy_image(image, None) };
         });
-        self.buffer_views_to_free.drain(..).for_each(|view| {
-            unsafe { device.destroy_buffer_view(view, None) };
+        self.buffers_to_free.drain(..).for_each(|view| {
+            unsafe { device.destroy_buffer(view, None) };
         });
         let device = AshMemoryDevice::wrap(device);
         self.memory_to_free.drain(..).for_each(|mem| {
