@@ -15,15 +15,12 @@
 
 use std::{
     collections::HashMap,
+    ops::Deref,
     sync::{Arc, Mutex},
 };
 
+use super::{image_cache::ImageMemory, BackendError, BackendResult, Device};
 use ash::vk;
-use gpu_alloc::{Request, UsageFlags};
-
-use crate::{Allocation, BackendError, BackendResult};
-
-use super::Device;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ImageType {
@@ -126,39 +123,36 @@ impl ImageViewDesc {
 }
 
 #[derive(Debug)]
+pub enum SubImage {
+    All,
+    Layer(u32),
+    LayerAndMip(u32, u32),
+}
+
+#[derive(Debug)]
+enum ImageAllocation {
+    None,
+    External,
+    Cache(ImageMemory),
+}
+
+#[derive(Debug)]
 pub struct Image {
-    pub(crate) device: Arc<Device>,
+    pub device: Arc<Device>,
     pub raw: vk::Image,
     pub desc: ImageDesc,
-    pub(crate) allocation: Option<Allocation>,
-    pub(crate) views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
+    allocation: ImageAllocation,
+    views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
 impl Image {
-    pub fn new(
+    pub fn texture(
         device: &Arc<Device>,
         image_desc: ImageDesc,
         name: Option<&str>,
     ) -> BackendResult<Self> {
         let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
-        let requirements = unsafe { device.raw.get_image_memory_requirements(image) };
-        let allocation = device.allocate(|allocator, device| unsafe {
-            allocator.alloc(
-                device,
-                Request {
-                    size: requirements.size,
-                    align_mask: requirements.alignment,
-                    usage: UsageFlags::FAST_DEVICE_ACCESS,
-                    memory_types: !0,
-                },
-            )
-        })?;
-
-        unsafe {
-            device
-                .raw
-                .bind_image_memory(image, *allocation.memory(), allocation.offset())
-        }?;
+        let allocation = ImageAllocation::Cache(device.allocate_image(image)?);
 
         if let Some(name) = name {
             device.set_object_name(image, name)?;
@@ -168,24 +162,77 @@ impl Image {
             device: device.clone(),
             raw: image,
             desc: image_desc,
-            allocation: Some(allocation),
             views: Default::default(),
+            allocation,
+        })
+    }
+
+    pub fn external(
+        device: &Arc<Device>,
+        image: vk::Image,
+        image_desc: ImageDesc,
+        name: Option<&str>,
+    ) -> BackendResult<Self> {
+        if let Some(name) = name {
+            device.set_object_name(image, name)?
+        }
+
+        Ok(Self {
+            device: device.clone(),
+            raw: image,
+            desc: image_desc,
+            views: Default::default(),
+            allocation: ImageAllocation::External,
+        })
+    }
+
+    pub fn render_target(
+        device: &Arc<Device>,
+        image_desc: ImageDesc,
+        name: Option<&str>,
+    ) -> BackendResult<Self> {
+        let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
+        device.allocate_render_target(image)?;
+
+        if let Some(name) = name {
+            device.set_object_name(image, name)?;
+        }
+
+        Ok(Self {
+            device: device.clone(),
+            raw: image,
+            desc: image_desc,
+            views: Default::default(),
+            allocation: ImageAllocation::External,
         })
     }
 
     pub fn subresource(
         &self,
-        layer: u32,
-        mip: u32,
+        subimage: SubImage,
         aspect: vk::ImageAspectFlags,
     ) -> vk::ImageSubresourceRange {
-        vk::ImageSubresourceRange::builder()
-            .base_array_layer(layer)
-            .layer_count(1)
-            .level_count(1)
-            .base_mip_level(mip)
-            .aspect_mask(aspect)
-            .build()
+        let desc = vk::ImageSubresourceRange::builder().aspect_mask(aspect);
+        match subimage {
+            SubImage::All => desc
+                .base_array_layer(0)
+                .layer_count(self.desc.array_elements)
+                .base_mip_level(0)
+                .level_count(self.desc.mip_levels)
+                .build(),
+            SubImage::Layer(layer) => desc
+                .base_array_layer(layer)
+                .layer_count(1)
+                .base_mip_level(0)
+                .level_count(self.desc.mip_levels)
+                .build(),
+            SubImage::LayerAndMip(layer, mip) => desc
+                .base_array_layer(layer)
+                .base_mip_level(mip)
+                .layer_count(1)
+                .level_count(1)
+                .build(),
+        }
     }
 
     pub fn get_or_create_view(&self, view_desc: ImageViewDesc) -> BackendResult<vk::ImageView> {
@@ -222,9 +269,19 @@ impl Image {
     }
 }
 
-pub struct ImageSubResourceData<'a> {
-    pub raw: &'a [u8],
-    pub row_pitch: usize,
+impl Drop for Image {
+    fn drop(&mut self) {
+        self.device.with_drop_list(|droplist| {
+            self.views
+                .lock()
+                .unwrap()
+                .drain()
+                .for_each(|(_, view)| droplist.drop_image_view(view));
+            if let ImageAllocation::Cache(memory) = self.allocation {
+                droplist.drop_image(self.raw, memory);
+            }
+        })
+    }
 }
 
 impl ImageDesc {
@@ -232,7 +289,7 @@ impl ImageDesc {
         Self {
             image_type,
             usage: vk::ImageUsageFlags::default(),
-            flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
+            flags: vk::ImageCreateFlags::empty(),
             format,
             extent,
             tiling: vk::ImageTiling::OPTIMAL,
@@ -336,20 +393,5 @@ impl ImageDesc {
             initial_layout: vk::ImageLayout::UNDEFINED,
             ..Default::default()
         }
-    }
-}
-
-impl Drop for Image {
-    fn drop(&mut self) {
-        self.device.drop_resources(|list| {
-            self.views.lock().unwrap().iter().for_each(|view| {
-                list.drop_image_view(*view.1);
-            });
-            // If memory isn't there then image was created by swapchain or something external
-            if let Some(allocation) = self.allocation.take() {
-                list.drop_memory(allocation);
-                list.drop_image(self.raw);
-            }
-        });
     }
 }

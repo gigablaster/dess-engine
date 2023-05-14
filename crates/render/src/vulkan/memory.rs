@@ -1,5 +1,9 @@
 use ash::vk;
-use common::Align;
+use log::debug;
+
+use crate::vulkan::BackendError;
+
+use super::{BackendResult, PhysicalDevice};
 
 #[derive(Debug, Clone, Copy)]
 struct BlockData(u32, u32);
@@ -10,18 +14,15 @@ enum Block {
     Used(BlockData),
 }
 
-#[derive(Debug)]
-pub struct MemoryBlock<M: Copy> {
-    pub memory: M,
+#[derive(Debug, Copy, Clone)]
+pub struct MemoryBlock {
     pub offset: u32,
     pub size: u32,
 }
 
 /// Sub-buffer allocator for all in-game geometry.
 /// It's simple free-list allocator
-pub struct DynamicAllocator<M: Copy> {
-    memory: M,
-    offset: u32,
+pub struct DynamicAllocator {
     size: u32,
     granularity: u32,
     blocks: Vec<Block>,
@@ -33,51 +34,44 @@ pub enum AllocError {
     WrongBlock,
 }
 
-impl<M: Copy> DynamicAllocator<M> {
-    pub fn new(memory: M, offset: u32, size: u32, granularity: u32) -> Self {
+fn align(value: u32, align: u32) -> u32 {
+    if value == 0 || value % align == 0 {
+        value
+    } else {
+        (value & !(align - 1)) + align
+    }
+}
+impl DynamicAllocator {
+    pub fn new(size: u32, granularity: u32) -> Self {
         let mut blocks = Vec::with_capacity(256);
         blocks.push(Block::Free(BlockData(0, size)));
         Self {
-            memory,
             blocks,
-            offset,
             size,
             granularity,
         }
     }
 
-    pub fn alloc(&mut self, size: u32) -> Result<MemoryBlock<M>, AllocError> {
+    pub fn alloc(&mut self, size: u32) -> Result<MemoryBlock, AllocError> {
         if let Some(index) = self.find_free_block(size) {
             if let Some(offset) = self.split_and_insert_block(index, size) {
-                self.debug_dump_memory();
-                return Ok(MemoryBlock {
-                    memory: self.memory,
-                    offset,
-                    size,
-                });
+                return Ok(MemoryBlock { offset, size });
             }
         }
 
         Err(AllocError::NotEnoughMemory)
     }
 
-    pub fn free(&mut self, block: MemoryBlock<M>) -> Result<(), AllocError> {
-        if let Some(index) = self.find_used_block(block.offset) {
+    pub fn free(&mut self, offset: u32) -> Result<(), AllocError> {
+        if let Some(index) = self.find_used_block(offset) {
             if let Block::Used(block) = self.blocks[index] {
                 self.blocks[index] = Block::Free(block);
                 self.merge_free_blocks(index);
-                self.debug_dump_memory();
                 return Ok(());
             }
         }
 
         Err(AllocError::WrongBlock)
-    }
-
-    fn debug_dump_memory(&self) {
-        self.blocks.iter().for_each(|block| {
-            println!("{:?}", block);
-        })
     }
 
     fn find_used_block(&self, offset: u32) -> Option<usize> {
@@ -133,7 +127,7 @@ impl<M: Copy> DynamicAllocator<M> {
     }
 
     fn split_and_insert_block(&mut self, index: usize, size: u32) -> Option<u32> {
-        let size = size.max(self.granularity).align(self.granularity);
+        let size = align(size, self.granularity);
         if let Some(block) = self.blocks.get(index) {
             let block = *block;
             if let Block::Free(block) = block {
@@ -152,13 +146,43 @@ impl<M: Copy> DynamicAllocator<M> {
     }
 }
 
+pub fn allocate_vram(
+    device: &ash::Device,
+    pdevice: &PhysicalDevice,
+    size: u64,
+    flags: vk::MemoryPropertyFlags,
+) -> BackendResult<vk::DeviceMemory> {
+    if let Some(memory) = find_memory(pdevice, flags) {
+        let alloc_info = vk::MemoryAllocateInfo::builder()
+            .allocation_size(size)
+            .memory_type_index(memory)
+            .build();
+        let mem = unsafe { device.allocate_memory(&alloc_info, None) }?;
+
+        debug!("Allocate {} bytes of type {:?}", size, flags);
+
+        Ok(mem)
+    } else {
+        Err(BackendError::VramTypeNotFund)
+    }
+}
+
+fn find_memory(pdevice: &PhysicalDevice, flags: vk::MemoryPropertyFlags) -> Option<u32> {
+    let memory_prop = pdevice.memory_properties;
+    memory_prop.memory_types[..memory_prop.memory_type_count as _]
+        .iter()
+        .enumerate()
+        .find(|(_, memory_type)| memory_type.property_flags & flags == flags)
+        .map(|(index, _memory_type)| index as _)
+}
+
 #[cfg(test)]
 mod test {
     use super::DynamicAllocator;
 
     #[test]
     fn alloc() {
-        let mut allocator = DynamicAllocator::<()>::new((), 0, 1024, 64);
+        let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let block2 = allocator.alloc(200).unwrap();
         assert_eq!(0, block1.offset);
@@ -169,11 +193,11 @@ mod test {
 
     #[test]
     fn free() {
-        let mut allocator = DynamicAllocator::<()>::new((), 0, 1024, 64);
+        let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1).unwrap();
-        allocator.free(block2).unwrap();
+        allocator.free(block1.offset).unwrap();
+        allocator.free(block2.offset).unwrap();
         let block = allocator.alloc(300).unwrap();
         assert_eq!(0, block.offset);
         assert_eq!(300, block.size);
@@ -181,10 +205,10 @@ mod test {
 
     #[test]
     fn allocate_suitable_block() {
-        let mut allocator = DynamicAllocator::<()>::new((), 0, 1024, 64);
+        let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1).unwrap();
+        allocator.free(block1.offset).unwrap();
         let block = allocator.alloc(300).unwrap();
         assert_eq!(384, block.offset);
         assert_eq!(300, block.size);
@@ -192,11 +216,11 @@ mod test {
 
     #[test]
     fn allocate_small_blocks_in_hole_after_big() {
-        let mut allocator = DynamicAllocator::<()>::new((), 0, 1024, 64);
+        let mut allocator = DynamicAllocator::new(1024, 64);
         allocator.alloc(100).unwrap();
         let block = allocator.alloc(200).unwrap();
         allocator.alloc(100).unwrap();
-        allocator.free(block).unwrap();
+        allocator.free(block.offset).unwrap();
         let block1 = allocator.alloc(50).unwrap();
         let block2 = allocator.alloc(50).unwrap();
         assert_eq!(128, block1.offset);
@@ -207,7 +231,7 @@ mod test {
 
     #[test]
     fn not_anough_memory() {
-        let mut allocator = DynamicAllocator::<()>::new((), 0, 1024, 64);
+        let mut allocator = DynamicAllocator::new(1024, 64);
         allocator.alloc(500).unwrap();
         allocator.alloc(200).unwrap();
         assert!(allocator.alloc(500).is_err());

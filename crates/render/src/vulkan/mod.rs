@@ -13,23 +13,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod buffer;
 mod command_buffer;
 mod device;
+mod droplist;
 mod frame_context;
 mod image;
 mod instance;
+mod memory;
 mod physical_device;
 mod pipeline;
 mod render_pass;
 mod shader;
 mod surface;
 mod swapchain;
+//mod ringbuffer;
+mod error;
+mod geometry_cache;
+mod image_cache;
 
-pub use buffer::*;
-pub use buffer::*;
+use ash::vk;
 pub use command_buffer::*;
 pub use device::*;
+pub use error::*;
 pub use frame_context::*;
 pub use image::*;
 pub use instance::*;
@@ -42,4 +47,10 @@ pub use swapchain::*;
 
 pub trait FreeGpuResource {
     fn free(&self, device: &ash::Device);
+}
+
+pub trait Buffer {
+    fn buffer(&self) -> vk::Buffer;
+    fn offset(&self) -> u64;
+    fn size(&self) -> u64;
 }

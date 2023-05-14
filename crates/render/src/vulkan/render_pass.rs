@@ -18,9 +18,7 @@ use std::{collections::HashMap, sync::Mutex};
 use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::BackendResult;
-
-use super::{FreeGpuResource, Image, ImageViewDesc};
+use super::{BackendResult, FreeGpuResource, Image, ImageViewDesc};
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;

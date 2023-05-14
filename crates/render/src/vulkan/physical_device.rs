@@ -17,9 +17,7 @@ use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use crate::{BackendError, BackendResult};
-
-use super::{Instance, Surface};
+use super::{BackendError, BackendResult, Instance, Surface};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QueueFamily {

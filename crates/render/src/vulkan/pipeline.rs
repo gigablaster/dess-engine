@@ -17,9 +17,7 @@ use std::{ffi::CStr, mem::size_of, slice};
 
 use ash::vk;
 
-use crate::{BackendError, BackendResult};
-
-use super::{FreeGpuResource, RenderPass, Shader};
+use super::{BackendError, BackendResult, FreeGpuResource, RenderPass, Shader};
 
 pub trait PipelineVertex: Sized {
     fn attribute_description() -> &'static [vk::VertexInputAttributeDescription];

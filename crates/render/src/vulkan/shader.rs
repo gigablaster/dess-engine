@@ -17,9 +17,7 @@ use ash::vk;
 use byte_slice_cast::AsSliceOf;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
-use crate::BackendResult;
-
-use super::FreeGpuResource;
+use super::{BackendResult, FreeGpuResource};
 
 #[derive(Debug, Clone)]
 pub struct Shader {

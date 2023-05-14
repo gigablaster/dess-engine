@@ -19,14 +19,11 @@ use std::{mem::size_of, thread::sleep, time::Duration};
 use ash::vk;
 
 use glam::Vec3;
-use render::{
-    vulkan::{
-        create_pipeline_cache, Buffer, BufferDesc, Device, FreeGpuResource, Instance,
-        PhysicalDeviceList, Pipeline, PipelineDesc, PipelineVertex, RenderPass,
-        RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Shader, SubmitWaitDesc,
-        Surface, Swapchain,
-    },
-    BackendError,
+use render::vulkan::{
+    create_pipeline_cache, BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList,
+    Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment,
+    RenderPassAttachmentDesc, RenderPassLayout, Shader, SubImage, SubmitWaitDesc, Surface,
+    Swapchain,
 };
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
@@ -131,7 +128,7 @@ fn main() -> Result<(), String> {
         .face_cull(false);
     let pipeline = Pipeline::new::<Vertex>(&device.raw, &pipeline_cache, pipeline_desc).unwrap();
 
-    let mut vertex_staging = Buffer::new(
+    /*let mut vertex_staging = Buffer::new(
         &device,
         BufferDesc::staging(3 * size_of::<Vertex>()),
         Some("Vertex staging"),
@@ -259,7 +256,7 @@ fn main() -> Result<(), String> {
             pipeline_barrier(&device.raw, *recorder.cb, None, &barriers, &[]);
         })
         .unwrap();
-
+    */
     let mut skip_render = false;
     'running: loop {
         let mut recreate_swapchain = false;
@@ -323,7 +320,9 @@ fn main() -> Result<(), String> {
                     src_queue_family_index: device.graphics_queue.family.index,
                     dst_queue_family_index: device.graphics_queue.family.index,
                     image: image.image.raw,
-                    range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
+                    range: image
+                        .image
+                        .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
                 };
                 pipeline_barrier(
                     recorder.device,
@@ -343,7 +342,7 @@ fn main() -> Result<(), String> {
                 {
                     let pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
                     let render_area = swapchain.render_area();
-                    pass.set_scissor(render_area);
+                    /*pass.set_scissor(render_area);
                     pass.set_viewport(vk::Viewport {
                         x: 0.0,
                         y: 0.0,
@@ -355,7 +354,7 @@ fn main() -> Result<(), String> {
                     pass.bind_pipeline(&pipeline);
                     pass.bind_index_buffer(&index_buffer);
                     pass.bind_vertex_buffer(&vertex_buffer);
-                    pass.draw(3, 1, 0, 0);
+                    pass.draw(3, 1, 0, 0); */
                 }
             }
             device
@@ -382,7 +381,9 @@ fn main() -> Result<(), String> {
                     src_queue_family_index: device.graphics_queue.family.index,
                     dst_queue_family_index: device.graphics_queue.family.index,
                     image: image.image.raw,
-                    range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
+                    range: image
+                        .image
+                        .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
                 };
                 pipeline_barrier(
                     recorder.device,
@@ -407,10 +408,6 @@ fn main() -> Result<(), String> {
         swapchain.present_image(image);
     }
     device.wait();
-    drop(vertex_buffer);
-    drop(index_buffer);
-    drop(vertex_staging);
-    drop(index_staging);
 
     unsafe { device.raw.destroy_pipeline_cache(pipeline_cache, None) };
     pipeline.free(&device.raw);

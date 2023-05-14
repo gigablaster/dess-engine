@@ -18,12 +18,9 @@ use std::{slice, sync::Arc};
 use ash::{extensions::khr, vk};
 use log::info;
 
-use crate::{
-    vulkan::{ImageDesc, ImageType},
-    BackendError, BackendResult,
-};
+use crate::vulkan::{BackendError, ImageDesc, ImageType};
 
-use super::{Device, Image, Surface};
+use super::{BackendResult, Device, Image, Surface};
 
 struct SwapchainInner {
     pub raw: vk::SwapchainKHR,
@@ -71,7 +68,7 @@ impl SwapchainInner {
         };
 
         if surface_resolution.width == 0 || surface_resolution.height == 0 {
-            return Err(crate::BackendError::WaitForSurface);
+            return Err(BackendError::WaitForSurface);
         }
 
         let present_mode_preferences = [vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO];
@@ -120,21 +117,23 @@ impl SwapchainInner {
         let images = unsafe { loader.get_swapchain_images(swapchain) }?;
         let images = images
             .iter()
-            .map(|image| Image {
-                device: device.clone(),
-                raw: *image,
-                desc: ImageDesc {
-                    image_type: ImageType::Tex2D,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                    flags: vk::ImageCreateFlags::empty(),
-                    format: format.format,
-                    extent: [surface_resolution.width, surface_resolution.height],
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    mip_levels: 1,
-                    array_elements: 1,
-                },
-                allocation: None,
-                views: Default::default(),
+            .map(|image| {
+                Image::external(
+                    device,
+                    *image,
+                    ImageDesc {
+                        image_type: ImageType::Tex2D,
+                        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                        flags: vk::ImageCreateFlags::empty(),
+                        format: format.format,
+                        extent: [surface_resolution.width, surface_resolution.height],
+                        tiling: vk::ImageTiling::OPTIMAL,
+                        mip_levels: 1,
+                        array_elements: 1,
+                    },
+                    None,
+                )
+                .unwrap()
             })
             .map(Arc::new)
             .collect::<Vec<_>>();

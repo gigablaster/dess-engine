@@ -18,11 +18,9 @@ use std::slice;
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 
-use crate::BackendResult;
-
 use super::{
-    Buffer, BufferView, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass,
-    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    geometry_cache::GeometryBuffer, BackendResult, Buffer, Device, FboCacheKey, FreeGpuResource,
+    Image, Pipeline, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
 pub struct CommandBuffer {
@@ -160,27 +158,31 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn copy_buffers_range(
         &self,
-        from: &Buffer,
-        to: &Buffer,
+        from: &impl Buffer,
+        to: &impl Buffer,
         source: usize,
         destination: usize,
         size: usize,
     ) {
-        assert!(source + size <= from.desc.size);
-        assert!(destination + size <= to.desc.size);
+        assert!(source + size <= from.size() as _);
+        assert!(destination + size <= to.size() as _);
         let region = vk::BufferCopy::builder()
             .src_offset(source as _)
             .dst_offset(destination as _)
             .size(size as _)
             .build();
         unsafe {
-            self.device
-                .cmd_copy_buffer(*self.cb, from.raw, to.raw, slice::from_ref(&region))
+            self.device.cmd_copy_buffer(
+                *self.cb,
+                from.buffer(),
+                to.buffer(),
+                slice::from_ref(&region),
+            )
         };
     }
 
-    pub fn copy_buffers(&self, from: &Buffer, to: &Buffer) {
-        self.copy_buffers_range(from, to, 0, 0, from.desc.size);
+    pub fn copy_buffers(&self, from: &impl Buffer, to: &impl Buffer) {
+        self.copy_buffers_range(from, to, 0, 0, from.size() as _);
     }
 }
 
@@ -220,7 +222,7 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_index_buffer(&self, buffer: &impl BufferView) {
+    pub fn bind_index_buffer(&self, buffer: &GeometryBuffer) {
         unsafe {
             self.device.cmd_bind_index_buffer(
                 *self.cb,
@@ -231,7 +233,7 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_vertex_buffer(&self, buffer: &impl BufferView) {
+    pub fn bind_vertex_buffer(&self, buffer: &GeometryBuffer) {
         unsafe {
             self.device.cmd_bind_vertex_buffers(
                 *self.cb,

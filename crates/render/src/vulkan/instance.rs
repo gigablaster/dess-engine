@@ -22,7 +22,7 @@ use ash::{
 use log::{info, log, Level};
 use sdl2::video::Window;
 
-use crate::BackendResult;
+use super::BackendResult;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,

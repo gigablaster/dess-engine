@@ -26,16 +26,20 @@ use ash::{
     extensions::khr,
     vk::{self, Handle},
 };
-use gpu_alloc::Config;
-use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
-use crate::{Allocator, BackendError, BackendResult, DropList};
+use crate::vulkan::BackendError;
 
 use super::{
-    CommandBuffer, CommandBufferRecorder, FrameContext, FreeGpuResource, Instance, PhysicalDevice,
-    QueueFamily,
+    droplist::DropList,
+    geometry_cache::{GeometryBuffer, GeometryCache},
+    image_cache::{ImageCache, ImageMemory},
+    BackendResult, CommandBuffer, CommandBufferRecorder, FrameContext, FreeGpuResource, Instance,
+    PhysicalDevice, QueueFamily,
 };
+
+const IMAGE_CHUNK_SIZE: u64 = 256 * 1024 * 1024;
+const GEOMETRY_CACHE_SIZE: u32 = 32 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -60,12 +64,13 @@ pub struct Device {
     pub pdevice: PhysicalDevice,
     pub graphics_queue: Queue,
     pub transfer_queue: Queue,
-    allocator: Arc<Mutex<Allocator>>,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     setup_pool: vk::CommandPool,
     setup_cb: Mutex<CommandBuffer>,
     frames: [Mutex<Arc<FrameContext>>; 2],
     drop_lists: [Mutex<DropList>; 2],
+    geo_cache: Mutex<GeometryCache>,
+    image_cache: Mutex<ImageCache>,
 }
 
 impl Device {
@@ -116,10 +121,6 @@ impl Device {
 
         info!("Created a Vulkan device");
 
-        let device_properties =
-            unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw)? };
-        let allocator_config = Config::i_am_potato();
-        let allocator = Allocator::new(allocator_config, device_properties);
         let pool_create_info = vk::CommandPoolCreateInfo::builder()
             .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
             .queue_family_index(transfer_queue.index)
@@ -138,18 +139,22 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
+        let image_cache = ImageCache::new(&device, &pdevice, IMAGE_CHUNK_SIZE)?;
+        let geo_cache = GeometryCache::new(&device, &pdevice, GEOMETRY_CACHE_SIZE)?;
+
         Ok(Arc::new(Self {
             instance,
             pdevice,
             graphics_queue: Self::create_queue(&device, graphics_queue),
             transfer_queue: Self::create_queue(&device, transfer_queue),
-            allocator: Arc::new(Mutex::new(allocator)),
             setup_cb: Mutex::new(setup_cb),
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
             drop_lists,
             setup_pool,
+            image_cache: Mutex::new(image_cache),
+            geo_cache: Mutex::new(geo_cache),
         }))
     }
 
@@ -217,11 +222,13 @@ impl Device {
                         u64::MAX,
                     )
                 }?;
-                let mut allocator = self.allocator.lock().unwrap();
-                self.drop_lists[0]
-                    .lock()
-                    .unwrap()
-                    .free(&self.raw, &mut allocator);
+                let mut image_cache = self.image_cache.lock().unwrap();
+                let mut geo_cache = self.geo_cache.lock().unwrap();
+                self.drop_lists[0].lock().unwrap().free(
+                    &self.raw,
+                    &mut image_cache,
+                    &mut geo_cache,
+                );
                 frame0.reset(&self.raw)?;
             } else {
                 return Err(BackendError::Other(
@@ -312,15 +319,9 @@ impl Device {
         unsafe { self.raw.device_wait_idle().unwrap() };
     }
 
-    pub(crate) fn drop_resources<F: FnOnce(&mut DropList)>(&self, cb: F) {
+    pub(crate) fn with_drop_list<F: FnOnce(&mut DropList)>(&self, cb: F) {
         let mut list = self.drop_lists[0].lock().unwrap();
         cb(&mut list);
-    }
-
-    pub(crate) fn allocate<T, F: FnOnce(&mut Allocator, &AshMemoryDevice) -> T>(&self, cb: F) -> T {
-        let mut allocator = self.allocator.lock().unwrap();
-        let device = AshMemoryDevice::wrap(&self.raw);
-        cb(&mut allocator, device)
     }
 
     pub fn get_sampler(&self, desc: SamplerDesc) -> Option<vk::Sampler> {
@@ -351,17 +352,38 @@ impl Device {
 
         Ok(())
     }
+
+    pub fn create_geometry_buffer(&self, size: usize) -> BackendResult<GeometryBuffer> {
+        let mut geo_cache = self.geo_cache.lock().unwrap();
+        geo_cache.allocate(size as _)
+    }
+
+    pub(crate) fn allocate_image(&self, image: vk::Image) -> BackendResult<ImageMemory> {
+        let mut image_cache = self.image_cache.lock().unwrap();
+        let memory = image_cache.allocate(&self.raw, &self.pdevice, image)?;
+        unsafe {
+            self.raw
+                .bind_image_memory(image, memory.memory, memory.offset as _)
+        }?;
+
+        Ok(memory)
+    }
+
+    pub(crate) fn allocate_render_target(&self, image: vk::Image) -> BackendResult<ImageMemory> {
+        unimplemented!();
+    }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle().ok() };
-        let mut allocator = self.allocator.lock().unwrap();
+        let mut image_cache = self.image_cache.lock().unwrap();
+        let mut geo_cache = self.geo_cache.lock().unwrap();
         self.setup_cb.lock().unwrap().free(&self.raw);
         unsafe { self.raw.destroy_command_pool(self.setup_pool, None) };
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
-            list.free(&self.raw, &mut allocator);
+            list.free(&self.raw, &mut image_cache, &mut geo_cache);
         });
         self.frames.iter().for_each(|frame| {
             let mut frame = frame.lock().unwrap();
@@ -371,7 +393,8 @@ impl Drop for Device {
         self.samplers.iter().for_each(|(_, sampler)| unsafe {
             self.raw.destroy_sampler(*sampler, None);
         });
-        unsafe { allocator.cleanup(AshMemoryDevice::wrap(&self.raw)) };
+        image_cache.free(&self.raw);
+        geo_cache.free(&self.raw);
         unsafe { self.raw.destroy_device(None) };
     }
 }

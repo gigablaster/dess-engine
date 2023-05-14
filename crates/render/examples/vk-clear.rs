@@ -18,12 +18,10 @@ use std::{thread::sleep, time::Duration};
 
 use ash::vk;
 
-use render::{
-    vulkan::{
-        Device, FreeGpuResource, Instance, PhysicalDeviceList, RenderPass, RenderPassAttachment,
-        RenderPassAttachmentDesc, RenderPassLayout, SubmitWaitDesc, Surface, Swapchain,
-    },
-    BackendError,
+use render::vulkan::{
+    BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList, RenderPass,
+    RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, SubImage, SubmitWaitDesc,
+    Surface, Swapchain,
 };
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
@@ -144,7 +142,9 @@ fn main() -> Result<(), String> {
                     src_queue_family_index: device.graphics_queue.family.index,
                     dst_queue_family_index: device.graphics_queue.family.index,
                     image: image.image.raw,
-                    range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
+                    range: image
+                        .image
+                        .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
                 };
                 pipeline_barrier(
                     recorder.device,
@@ -189,7 +189,9 @@ fn main() -> Result<(), String> {
                     src_queue_family_index: 0,
                     dst_queue_family_index: device.graphics_queue.family.index,
                     image: image.image.raw,
-                    range: image.image.subresource(0, 0, vk::ImageAspectFlags::COLOR),
+                    range: image
+                        .image
+                        .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
                 };
                 pipeline_barrier(
                     recorder.device,

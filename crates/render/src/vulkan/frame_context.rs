@@ -15,14 +15,11 @@
 
 use ash::vk;
 
-use crate::BackendResult;
-
-use super::{CommandBuffer, FreeGpuResource, QueueFamily};
+use super::{BackendResult, CommandBuffer, FreeGpuResource, QueueFamily};
 
 pub struct FrameContext {
     pub presentation_cb: CommandBuffer,
     pub main_cb: CommandBuffer,
-    pub queue_family: QueueFamily,
     pub pool: vk::CommandPool,
     pub render_finished: vk::Semaphore,
 }
@@ -45,7 +42,6 @@ impl FrameContext {
         Ok(Self {
             presentation_cb: CommandBuffer::new(device, pool)?,
             main_cb: CommandBuffer::new(device, pool)?,
-            queue_family: *queue_family,
             pool,
             render_finished,
         })

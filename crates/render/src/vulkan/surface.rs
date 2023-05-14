@@ -19,9 +19,7 @@ use ash::{
 };
 use sdl2::video::Window;
 
-use crate::BackendResult;
-
-use super::Instance;
+use super::{BackendResult, Instance};
 
 pub struct Surface<'a> {
     pub(crate) window: &'a Window,

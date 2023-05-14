@@ -2,8 +2,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use ash::vk;
 
-use crate::vulkan::{Buffer, BufferView, SubBuffer};
-
 // YOLO buffer tbh
 pub struct RingBuffer {
     buffer: vk::Buffer,
