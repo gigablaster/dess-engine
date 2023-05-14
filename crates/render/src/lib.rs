@@ -15,13 +15,13 @@
 
 mod droplist;
 mod error;
+mod memory;
 mod ringbuffer;
 pub mod vulkan;
 
 use ash::vk;
-pub use error::*;
-
 use droplist::*;
+pub use error::*;
 use gpu_alloc::{GpuAllocator, MemoryBlock};
 pub use ringbuffer::*;
 

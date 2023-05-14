@@ -22,3 +22,41 @@ pub mod traits;
 pub use client::*;
 pub use serialization::*;
 pub use time::*;
+
+pub trait Align<T> {
+    fn align(self, align: T) -> Self;
+}
+
+impl Align<u32> for u32 {
+    fn align(self, align: u32) -> Self {
+        if self == 0 || self % align == 0 {
+            self
+        } else {
+            (self & !(align - 1)) + align
+        }
+    }
+}
+
+impl Align<u64> for u64 {
+    fn align(self, align: u64) -> Self {
+        if self == 0 || self % align == 0 {
+            self
+        } else {
+            (self & !(align - 1)) + align
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use crate::Align;
+
+    #[test]
+    fn align() {
+        assert_eq!(0, 0u32.align(64));
+        assert_eq!(64, 50u32.align(64));
+        assert_eq!(64, 64u32.align(64));
+        assert_eq!(128, 100u32.align(64));
+        assert_eq!(128, 128u32.align(64));
+    }
+}
