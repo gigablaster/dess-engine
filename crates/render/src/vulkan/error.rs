@@ -28,6 +28,7 @@ pub enum BackendError {
     Reflection(ReflectError),
     RecreateSwapchain,
     WaitForSurface,
+    VramTypeNotFund,
 }
 
 impl From<LoadingError> for BackendError {

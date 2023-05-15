@@ -15,7 +15,6 @@
 
 use std::{
     collections::HashMap,
-    ops::Deref,
     sync::{Arc, Mutex},
 };
 
@@ -175,27 +174,6 @@ impl Image {
     ) -> BackendResult<Self> {
         if let Some(name) = name {
             device.set_object_name(image, name)?
-        }
-
-        Ok(Self {
-            device: device.clone(),
-            raw: image,
-            desc: image_desc,
-            views: Default::default(),
-            allocation: ImageAllocation::External,
-        })
-    }
-
-    pub fn render_target(
-        device: &Arc<Device>,
-        image_desc: ImageDesc,
-        name: Option<&str>,
-    ) -> BackendResult<Self> {
-        let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
-        device.allocate_render_target(image)?;
-
-        if let Some(name) = name {
-            device.set_object_name(image, name)?;
         }
 
         Ok(Self {

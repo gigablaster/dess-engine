@@ -2,31 +2,49 @@ use ash::vk;
 
 use super::{
     memory::{allocate_vram, DynamicAllocator},
-    BackendResult, Device, FreeGpuResource, PhysicalDevice,
+    BackendResult, FreeGpuResource, PhysicalDevice,
 };
 
 #[derive(Debug, Copy, Clone)]
 pub struct ImageMemory {
     pub memory: vk::DeviceMemory,
-    pub chunk: u32,
-    pub offset: u32,
-    pub size: u32,
+    pub chunk: u64,
+    pub offset: u64,
+    pub size: u64,
 }
 
 struct Chunk {
     pub memory: vk::DeviceMemory,
     pub allocator: DynamicAllocator,
+    pub index: u32,
 }
 
 impl Chunk {
-    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64) -> BackendResult<Self> {
-        let memory = allocate_vram(device, pdevice, size, vk::MemoryPropertyFlags::DEVICE_LOCAL)?;
-        let allocator = DynamicAllocator::new(
-            size as _,
-            pdevice.properties.limits.buffer_image_granularity as _,
-        );
+    pub fn new(
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        size: u64,
+        mask: u32,
+    ) -> BackendResult<Self> {
+        let (index, memory) = allocate_vram(
+            device,
+            pdevice,
+            size,
+            mask,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
+        let allocator =
+            DynamicAllocator::new(size, pdevice.properties.limits.buffer_image_granularity);
 
-        Ok(Self { memory, allocator })
+        Ok(Self {
+            memory,
+            allocator,
+            index,
+        })
+    }
+
+    pub fn is_suitable(&self, mask: u32) -> bool {
+        (1 << self.index) & mask != 0
     }
 }
 
@@ -43,12 +61,9 @@ pub struct ImageCache {
 
 impl ImageCache {
     pub fn new(
-        device: &ash::Device,
-        pdevice: &PhysicalDevice,
         chunk_size: u64,
     ) -> BackendResult<Self> {
-        let mut chunks = Vec::with_capacity(4);
-        chunks.push(Chunk::new(device, pdevice, chunk_size)?);
+        let chunks = Vec::with_capacity(4);
         Ok(Self { chunk_size, chunks })
     }
 
@@ -61,18 +76,24 @@ impl ImageCache {
         let requirement = unsafe { device.get_image_memory_requirements(image) };
         for index in 0..self.chunks.len() {
             let chunk = &mut self.chunks[index];
-            if let Ok(block) = chunk.allocator.alloc(requirement.size as _) {
-                return Ok(ImageMemory {
-                    memory: chunk.memory,
-                    chunk: index as _,
-                    offset: block.offset,
-                    size: block.size,
-                });
+            if chunk.is_suitable(requirement.memory_type_bits) {
+                if let Ok(block) = chunk.allocator.alloc(requirement.size) {
+                    return Ok(ImageMemory {
+                        memory: chunk.memory,
+                        chunk: index as _,
+                        offset: block.offset,
+                        size: block.size,
+                    });
+                }
             }
         }
         let index = self.chunks.len();
-        self.chunks
-            .push(Chunk::new(device, pdevice, self.chunk_size)?);
+        self.chunks.push(Chunk::new(
+            device,
+            pdevice,
+            self.chunk_size,
+            requirement.memory_type_bits,
+        )?);
         let block = self.chunks[index].allocator.alloc(requirement.size as _)?;
         Ok(ImageMemory {
             memory: self.chunks[index].memory,

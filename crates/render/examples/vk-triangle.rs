@@ -128,6 +128,10 @@ fn main() -> Result<(), String> {
         .face_cull(false);
     let pipeline = Pipeline::new::<Vertex>(&device.raw, &pipeline_cache, pipeline_desc).unwrap();
 
+    let vertex_buffer = device
+        .create_geometry_buffer(3 * size_of::<Vertex>())
+        .unwrap();
+    let index_buffer = device.create_geometry_buffer(3 * size_of::<u16>()).unwrap();
     /*let mut vertex_staging = Buffer::new(
         &device,
         BufferDesc::staging(3 * size_of::<Vertex>()),

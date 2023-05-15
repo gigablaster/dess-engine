@@ -36,7 +36,7 @@ pub struct GeometryCache {
 }
 
 impl GeometryCache {
-    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u32) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64) -> BackendResult<Self> {
         let create_info = vk::BufferCreateInfo::builder()
             .size(size as _)
             .usage(vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER)
@@ -45,10 +45,11 @@ impl GeometryCache {
 
         let buffer = unsafe { device.create_buffer(&create_info, None) }?;
         let requirement = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let memory = allocate_vram(
+        let (_, memory) = allocate_vram(
             device,
             pdevice,
             requirement.size,
+            requirement.memory_type_bits,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
         )?;
         unsafe { device.bind_buffer_memory(buffer, memory, 0) };
@@ -62,7 +63,7 @@ impl GeometryCache {
     }
 
     pub fn allocate(&mut self, size: u64) -> BackendResult<GeometryBuffer> {
-        let block = self.allocator.alloc(size as u32)?;
+        let block = self.allocator.alloc(size as u64)?;
         Ok(GeometryBuffer {
             buffer: self.buffer,
             offset: block.offset as _,

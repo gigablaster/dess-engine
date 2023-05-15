@@ -6,7 +6,7 @@ use crate::vulkan::BackendError;
 use super::{BackendResult, PhysicalDevice};
 
 #[derive(Debug, Clone, Copy)]
-struct BlockData(u32, u32);
+struct BlockData(u64, u64);
 
 #[derive(Debug, Clone, Copy)]
 enum Block {
@@ -16,15 +16,15 @@ enum Block {
 
 #[derive(Debug, Copy, Clone)]
 pub struct MemoryBlock {
-    pub offset: u32,
-    pub size: u32,
+    pub offset: u64,
+    pub size: u64,
 }
 
 /// Sub-buffer allocator for all in-game geometry.
 /// It's simple free-list allocator
 pub struct DynamicAllocator {
-    size: u32,
-    granularity: u32,
+    size: u64,
+    granularity: u64,
     blocks: Vec<Block>,
 }
 
@@ -34,7 +34,7 @@ pub enum AllocError {
     WrongBlock,
 }
 
-fn align(value: u32, align: u32) -> u32 {
+fn align(value: u64, align: u64) -> u64 {
     if value == 0 || value % align == 0 {
         value
     } else {
@@ -42,7 +42,7 @@ fn align(value: u32, align: u32) -> u32 {
     }
 }
 impl DynamicAllocator {
-    pub fn new(size: u32, granularity: u32) -> Self {
+    pub fn new(size: u64, granularity: u64) -> Self {
         let mut blocks = Vec::with_capacity(256);
         blocks.push(Block::Free(BlockData(0, size)));
         Self {
@@ -52,7 +52,7 @@ impl DynamicAllocator {
         }
     }
 
-    pub fn alloc(&mut self, size: u32) -> Result<MemoryBlock, AllocError> {
+    pub fn alloc(&mut self, size: u64) -> Result<MemoryBlock, AllocError> {
         if let Some(index) = self.find_free_block(size) {
             if let Some(offset) = self.split_and_insert_block(index, size) {
                 return Ok(MemoryBlock { offset, size });
@@ -62,7 +62,7 @@ impl DynamicAllocator {
         Err(AllocError::NotEnoughMemory)
     }
 
-    pub fn free(&mut self, offset: u32) -> Result<(), AllocError> {
+    pub fn free(&mut self, offset: u64) -> Result<(), AllocError> {
         if let Some(index) = self.find_used_block(offset) {
             if let Block::Used(block) = self.blocks[index] {
                 self.blocks[index] = Block::Free(block);
@@ -74,7 +74,7 @@ impl DynamicAllocator {
         Err(AllocError::WrongBlock)
     }
 
-    fn find_used_block(&self, offset: u32) -> Option<usize> {
+    fn find_used_block(&self, offset: u64) -> Option<usize> {
         self.blocks.iter().enumerate().find_map(|(index, block)| {
             if let Block::Used(block) = block {
                 if block.0 == offset {
@@ -85,7 +85,7 @@ impl DynamicAllocator {
         })
     }
 
-    fn find_free_block(&self, size: u32) -> Option<usize> {
+    fn find_free_block(&self, size: u64) -> Option<usize> {
         self.blocks.iter().enumerate().find_map(|(index, block)| {
             if let Block::Free(block) = block {
                 if block.1 >= size {
@@ -126,7 +126,7 @@ impl DynamicAllocator {
         }
     }
 
-    fn split_and_insert_block(&mut self, index: usize, size: u32) -> Option<u32> {
+    fn split_and_insert_block(&mut self, index: usize, size: u64) -> Option<u64> {
         let size = align(size, self.granularity);
         if let Some(block) = self.blocks.get(index) {
             let block = *block;
@@ -145,34 +145,54 @@ impl DynamicAllocator {
         None
     }
 }
+/*
+pub struct BumpAllocator {
+    size: u64,
+    top: u64
+}
 
+impl BumpAllocator {
+    pub fn new(size: u64) -> Self {
+        Self {
+            size,
+            top: 0
+        }
+    }
+
+    pub fn alloc(&mut self, size: u64, align: u64) -> Result<MemoryBlock, AllocError> {
+    }
+}
+*/
 pub fn allocate_vram(
     device: &ash::Device,
     pdevice: &PhysicalDevice,
     size: u64,
+    mask: u32,
     flags: vk::MemoryPropertyFlags,
-) -> BackendResult<vk::DeviceMemory> {
-    if let Some(memory) = find_memory(pdevice, flags) {
+) -> BackendResult<(u32, vk::DeviceMemory)> {
+    if let Some(index) = find_memory(pdevice, mask, flags) {
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
-            .memory_type_index(memory)
+            .memory_type_index(index)
             .build();
         let mem = unsafe { device.allocate_memory(&alloc_info, None) }?;
 
-        debug!("Allocate {} bytes of type {:?}", size, flags);
+        debug!("Allocate {} bytes flags {:?} type {}", size, flags, index);
 
-        Ok(mem)
+        Ok((index, mem))
     } else {
         Err(BackendError::VramTypeNotFund)
     }
 }
 
-fn find_memory(pdevice: &PhysicalDevice, flags: vk::MemoryPropertyFlags) -> Option<u32> {
+fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFlags) -> Option<u32> {
     let memory_prop = pdevice.memory_properties;
     memory_prop.memory_types[..memory_prop.memory_type_count as _]
         .iter()
         .enumerate()
-        .find(|(_, memory_type)| memory_type.property_flags & flags == flags)
+        .find(|(index, memory_type)| {
+            (1 << index) & mask != 0 && memory_type.property_flags & flags == flags
+        })
         .map(|(index, _memory_type)| index as _)
 }
 

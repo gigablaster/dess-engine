@@ -30,6 +30,7 @@ mod swapchain;
 mod error;
 mod geometry_cache;
 mod image_cache;
+mod staging;
 
 use ash::vk;
 pub use command_buffer::*;
