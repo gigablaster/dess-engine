@@ -13,11 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use core::panic;
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     fmt::Debug,
-    slice,
+    mem::size_of,
+    slice::{self, from_raw_parts},
     sync::{Arc, Mutex},
 };
 
@@ -32,12 +34,10 @@ use crate::vulkan::BackendError;
 
 use super::{
     droplist::DropList,
-    memory::{GeometryBuffer, GeometryCache, ImageCache, ImageMemory},
-    BackendResult, CommandBuffer, CommandBufferRecorder, FrameContext, FreeGpuResource, Instance,
-    PhysicalDevice, QueueFamily,
+    memory::{GeometryBuffer, GeometryCache, ImageCache, ImageMemory, Staging, StagingError},
+    BackendResult, CommandBuffer, FrameContext, FreeGpuResource, Instance, PhysicalDevice,
+    QueueFamily,
 };
-
-const GEOMETRY_CACHE_SIZE: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -64,11 +64,12 @@ pub struct Device {
     pub transfer_queue: Queue,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     setup_pool: vk::CommandPool,
-    setup_cb: Mutex<CommandBuffer>,
+    setup_cb: CommandBuffer,
     frames: [Mutex<Arc<FrameContext>>; 2],
     drop_lists: [Mutex<DropList>; 2],
     geo_cache: Mutex<GeometryCache>,
     image_cache: Mutex<ImageCache>,
+    staging: Mutex<Staging>,
 }
 
 impl Device {
@@ -138,14 +139,15 @@ impl Device {
         ];
 
         let image_cache = ImageCache::default();
-        let geo_cache = GeometryCache::new(&device, &pdevice, GEOMETRY_CACHE_SIZE)?;
+        let geo_cache = GeometryCache::new(&device, &pdevice)?;
+        let staging = Staging::new(&device, &pdevice)?;
 
         Ok(Arc::new(Self {
             instance,
             pdevice,
             graphics_queue: Self::create_queue(&device, graphics_queue),
             transfer_queue: Self::create_queue(&device, transfer_queue),
-            setup_cb: Mutex::new(setup_cb),
+            setup_cb,
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
@@ -153,6 +155,7 @@ impl Device {
             setup_pool,
             image_cache: Mutex::new(image_cache),
             geo_cache: Mutex::new(geo_cache),
+            staging: Mutex::new(staging),
         }))
     }
 
@@ -209,13 +212,31 @@ impl Device {
         }
     }
 
+    fn commit_staging(&self) -> BackendResult<()> {
+        let mut staging = self.staging.lock().unwrap();
+        self.setup_cb.wait(&self.raw)?;
+        self.setup_cb.reset(&self.raw)?;
+        {
+            let _recorder = self.setup_cb.record(self)?;
+            staging.upload(
+                &self.raw,
+                self.setup_cb.raw,
+                self.transfer_queue.family.index,
+                self.graphics_queue.family.index,
+            );
+        }
+        self.submit_transfer(&self.setup_cb, &[], &[])?;
+        Ok(())
+    }
+
     pub fn begin_frame(&self) -> BackendResult<Arc<FrameContext>> {
         let mut frame0 = self.frames[0].lock().unwrap();
         {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
+                self.commit_staging()?;
                 unsafe {
                     self.raw.wait_for_fences(
-                        slice::from_ref(&frame0.presentation_cb.fence),
+                        &[frame0.presentation_cb.fence, self.setup_cb.fence],
                         true,
                         u64::MAX,
                     )
@@ -339,21 +360,44 @@ impl Device {
         Ok(())
     }
 
-    pub fn with_setup_cb<F: FnOnce(&CommandBufferRecorder)>(&self, cb: F) -> BackendResult<()> {
-        let setup_cb = self.setup_cb.lock().unwrap();
-        {
-            let recorder = setup_cb.record(self)?;
-            cb(&recorder);
-        }
-        self.submit_transfer(&setup_cb, &[], &[])?;
-        unsafe { self.raw.queue_wait_idle(self.transfer_queue.raw) }?;
-
-        Ok(())
-    }
-
     pub fn create_geometry_buffer(&self, size: usize) -> BackendResult<GeometryBuffer> {
         let mut geo_cache = self.geo_cache.lock().unwrap();
         geo_cache.allocate(size as _)
+    }
+
+    pub fn create_geometry_buffer_from<T: Sized>(
+        &self,
+        data: &[T],
+    ) -> BackendResult<GeometryBuffer> {
+        let size = data.len() * size_of::<T>();
+        let buffer = self.create_geometry_buffer(size)?;
+        let ptr = data.as_ptr() as *const u8;
+        let data = unsafe { from_raw_parts(ptr, size) };
+        self.upload_geometry(&buffer, data)?;
+
+        Ok(buffer)
+    }
+
+    pub fn upload_geometry(&self, buffer: &GeometryBuffer, data: &[u8]) -> BackendResult<()> {
+        let mut staging = self.staging.lock().unwrap();
+        match staging.upload_buffer(&self.raw, buffer, data) {
+            Ok(_) => Ok(()),
+            Err(StagingError::NeedUpload) => {
+                self.commit_staging()?;
+                unsafe {
+                    self.raw
+                        .wait_for_fences(slice::from_ref(&self.setup_cb.fence), true, u64::MAX)
+                }?;
+                match staging.upload_buffer(&self.raw, buffer, data) {
+                    Ok(()) => Ok(()),
+                    Err(StagingError::NeedUpload) => {
+                        panic!("Shit happened when trying to stage data right after uploading")
+                    }
+                    Err(StagingError::VulkanError(vk)) => Err(BackendError::Vulkan(vk)),
+                }
+            }
+            Err(StagingError::VulkanError(vk)) => Err(BackendError::Vulkan(vk)),
+        }
     }
 
     pub(crate) fn allocate_image(&self, image: vk::Image) -> BackendResult<ImageMemory> {
@@ -366,10 +410,6 @@ impl Device {
 
         Ok(memory)
     }
-
-    pub(crate) fn allocate_render_target(&self, image: vk::Image) -> BackendResult<ImageMemory> {
-        unimplemented!();
-    }
 }
 
 impl Drop for Device {
@@ -377,7 +417,8 @@ impl Drop for Device {
         unsafe { self.raw.device_wait_idle().ok() };
         let mut image_cache = self.image_cache.lock().unwrap();
         let mut geo_cache = self.geo_cache.lock().unwrap();
-        self.setup_cb.lock().unwrap().free(&self.raw);
+        let staging = self.staging.lock().unwrap();
+        self.setup_cb.free(&self.raw);
         unsafe { self.raw.destroy_command_pool(self.setup_pool, None) };
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
@@ -391,6 +432,7 @@ impl Drop for Device {
         self.samplers.iter().for_each(|(_, sampler)| unsafe {
             self.raw.destroy_sampler(*sampler, None);
         });
+        staging.free(&self.raw);
         image_cache.free(&self.raw);
         geo_cache.free(&self.raw);
         unsafe { self.raw.destroy_device(None) };

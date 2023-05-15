@@ -1,5 +1,10 @@
+use core::slice;
+use std::ptr::copy_nonoverlapping;
+
 use ash::vk;
 use log::debug;
+
+use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier};
 
 use crate::vulkan::BackendError;
 
@@ -8,6 +13,8 @@ use super::{BackendResult, Buffer, FreeGpuResource, PhysicalDevice};
 const CHUNK_SIZE: u64 = 256 * 1024 * 1024;
 const SMALL_CHUNK_THRESHOLD: u64 = 2 * 1024 * 1024;
 const BIG_CHUNK_THRESHOLD: u64 = 16 * 1024 * 1024;
+const STAGING_AREA_SIZE: u64 = 64 * 1024 * 1024;
+const GEOMETRY_CACHE_SIZE: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 struct BlockData(u64, u64);
@@ -150,39 +157,248 @@ impl DynamicAllocator {
         None
     }
 }
-/*
-pub struct BumpAllocator {
-    size: u64,
-    top: u64
+
+struct BufferUploadRequest {
+    pub src_offset: u64,
+    pub dst_offset: u64,
+    pub size: u64,
+    pub dst: vk::Buffer,
 }
 
-impl BumpAllocator {
-    pub fn new(size: u64) -> Self {
-        Self {
-            size,
-            top: 0
+struct ImageUploadRequest {
+    pub src_offset: u64,
+    pub dst_offset: vk::Offset3D,
+    pub dst_subresource: vk::ImageSubresourceLayers,
+    pub dst: vk::Image,
+    pub dst_layout: vk::ImageLayout,
+}
+
+pub struct Staging {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    size: u64,
+    granularity: u64,
+    allocator: DynamicAllocator, // We supposed to use bump allocator but it will work in same way.
+    upload_buffers: Vec<BufferUploadRequest>,
+    upload_images: Vec<BufferUploadRequest>,
+    mapping: Option<*mut u8>,
+}
+
+#[derive(Debug)]
+pub enum StagingError {
+    NeedUpload,
+    VulkanError(vk::Result),
+}
+
+impl From<vk::Result> for StagingError {
+    fn from(value: vk::Result) -> Self {
+        StagingError::VulkanError(value)
+    }
+}
+
+impl Staging {
+    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice) -> BackendResult<Self> {
+        let buffer_info = vk::BufferCreateInfo::builder()
+            .usage(vk::BufferUsageFlags::TRANSFER_SRC)
+            .size(STAGING_AREA_SIZE)
+            .flags(vk::BufferCreateFlags::empty())
+            .build();
+        let buffer = unsafe { device.create_buffer(&buffer_info, None) }?;
+        let requirement = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let (_, memory) = allocate_vram(
+            device,
+            pdevice,
+            requirement.size,
+            requirement.memory_type_bits,
+            vk::MemoryPropertyFlags::HOST_VISIBLE,
+            None,
+        )?;
+        unsafe { device.bind_buffer_memory(buffer, memory, 0) }?;
+
+        Ok(Self {
+            buffer,
+            memory,
+            size: STAGING_AREA_SIZE,
+            granularity: pdevice.properties.limits.buffer_image_granularity,
+            allocator: DynamicAllocator::new(
+                STAGING_AREA_SIZE,
+                pdevice.properties.limits.buffer_image_granularity,
+            ),
+            upload_buffers: Vec::with_capacity(128),
+            upload_images: Vec::with_capacity(32),
+            mapping: None,
+        })
+    }
+
+    fn map_buffer(&self, device: &ash::Device) -> Result<*mut u8, StagingError> {
+        Ok(
+            unsafe { device.map_memory(self.memory, 0, self.size, vk::MemoryMapFlags::empty()) }?
+                as *mut u8,
+        )
+    }
+
+    fn unmap_buffer(&self, device: &ash::Device) {
+        unsafe { device.unmap_memory(self.memory) };
+    }
+
+    pub fn upload_buffer(
+        &mut self,
+        device: &ash::Device,
+        buffer: &GeometryBuffer,
+        data: &[u8],
+    ) -> Result<(), StagingError> {
+        assert!(data.len() as u64 <= self.size);
+        assert_eq!(buffer.size(), data.len() as u64);
+        if self.mapping.is_none() {
+            self.mapping = Some(self.map_buffer(device)?);
+        }
+        let mapping = self.mapping.unwrap();
+        if let Ok(block) = self.allocator.alloc(data.len() as _) {
+            unsafe {
+                copy_nonoverlapping(data.as_ptr(), mapping.add(block.offset as _), data.len())
+            }
+            self.upload_buffers.push(BufferUploadRequest {
+                dst: buffer.buffer(),
+                src_offset: block.offset,
+                dst_offset: buffer.offset(),
+                size: buffer.size(),
+            });
+        } else {
+            return Err(StagingError::NeedUpload);
+        }
+
+        Ok(())
+    }
+
+    pub fn upload(
+        &mut self,
+        device: &ash::Device,
+        cb: vk::CommandBuffer,
+        transfer_queue_index: u32,
+        graphics_queue_index: u32,
+    ) {
+        if self.mapping.is_some() {
+            self.unmap_buffer(device);
+            self.mapping = None;
+        }
+
+        // Move main buffer to transfer queue and keep it there
+        let barrier = BufferBarrier {
+            previous_accesses: &[AccessType::HostWrite, AccessType::TransferRead],
+            next_accesses: &[AccessType::HostWrite, AccessType::TransferRead],
+            src_queue_family_index: 0,
+            dst_queue_family_index: transfer_queue_index,
+            buffer: self.buffer,
+            offset: 0,
+            size: self.size as _,
+        };
+        pipeline_barrier(device, cb, None, &[barrier], &[]);
+
+        // Record buffer uploads
+        self.move_requests_to_queue(
+            &self.upload_buffers,
+            device,
+            cb,
+            graphics_queue_index,
+            transfer_queue_index,
+        );
+        self.copy_buffers(&self.upload_buffers, device, cb);
+        self.move_requests_to_queue(
+            &self.upload_buffers,
+            device,
+            cb,
+            transfer_queue_index,
+            graphics_queue_index,
+        );
+
+        self.allocator = DynamicAllocator::new(self.size, self.granularity);
+        self.upload_buffers.clear();
+    }
+
+    fn move_requests_to_queue(
+        &self,
+        requests: &[BufferUploadRequest],
+        _device: &ash::Device,
+        _cb: vk::CommandBuffer,
+        from: u32,
+        to: u32,
+    ) {
+        let _barriers = requests
+            .iter()
+            .map(|request| BufferBarrier {
+                previous_accesses: &[
+                    AccessType::TransferWrite,
+                    AccessType::VertexBuffer,
+                    AccessType::IndexBuffer,
+                ],
+                next_accesses: &[
+                    AccessType::TransferWrite,
+                    AccessType::VertexBuffer,
+                    AccessType::IndexBuffer,
+                ],
+                src_queue_family_index: from,
+                dst_queue_family_index: to,
+                buffer: request.dst,
+                offset: request.dst_offset as _,
+                size: request.size as _,
+            })
+            .collect::<Vec<_>>();
+    }
+
+    fn copy_buffers(
+        &self,
+        requests: &[BufferUploadRequest],
+        device: &ash::Device,
+        cb: vk::CommandBuffer,
+    ) {
+        requests.iter().for_each(|request| {
+            let region = vk::BufferCopy {
+                src_offset: request.src_offset,
+                dst_offset: request.dst_offset,
+                size: request.size,
+            };
+            unsafe {
+                device.cmd_copy_buffer(cb, self.buffer, request.dst, slice::from_ref(&region))
+            };
+        });
+    }
+}
+
+impl FreeGpuResource for Staging {
+    fn free(&self, device: &ash::Device) {
+        unsafe {
+            device.destroy_buffer(self.buffer, None);
+            device.free_memory(self.memory, None);
         }
     }
-
-    pub fn alloc(&mut self, size: u64, align: u64) -> Result<MemoryBlock, AllocError> {
-    }
 }
-*/
-pub fn allocate_vram(
+
+fn allocate_vram(
     device: &ash::Device,
     pdevice: &PhysicalDevice,
     size: u64,
     mask: u32,
-    flags: vk::MemoryPropertyFlags,
+    desired_flags: vk::MemoryPropertyFlags,
+    required_flags: Option<vk::MemoryPropertyFlags>,
 ) -> BackendResult<(u32, vk::DeviceMemory)> {
-    if let Some(index) = find_memory(pdevice, mask, flags) {
+    let mut index = find_memory(pdevice, mask, desired_flags);
+    if index.is_none() {
+        if let Some(required_flags) = required_flags {
+            index = find_memory(pdevice, mask, required_flags);
+        }
+    }
+
+    if let Some(index) = index {
         let alloc_info = vk::MemoryAllocateInfo::builder()
             .allocation_size(size)
             .memory_type_index(index)
             .build();
         let mem = unsafe { device.allocate_memory(&alloc_info, None) }?;
 
-        debug!("Allocate {} bytes flags {:?} type {}", size, flags, index);
+        debug!(
+            "Allocate {} bytes flags {:?}/{:?} type {}",
+            size, desired_flags, required_flags, index
+        );
 
         Ok((index, mem))
     } else {
@@ -232,10 +448,14 @@ pub struct GeometryCache {
 }
 
 impl GeometryCache {
-    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice) -> BackendResult<Self> {
         let create_info = vk::BufferCreateInfo::builder()
-            .size(size as _)
-            .usage(vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER)
+            .size(GEOMETRY_CACHE_SIZE)
+            .usage(
+                vk::BufferUsageFlags::VERTEX_BUFFER
+                    | vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_DST,
+            )
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .build();
 
@@ -247,9 +467,10 @@ impl GeometryCache {
             requirement.size,
             requirement.memory_type_bits,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            None,
         )?;
         unsafe { device.bind_buffer_memory(buffer, memory, 0) };
-        let allocator = DynamicAllocator::new(size, 16);
+        let allocator = DynamicAllocator::new(GEOMETRY_CACHE_SIZE, 16);
 
         Ok(Self {
             buffer,
@@ -322,6 +543,7 @@ impl Chunk {
             size,
             mask,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            None,
         )?;
         let allocator =
             DynamicAllocator::new(size, pdevice.properties.limits.buffer_image_granularity);
@@ -367,6 +589,7 @@ impl Chunk {
                 self.size,
                 requirement.memory_type_bits,
                 vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                None,
             )?;
             assert_eq!(self.index, index);
             self.memory = memory;
@@ -448,6 +671,7 @@ impl FreeGpuResource for ImageCache {
         self.chunks.iter().for_each(|chunk| chunk.free(device));
     }
 }
+
 #[cfg(test)]
 mod test {
     use super::DynamicAllocator;
@@ -479,7 +703,7 @@ mod test {
     fn allocate_suitable_block() {
         let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
-        let block2 = allocator.alloc(200).unwrap();
+        let _block2 = allocator.alloc(200).unwrap();
         allocator.free(block1.offset).unwrap();
         let block = allocator.alloc(300).unwrap();
         assert_eq!(384, block.offset);

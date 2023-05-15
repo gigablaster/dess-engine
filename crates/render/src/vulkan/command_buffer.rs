@@ -61,6 +61,16 @@ impl CommandBuffer {
     pub fn record<'a>(&'a self, device: &'a Device) -> BackendResult<CommandBufferRecorder<'a>> {
         CommandBufferRecorder::new(&device.raw, &self.raw)
     }
+
+    pub fn wait(&self, device: &ash::Device) -> BackendResult<()> {
+        unsafe { device.wait_for_fences(slice::from_ref(&self.fence), true, u64::MAX) }?;
+        Ok(())
+    }
+
+    pub fn reset(&self, device: &ash::Device) -> BackendResult<()> {
+        unsafe { device.reset_command_buffer(self.raw, vk::CommandBufferResetFlags::empty()) }?;
+        Ok(())
+    }
 }
 
 impl FreeGpuResource for CommandBuffer {

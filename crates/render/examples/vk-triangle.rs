@@ -14,19 +14,19 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{mem::size_of, thread::sleep, time::Duration};
+use std::{thread::sleep, time::Duration};
 
 use ash::vk;
 
 use glam::Vec3;
 use render::vulkan::{
-    create_pipeline_cache, BackendError, Device, FreeGpuResource, Image, ImageDesc, ImageType,
-    Instance, PhysicalDeviceList, Pipeline, PipelineDesc, PipelineVertex, RenderPass,
-    RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Shader, SubImage,
-    SubmitWaitDesc, Surface, Swapchain,
+    create_pipeline_cache, BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList,
+    Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment,
+    RenderPassAttachmentDesc, RenderPassLayout, Shader, SubImage, SubmitWaitDesc, Surface,
+    Swapchain,
 };
 use sdl2::event::{Event, WindowEvent};
-use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
+use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
 
 #[repr(C, packed)]
 struct Vertex {
@@ -128,10 +128,23 @@ fn main() -> Result<(), String> {
         .face_cull(false);
     let pipeline = Pipeline::new::<Vertex>(&device.raw, &pipeline_cache, pipeline_desc).unwrap();
 
-    let vertex_buffer = device
-        .create_geometry_buffer(3 * size_of::<Vertex>())
-        .unwrap();
-    let index_buffer = device.create_geometry_buffer(3 * size_of::<u16>()).unwrap();
+    let vertices = [
+        Vertex {
+            pos: Vec3::new(0.0, -0.5, 0.0),
+            color: Vec3::new(1.0, 0.0, 0.0),
+        },
+        Vertex {
+            pos: Vec3::new(-0.5, 0.5, 0.0),
+            color: Vec3::new(0.0, 1.0, 0.0),
+        },
+        Vertex {
+            pos: Vec3::new(0.5, 0.5, 0.0),
+            color: Vec3::new(0.0, 0.0, 1.0),
+        },
+    ];
+    let indices = [0u16, 1u16, 2u16];
+    let _vertex_buffer = device.create_geometry_buffer_from(&vertices).unwrap();
+    let _index_buffer = device.create_geometry_buffer_from(&indices).unwrap();
 
     /*let mut vertex_staging = Buffer::new(
         &device,
@@ -153,21 +166,6 @@ fn main() -> Result<(), String> {
     .unwrap();
     let index_buffer = Buffer::new(&device, BufferDesc::index(3), Some("Index buffer")).unwrap();
 
-    let vertices = [
-        Vertex {
-            pos: Vec3::new(0.0, -0.5, 0.0),
-            color: Vec3::new(1.0, 0.0, 0.0),
-        },
-        Vertex {
-            pos: Vec3::new(-0.5, 0.5, 0.0),
-            color: Vec3::new(0.0, 1.0, 0.0),
-        },
-        Vertex {
-            pos: Vec3::new(0.5, 0.5, 0.0),
-            color: Vec3::new(0.0, 0.0, 1.0),
-        },
-    ];
-    let indices = [0u16, 1u16, 2u16];
 
     let mut map = vertex_staging.map().unwrap();
     map.push(&vertices);
@@ -345,8 +343,8 @@ fn main() -> Result<(), String> {
                     },
                 )];
                 {
-                    let pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
-                    let render_area = swapchain.render_area();
+                    let _pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
+                    let _render_area = swapchain.render_area();
                     /*pass.set_scissor(render_area);
                     pass.set_viewport(vk::Viewport {
                         x: 0.0,
