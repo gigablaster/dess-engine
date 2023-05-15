@@ -32,8 +32,7 @@ use crate::vulkan::BackendError;
 
 use super::{
     droplist::DropList,
-    geometry_cache::{GeometryBuffer, GeometryCache},
-    image_cache::{ImageCache, ImageMemory},
+    memory::{GeometryBuffer, GeometryCache, ImageCache, ImageMemory},
     BackendResult, CommandBuffer, CommandBufferRecorder, FrameContext, FreeGpuResource, Instance,
     PhysicalDevice, QueueFamily,
 };

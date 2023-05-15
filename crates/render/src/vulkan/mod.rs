@@ -16,6 +16,7 @@
 mod command_buffer;
 mod device;
 mod droplist;
+mod error;
 mod frame_context;
 mod image;
 mod instance;
@@ -24,13 +25,7 @@ mod physical_device;
 mod pipeline;
 mod render_pass;
 mod shader;
-mod surface;
 mod swapchain;
-//mod ringbuffer;
-mod error;
-mod geometry_cache;
-mod image_cache;
-mod staging;
 
 use ash::vk;
 pub use command_buffer::*;
@@ -43,7 +38,6 @@ pub use physical_device::*;
 pub use pipeline::*;
 pub use render_pass::*;
 pub use shader::*;
-pub use surface::*;
 pub use swapchain::*;
 
 pub trait FreeGpuResource {

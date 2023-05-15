@@ -3,7 +3,11 @@ use log::debug;
 
 use crate::vulkan::BackendError;
 
-use super::{BackendResult, PhysicalDevice};
+use super::{BackendResult, Buffer, FreeGpuResource, PhysicalDevice};
+
+const CHUNK_SIZE: u64 = 256 * 1024 * 1024;
+const SMALL_CHUNK_THRESHOLD: u64 = 2 * 1024 * 1024;
+const BIG_CHUNK_THRESHOLD: u64 = 16 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 struct BlockData(u64, u64);
@@ -197,6 +201,253 @@ fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFla
         .map(|(index, _memory_type)| index as _)
 }
 
+#[derive(Debug, Copy, Clone)]
+pub struct GeometryBuffer {
+    pub(self) buffer: vk::Buffer,
+    pub(self) offset: u64,
+    pub(self) size: u64,
+}
+
+impl Buffer for GeometryBuffer {
+    fn buffer(&self) -> vk::Buffer {
+        self.buffer
+    }
+
+    fn offset(&self) -> u64 {
+        self.offset
+    }
+
+    fn size(&self) -> u64 {
+        self.size
+    }
+}
+
+/// Giant buffer that used for all static geometry data.
+/// Clients are supposed to suballocate buffers by calling alloc and
+/// free them by calling free.
+pub struct GeometryCache {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    allocator: DynamicAllocator,
+}
+
+impl GeometryCache {
+    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64) -> BackendResult<Self> {
+        let create_info = vk::BufferCreateInfo::builder()
+            .size(size as _)
+            .usage(vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER)
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .build();
+
+        let buffer = unsafe { device.create_buffer(&create_info, None) }?;
+        let requirement = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let (_, memory) = allocate_vram(
+            device,
+            pdevice,
+            requirement.size,
+            requirement.memory_type_bits,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
+        unsafe { device.bind_buffer_memory(buffer, memory, 0) };
+        let allocator = DynamicAllocator::new(size, 16);
+
+        Ok(Self {
+            buffer,
+            memory,
+            allocator,
+        })
+    }
+
+    pub fn allocate(&mut self, size: u64) -> BackendResult<GeometryBuffer> {
+        let block = self.allocator.alloc(size as u64)?;
+        Ok(GeometryBuffer {
+            buffer: self.buffer,
+            offset: block.offset as _,
+            size: block.size as _,
+        })
+    }
+
+    pub fn free(&mut self, buffer: GeometryBuffer) -> BackendResult<()> {
+        self.allocator.free(buffer.offset as _)?;
+
+        Ok(())
+    }
+}
+
+impl FreeGpuResource for GeometryCache {
+    fn free(&self, device: &ash::Device) {
+        unsafe {
+            device.free_memory(self.memory, None);
+            device.destroy_buffer(self.buffer, None);
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum ChunkPurpose {
+    Small,
+    Normal,
+    Big,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct ImageMemory {
+    pub memory: vk::DeviceMemory,
+    pub chunk: u64,
+    pub offset: u64,
+    pub size: u64,
+}
+
+#[derive(Debug)]
+struct Chunk {
+    memory: vk::DeviceMemory,
+    allocator: DynamicAllocator,
+    index: u32,
+    size: u64,
+    purpose: ChunkPurpose,
+    count: u32,
+}
+
+impl Chunk {
+    pub fn new(
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        size: u64,
+        mask: u32,
+        purpose: ChunkPurpose,
+    ) -> BackendResult<Self> {
+        let (index, memory) = allocate_vram(
+            device,
+            pdevice,
+            size,
+            mask,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
+        let allocator =
+            DynamicAllocator::new(size, pdevice.properties.limits.buffer_image_granularity);
+
+        debug!("Allocated chunk size {} purpose {:?}", size, purpose);
+
+        Ok(Self {
+            memory,
+            allocator,
+            index,
+            purpose,
+            size,
+            count: 0,
+        })
+    }
+
+    pub fn is_suitable(&self, requirement: &vk::MemoryRequirements) -> bool {
+        Self::purpose(requirement) == self.purpose
+            && (1 << self.index) & requirement.memory_type_bits != 0
+    }
+
+    pub fn purpose(requirement: &vk::MemoryRequirements) -> ChunkPurpose {
+        if requirement.size <= SMALL_CHUNK_THRESHOLD {
+            return ChunkPurpose::Small;
+        }
+        if requirement.size > BIG_CHUNK_THRESHOLD {
+            return ChunkPurpose::Big;
+        }
+        ChunkPurpose::Normal
+    }
+
+    pub fn allocate(
+        &mut self,
+        chunk_index: u64,
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        requirement: &vk::MemoryRequirements,
+    ) -> BackendResult<ImageMemory> {
+        if self.memory == vk::DeviceMemory::null() {
+            let (index, memory) = allocate_vram(
+                device,
+                pdevice,
+                self.size,
+                requirement.memory_type_bits,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            )?;
+            assert_eq!(self.index, index);
+            self.memory = memory;
+            debug!(
+                "Allocated once freed chunk size {} purpose {:?}",
+                self.size, self.purpose
+            );
+        }
+        let block = self.allocator.alloc(requirement.size)?;
+        self.count += 1;
+        Ok(ImageMemory {
+            memory: self.memory,
+            chunk: chunk_index,
+            offset: block.offset,
+            size: requirement.size,
+        })
+    }
+
+    pub fn deallocate(&mut self, device: &ash::Device, memory: ImageMemory) -> BackendResult<()> {
+        self.allocator.free(memory.offset)?;
+        self.count -= 1;
+        if self.count == 0 {
+            unsafe { device.free_memory(self.memory, None) };
+            self.memory = vk::DeviceMemory::null();
+            debug!("Chunk isn't needed for now - free device memory");
+        }
+
+        Ok(())
+    }
+}
+
+impl FreeGpuResource for Chunk {
+    fn free(&self, device: &ash::Device) {
+        unsafe { device.free_memory(self.memory, None) };
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ImageCache {
+    chunks: Vec<Chunk>,
+}
+
+impl ImageCache {
+    pub fn allocate(
+        &mut self,
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        image: vk::Image,
+    ) -> BackendResult<ImageMemory> {
+        let requirement = unsafe { device.get_image_memory_requirements(image) };
+        for index in 0..self.chunks.len() {
+            let chunk = &mut self.chunks[index];
+            if chunk.is_suitable(&requirement) {
+                if let Ok(block) = chunk.allocate(index as _, device, pdevice, &requirement) {
+                    return Ok(block);
+                }
+            }
+        }
+        let index = self.chunks.len();
+        self.chunks.push(Chunk::new(
+            device,
+            pdevice,
+            CHUNK_SIZE,
+            requirement.memory_type_bits,
+            Chunk::purpose(&requirement),
+        )?);
+        return Ok(self.chunks[index].allocate(index as _, device, pdevice, &requirement)?);
+    }
+
+    pub fn deallocate(&mut self, device: &ash::Device, memory: ImageMemory) -> BackendResult<()> {
+        self.chunks[memory.chunk as usize].deallocate(device, memory)?;
+
+        Ok(())
+    }
+}
+
+impl FreeGpuResource for ImageCache {
+    fn free(&self, device: &ash::Device) {
+        self.chunks.iter().for_each(|chunk| chunk.free(device));
+    }
+}
 #[cfg(test)]
 mod test {
     use super::DynamicAllocator;

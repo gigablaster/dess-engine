@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::{image_cache::ImageMemory, BackendError, BackendResult, Device};
+use super::{memory::ImageMemory, BackendError, BackendResult, Device};
 use ash::vk;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]

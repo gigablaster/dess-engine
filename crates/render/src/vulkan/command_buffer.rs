@@ -19,8 +19,8 @@ use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 
 use super::{
-    geometry_cache::GeometryBuffer, BackendResult, Buffer, Device, FboCacheKey, FreeGpuResource,
-    Image, Pipeline, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    BackendResult, Buffer, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass,
+    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
 pub struct CommandBuffer {
@@ -222,7 +222,7 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_index_buffer(&self, buffer: &GeometryBuffer) {
+    pub fn bind_index_buffer(&self, buffer: &impl Buffer) {
         unsafe {
             self.device.cmd_bind_index_buffer(
                 *self.cb,
@@ -233,7 +233,7 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_vertex_buffer(&self, buffer: &GeometryBuffer) {
+    pub fn bind_vertex_buffer(&self, buffer: &impl Buffer) {
         unsafe {
             self.device.cmd_bind_vertex_buffers(
                 *self.cb,

@@ -15,13 +15,42 @@
 
 use std::{slice, sync::Arc};
 
-use ash::{extensions::khr, vk};
+use ash::{
+    extensions::khr,
+    vk::{self, Handle},
+};
 use log::info;
+use sdl2::video::Window;
 
 use crate::vulkan::{BackendError, ImageDesc, ImageType};
 
-use super::{BackendResult, Device, Image, Surface};
+use super::{BackendResult, Device, Image, Instance};
 
+pub struct Surface<'a> {
+    pub(crate) window: &'a Window,
+    pub(crate) raw: vk::SurfaceKHR,
+    pub(crate) loader: khr::Surface,
+}
+
+impl<'a> Surface<'a> {
+    pub fn create(instance: &Instance, window: &'a Window) -> BackendResult<Self> {
+        let surface = window.vulkan_create_surface(instance.raw.handle().as_raw() as usize)?;
+        let surface = vk::SurfaceKHR::from_raw(surface);
+        let loader = khr::Surface::new(&instance.entry, &instance.raw);
+
+        Ok(Self {
+            window,
+            raw: surface,
+            loader,
+        })
+    }
+}
+
+impl<'a> Drop for Surface<'a> {
+    fn drop(&mut self) {
+        unsafe { self.loader.destroy_surface(self.raw, None) };
+    }
+}
 struct SwapchainInner {
     pub raw: vk::SwapchainKHR,
     pub images: Vec<Arc<Image>>,

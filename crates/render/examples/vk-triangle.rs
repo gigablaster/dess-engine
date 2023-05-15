@@ -20,10 +20,10 @@ use ash::vk;
 
 use glam::Vec3;
 use render::vulkan::{
-    create_pipeline_cache, BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList,
-    Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment,
-    RenderPassAttachmentDesc, RenderPassLayout, Shader, SubImage, SubmitWaitDesc, Surface,
-    Swapchain,
+    create_pipeline_cache, BackendError, Device, FreeGpuResource, Image, ImageDesc, ImageType,
+    Instance, PhysicalDeviceList, Pipeline, PipelineDesc, PipelineVertex, RenderPass,
+    RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, Shader, SubImage,
+    SubmitWaitDesc, Surface, Swapchain,
 };
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
@@ -132,6 +132,7 @@ fn main() -> Result<(), String> {
         .create_geometry_buffer(3 * size_of::<Vertex>())
         .unwrap();
     let index_buffer = device.create_geometry_buffer(3 * size_of::<u16>()).unwrap();
+
     /*let mut vertex_staging = Buffer::new(
         &device,
         BufferDesc::staging(3 * size_of::<Vertex>()),

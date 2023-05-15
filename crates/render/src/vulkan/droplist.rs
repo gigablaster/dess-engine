@@ -1,9 +1,6 @@
 use ash::vk;
 
-use super::{
-    geometry_cache::{GeometryBuffer, GeometryCache},
-    image_cache::{ImageCache, ImageMemory},
-};
+use super::memory::{GeometryBuffer, GeometryCache, ImageCache, ImageMemory};
 
 const CAPACITY: usize = 32;
 
