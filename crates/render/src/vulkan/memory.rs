@@ -22,6 +22,7 @@ pub struct MemoryBlock {
 
 /// Sub-buffer allocator for all in-game geometry.
 /// It's simple free-list allocator
+#[derive(Debug)]
 pub struct DynamicAllocator {
     size: u64,
     granularity: u64,

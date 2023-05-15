@@ -38,7 +38,6 @@ use super::{
     PhysicalDevice, QueueFamily,
 };
 
-const IMAGE_CHUNK_SIZE: u64 = 256 * 1024 * 1024;
 const GEOMETRY_CACHE_SIZE: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -139,7 +138,7 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
-        let image_cache = ImageCache::new(IMAGE_CHUNK_SIZE)?;
+        let image_cache = ImageCache::default();
         let geo_cache = GeometryCache::new(&device, &pdevice, GEOMETRY_CACHE_SIZE)?;
 
         Ok(Arc::new(Self {
