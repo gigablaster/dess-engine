@@ -53,11 +53,11 @@ impl DropList {
             unsafe { device.destroy_image_view(view, None) };
         });
         self.images_to_free.drain(..).for_each(|image| {
-            image_cache.free(image.memory);
+            image_cache.deallocate(device, image.memory).unwrap();
             unsafe { device.destroy_image(image.image, None) };
         });
         self.buffers_to_free.drain(..).for_each(|buffer| {
-            geometry_cache.free(buffer);
+            geometry_cache.free(buffer).unwrap();
         });
         self.image_views_to_free.shrink_to(CAPACITY);
         self.images_to_free.shrink_to(CAPACITY);

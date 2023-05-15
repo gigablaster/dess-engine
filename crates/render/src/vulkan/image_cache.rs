@@ -1,8 +1,9 @@
 use ash::vk;
+use log::debug;
 
 use super::{
     memory::{allocate_vram, DynamicAllocator},
-    BackendResult, FreeGpuResource, PhysicalDevice,
+    BackendError, BackendResult, FreeGpuResource, PhysicalDevice,
 };
 
 const CHUNK_SIZE: u64 = 256 * 1024 * 1024;
@@ -29,7 +30,9 @@ struct Chunk {
     memory: vk::DeviceMemory,
     allocator: DynamicAllocator,
     index: u32,
+    size: u64,
     purpose: ChunkPurpose,
+    count: u32,
 }
 
 impl Chunk {
@@ -50,11 +53,15 @@ impl Chunk {
         let allocator =
             DynamicAllocator::new(size, pdevice.properties.limits.buffer_image_granularity);
 
+        debug!("Allocated chunk size {} purpose {:?}", size, purpose);
+
         Ok(Self {
             memory,
             allocator,
             index,
             purpose,
+            size,
+            count: 0,
         })
     }
 
@@ -71,6 +78,50 @@ impl Chunk {
             return ChunkPurpose::Big;
         }
         ChunkPurpose::Normal
+    }
+
+    pub fn allocate(
+        &mut self,
+        chunk_index: u64,
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        requirement: &vk::MemoryRequirements,
+    ) -> BackendResult<ImageMemory> {
+        if self.memory == vk::DeviceMemory::null() {
+            let (index, memory) = allocate_vram(
+                device,
+                pdevice,
+                self.size,
+                requirement.memory_type_bits,
+                vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            )?;
+            assert_eq!(self.index, index);
+            self.memory = memory;
+            debug!(
+                "Allocated once freed chunk size {} purpose {:?}",
+                self.size, self.purpose
+            );
+        }
+        let block = self.allocator.alloc(requirement.size)?;
+        self.count += 1;
+        Ok(ImageMemory {
+            memory: self.memory,
+            chunk: chunk_index,
+            offset: block.offset,
+            size: requirement.size,
+        })
+    }
+
+    pub fn deallocate(&mut self, device: &ash::Device, memory: ImageMemory) -> BackendResult<()> {
+        self.allocator.free(memory.offset)?;
+        self.count -= 1;
+        if self.count == 0 {
+            unsafe { device.free_memory(self.memory, None) };
+            self.memory = vk::DeviceMemory::null();
+            debug!("Chunk isn't needed for now - free device memory");
+        }
+
+        Ok(())
     }
 }
 
@@ -96,13 +147,8 @@ impl ImageCache {
         for index in 0..self.chunks.len() {
             let chunk = &mut self.chunks[index];
             if chunk.is_suitable(&requirement) {
-                if let Ok(block) = chunk.allocator.alloc(requirement.size) {
-                    return Ok(ImageMemory {
-                        memory: chunk.memory,
-                        chunk: index as _,
-                        offset: block.offset,
-                        size: block.size,
-                    });
+                if let Ok(block) = chunk.allocate(index as _, device, pdevice, &requirement) {
+                    return Ok(block);
                 }
             }
         }
@@ -114,19 +160,11 @@ impl ImageCache {
             requirement.memory_type_bits,
             Chunk::purpose(&requirement),
         )?);
-        let block = self.chunks[index].allocator.alloc(requirement.size as _)?;
-        Ok(ImageMemory {
-            memory: self.chunks[index].memory,
-            chunk: index as _,
-            offset: block.offset,
-            size: block.size,
-        })
+        return Ok(self.chunks[index].allocate(index as _, device, pdevice, &requirement)?);
     }
 
-    pub fn free(&mut self, memory: ImageMemory) -> BackendResult<()> {
-        self.chunks[memory.chunk as usize]
-            .allocator
-            .free(memory.offset)?;
+    pub fn deallocate(&mut self, device: &ash::Device, memory: ImageMemory) -> BackendResult<()> {
+        self.chunks[memory.chunk as usize].deallocate(device, memory)?;
 
         Ok(())
     }
