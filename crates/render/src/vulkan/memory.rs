@@ -158,6 +158,7 @@ impl DynamicAllocator {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
 struct BufferUploadRequest {
     pub src_offset: u64,
     pub dst_offset: u64,
@@ -165,6 +166,7 @@ struct BufferUploadRequest {
     pub dst: vk::Buffer,
 }
 
+#[derive(Debug, Copy, Clone)]
 struct ImageUploadRequest {
     pub src_offset: u64,
     pub dst_offset: vk::Offset3D,
@@ -257,13 +259,16 @@ impl Staging {
             unsafe {
                 copy_nonoverlapping(data.as_ptr(), mapping.add(block.offset as _), data.len())
             }
-            self.upload_buffers.push(BufferUploadRequest {
+            let request = BufferUploadRequest {
                 dst: buffer.buffer(),
                 src_offset: block.offset,
                 dst_offset: buffer.offset(),
                 size: buffer.size(),
-            });
+            };
+            self.upload_buffers.push(request);
+            debug!("Query buffer upload {:?}", request);
         } else {
+            debug!("No more space in staging - request upload");
             return Err(StagingError::NeedUpload);
         }
 
@@ -277,6 +282,9 @@ impl Staging {
         transfer_queue_index: u32,
         graphics_queue_index: u32,
     ) {
+        if self.upload_buffers.is_empty() && self.upload_images.is_empty() {
+            return;
+        }
         if self.mapping.is_some() {
             self.unmap_buffer(device);
             self.mapping = None;
@@ -318,12 +326,12 @@ impl Staging {
     fn move_requests_to_queue(
         &self,
         requests: &[BufferUploadRequest],
-        _device: &ash::Device,
-        _cb: vk::CommandBuffer,
+        device: &ash::Device,
+        cb: vk::CommandBuffer,
         from: u32,
         to: u32,
     ) {
-        let _barriers = requests
+        let barriers = requests
             .iter()
             .map(|request| BufferBarrier {
                 previous_accesses: &[
@@ -343,6 +351,7 @@ impl Staging {
                 size: request.size as _,
             })
             .collect::<Vec<_>>();
+        pipeline_barrier(device, cb, None, &barriers, &[]);
     }
 
     fn copy_buffers(
@@ -357,6 +366,7 @@ impl Staging {
                 dst_offset: request.dst_offset,
                 size: request.size,
             };
+            debug!("Upload request {:?}", request);
             unsafe {
                 device.cmd_copy_buffer(cb, self.buffer, request.dst, slice::from_ref(&region))
             };
@@ -480,7 +490,8 @@ impl GeometryCache {
     }
 
     pub fn allocate(&mut self, size: u64) -> BackendResult<GeometryBuffer> {
-        let block = self.allocator.alloc(size as u64)?;
+        let block = self.allocator.alloc(size)?;
+        debug!("Allocate buffer size {}", size);
         Ok(GeometryBuffer {
             buffer: self.buffer,
             offset: block.offset as _,
