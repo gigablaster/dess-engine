@@ -27,13 +27,13 @@ mod render_pass;
 mod shader;
 mod swapchain;
 
-use ash::vk;
 pub use command_buffer::*;
 pub use device::*;
 pub use error::*;
 pub use frame_context::*;
 pub use image::*;
 pub use instance::*;
+pub use memory::Buffer;
 pub use physical_device::*;
 pub use pipeline::*;
 pub use render_pass::*;
@@ -42,10 +42,4 @@ pub use swapchain::*;
 
 pub trait FreeGpuResource {
     fn free(&self, device: &ash::Device);
-}
-
-pub trait Buffer {
-    fn buffer(&self) -> vk::Buffer;
-    fn offset(&self) -> u64;
-    fn size(&self) -> u64;
 }

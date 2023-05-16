@@ -168,31 +168,27 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn copy_buffers_range(
         &self,
-        from: &impl Buffer,
-        to: &impl Buffer,
+        from: &Buffer,
+        to: &Buffer,
         source: usize,
         destination: usize,
         size: usize,
     ) {
-        assert!(source + size <= from.size() as _);
-        assert!(destination + size <= to.size() as _);
+        assert!(source + size <= from.size as _);
+        assert!(destination + size <= to.size as _);
         let region = vk::BufferCopy::builder()
             .src_offset(source as _)
             .dst_offset(destination as _)
             .size(size as _)
             .build();
         unsafe {
-            self.device.cmd_copy_buffer(
-                *self.cb,
-                from.buffer(),
-                to.buffer(),
-                slice::from_ref(&region),
-            )
+            self.device
+                .cmd_copy_buffer(*self.cb, from.buffer, to.buffer, slice::from_ref(&region))
         };
     }
 
-    pub fn copy_buffers(&self, from: &impl Buffer, to: &impl Buffer) {
-        self.copy_buffers_range(from, to, 0, 0, from.size() as _);
+    pub fn copy_buffers(&self, from: &Buffer, to: &Buffer) {
+        self.copy_buffers_range(from, to, 0, 0, from.size as _);
     }
 }
 
@@ -232,24 +228,24 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_index_buffer(&self, buffer: &impl Buffer) {
+    pub fn bind_index_buffer(&self, buffer: &Buffer) {
         unsafe {
             self.device.cmd_bind_index_buffer(
                 *self.cb,
-                buffer.buffer(),
-                buffer.offset(),
+                buffer.buffer,
+                buffer.offset,
                 vk::IndexType::UINT16,
             )
         };
     }
 
-    pub fn bind_vertex_buffer(&self, buffer: &impl Buffer) {
+    pub fn bind_vertex_buffer(&self, buffer: &Buffer) {
         unsafe {
             self.device.cmd_bind_vertex_buffers(
                 *self.cb,
                 0,
-                slice::from_ref(&buffer.buffer()),
-                &[buffer.offset()],
+                slice::from_ref(&buffer.buffer),
+                &[buffer.offset],
             )
         };
     }

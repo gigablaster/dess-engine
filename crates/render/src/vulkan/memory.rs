@@ -1,3 +1,18 @@
+// Copyright (C) 2023 gigablaster
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 use core::slice;
 use std::ptr::copy_nonoverlapping;
 
@@ -8,13 +23,7 @@ use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier};
 
 use crate::vulkan::BackendError;
 
-use super::{BackendResult, Buffer, FreeGpuResource, PhysicalDevice};
-
-const CHUNK_SIZE: u64 = 256 * 1024 * 1024;
-const SMALL_CHUNK_THRESHOLD: u64 = 2 * 1024 * 1024;
-const BIG_CHUNK_THRESHOLD: u64 = 16 * 1024 * 1024;
-const STAGING_AREA_SIZE: u64 = 64 * 1024 * 1024;
-const GEOMETRY_CACHE_SIZE: u64 = 32 * 1024 * 1024;
+use super::{BackendResult, FreeGpuResource, PhysicalDevice};
 
 #[derive(Debug, Clone, Copy)]
 struct BlockData(u64, u64);
@@ -199,10 +208,10 @@ impl From<vk::Result> for StagingError {
 }
 
 impl Staging {
-    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64) -> BackendResult<Self> {
         let buffer_info = vk::BufferCreateInfo::builder()
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
-            .size(STAGING_AREA_SIZE)
+            .size(size)
             .flags(vk::BufferCreateFlags::empty())
             .build();
         let buffer = unsafe { device.create_buffer(&buffer_info, None) }?;
@@ -220,10 +229,10 @@ impl Staging {
         Ok(Self {
             buffer,
             memory,
-            size: STAGING_AREA_SIZE,
+            size,
             granularity: pdevice.properties.limits.buffer_image_granularity,
             allocator: DynamicAllocator::new(
-                STAGING_AREA_SIZE,
+                size,
                 pdevice.properties.limits.buffer_image_granularity,
             ),
             upload_buffers: Vec::with_capacity(128),
@@ -246,11 +255,11 @@ impl Staging {
     pub fn upload_buffer(
         &mut self,
         device: &ash::Device,
-        buffer: &GeometryBuffer,
+        buffer: &Buffer,
         data: &[u8],
     ) -> Result<(), StagingError> {
         assert!(data.len() as u64 <= self.size);
-        assert_eq!(buffer.size(), data.len() as u64);
+        assert_eq!(buffer.size, data.len() as u64);
         if self.mapping.is_none() {
             self.mapping = Some(self.map_buffer(device)?);
         }
@@ -260,10 +269,10 @@ impl Staging {
                 copy_nonoverlapping(data.as_ptr(), mapping.add(block.offset as _), data.len())
             }
             let request = BufferUploadRequest {
-                dst: buffer.buffer(),
+                dst: buffer.buffer,
                 src_offset: block.offset,
-                dst_offset: buffer.offset(),
-                size: buffer.size(),
+                dst_offset: buffer.offset,
+                size: buffer.size,
             };
             self.upload_buffers.push(request);
             debug!("Query buffer upload {:?}", request);
@@ -428,39 +437,25 @@ fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFla
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct GeometryBuffer {
-    pub(self) buffer: vk::Buffer,
-    pub(self) offset: u64,
-    pub(self) size: u64,
-}
-
-impl Buffer for GeometryBuffer {
-    fn buffer(&self) -> vk::Buffer {
-        self.buffer
-    }
-
-    fn offset(&self) -> u64 {
-        self.offset
-    }
-
-    fn size(&self) -> u64 {
-        self.size
-    }
+pub struct Buffer {
+    pub buffer: vk::Buffer,
+    pub offset: u64,
+    pub size: u64,
 }
 
 /// Giant buffer that used for all static geometry data.
 /// Clients are supposed to suballocate buffers by calling alloc and
 /// free them by calling free.
-pub struct GeometryCache {
+pub struct BufferCache {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
     allocator: DynamicAllocator,
 }
 
-impl GeometryCache {
-    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice) -> BackendResult<Self> {
+impl BufferCache {
+    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64) -> BackendResult<Self> {
         let create_info = vk::BufferCreateInfo::builder()
-            .size(GEOMETRY_CACHE_SIZE)
+            .size(size)
             .usage(
                 vk::BufferUsageFlags::VERTEX_BUFFER
                     | vk::BufferUsageFlags::INDEX_BUFFER
@@ -480,7 +475,7 @@ impl GeometryCache {
             None,
         )?;
         unsafe { device.bind_buffer_memory(buffer, memory, 0) }?;
-        let allocator = DynamicAllocator::new(GEOMETRY_CACHE_SIZE, 16);
+        let allocator = DynamicAllocator::new(size, 16);
 
         Ok(Self {
             buffer,
@@ -489,24 +484,24 @@ impl GeometryCache {
         })
     }
 
-    pub fn allocate(&mut self, size: u64) -> BackendResult<GeometryBuffer> {
+    pub fn allocate(&mut self, size: u64) -> BackendResult<Buffer> {
         let block = self.allocator.alloc(size)?;
         debug!("Allocate buffer size {}", size);
-        Ok(GeometryBuffer {
+        Ok(Buffer {
             buffer: self.buffer,
             offset: block.offset as _,
             size: block.size as _,
         })
     }
 
-    pub fn free(&mut self, buffer: GeometryBuffer) -> BackendResult<()> {
+    pub fn free(&mut self, buffer: Buffer) -> BackendResult<()> {
         self.allocator.free(buffer.offset as _)?;
 
         Ok(())
     }
 }
 
-impl FreeGpuResource for GeometryCache {
+impl FreeGpuResource for BufferCache {
     fn free(&self, device: &ash::Device) {
         unsafe {
             device.free_memory(self.memory, None);
@@ -571,16 +566,16 @@ impl Chunk {
         })
     }
 
-    pub fn is_suitable(&self, requirement: &vk::MemoryRequirements) -> bool {
-        Self::purpose(requirement) == self.purpose
+    pub fn is_suitable(&self, requirement: &vk::MemoryRequirements, threshold: u64) -> bool {
+        Self::purpose(requirement, threshold) == self.purpose
             && (1 << self.index) & requirement.memory_type_bits != 0
     }
 
-    pub fn purpose(requirement: &vk::MemoryRequirements) -> ChunkPurpose {
-        if requirement.size <= SMALL_CHUNK_THRESHOLD {
+    pub fn purpose(requirement: &vk::MemoryRequirements, threshold: u64) -> ChunkPurpose {
+        if requirement.size <= threshold {
             return ChunkPurpose::Small;
         }
-        if requirement.size > BIG_CHUNK_THRESHOLD {
+        if requirement.size > threshold * 4 {
             return ChunkPurpose::Big;
         }
         ChunkPurpose::Normal
@@ -638,12 +633,22 @@ impl FreeGpuResource for Chunk {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ImageCache {
     chunks: Vec<Chunk>,
+    size: u64,
+    threshold: u64,
 }
 
 impl ImageCache {
+    pub fn new(size: u64, threshold: u64) -> Self {
+        Self {
+            chunks: Vec::new(),
+            size,
+            threshold,
+        }
+    }
+
     pub fn allocate(
         &mut self,
         device: &ash::Device,
@@ -653,7 +658,7 @@ impl ImageCache {
         let requirement = unsafe { device.get_image_memory_requirements(image) };
         for index in 0..self.chunks.len() {
             let chunk = &mut self.chunks[index];
-            if chunk.is_suitable(&requirement) {
+            if chunk.is_suitable(&requirement, self.threshold) {
                 if let Ok(block) = chunk.allocate(index as _, device, pdevice, &requirement) {
                     return Ok(block);
                 }
@@ -663,9 +668,9 @@ impl ImageCache {
         self.chunks.push(Chunk::new(
             device,
             pdevice,
-            CHUNK_SIZE,
+            self.size,
             requirement.memory_type_bits,
-            Chunk::purpose(&requirement),
+            Chunk::purpose(&requirement, self.threshold),
         )?);
         return Ok(self.chunks[index].allocate(index as _, device, pdevice, &requirement)?);
     }

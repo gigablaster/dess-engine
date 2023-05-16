@@ -1,6 +1,6 @@
 use ash::vk;
 
-use super::memory::{GeometryBuffer, GeometryCache, ImageCache, ImageMemory};
+use super::memory::{Buffer, BufferCache, ImageCache, ImageMemory};
 
 const CAPACITY: usize = 32;
 
@@ -14,7 +14,7 @@ struct ImageDrop {
 pub(crate) struct DropList {
     images_to_free: Vec<ImageDrop>,
     image_views_to_free: Vec<vk::ImageView>,
-    buffers_to_free: Vec<GeometryBuffer>,
+    buffers_to_free: Vec<Buffer>,
 }
 
 impl Default for DropList {
@@ -36,7 +36,7 @@ impl DropList {
         self.image_views_to_free.push(view);
     }
 
-    pub fn drop_buffer(&mut self, buffer: GeometryBuffer) {
+    pub fn drop_buffer(&mut self, buffer: Buffer) {
         self.buffers_to_free.push(buffer);
     }
 
@@ -44,7 +44,7 @@ impl DropList {
         &mut self,
         device: &ash::Device,
         image_cache: &mut ImageCache,
-        geometry_cache: &mut GeometryCache,
+        geometry_cache: &mut BufferCache,
     ) {
         self.image_views_to_free.drain(..).for_each(|view| {
             unsafe { device.destroy_image_view(view, None) };

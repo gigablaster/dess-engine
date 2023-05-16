@@ -34,10 +34,17 @@ use crate::vulkan::BackendError;
 
 use super::{
     droplist::DropList,
-    memory::{GeometryBuffer, GeometryCache, ImageCache, ImageMemory, Staging, StagingError},
+    memory::{Buffer, BufferCache, ImageCache, ImageMemory, Staging, StagingError},
     BackendResult, CommandBuffer, FrameContext, FreeGpuResource, Instance, PhysicalDevice,
     QueueFamily,
 };
+
+const STAGING_SIZE: u64 = 32 * 1024 * 1024;
+const BUFFER_CACHE_SIZE: u64 = 64 * 1024 * 1024;
+const IMAGE_CHUNK_SIZE: u64 = 256 * 1024 * 1024;
+const IMAGE_CHUNK_THRESHOLD: u64 = 2 * 1024 * 1024;
+const UNIFORM_BUFFER_SIZE: u64 = 8 * 1024 * 1024;
+const DYN_GEO_BUFFER_SIZE: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -67,7 +74,7 @@ pub struct Device {
     setup_cb: CommandBuffer,
     frames: [Mutex<Arc<FrameContext>>; 2],
     drop_lists: [Mutex<DropList>; 2],
-    geo_cache: Mutex<GeometryCache>,
+    geo_cache: Mutex<BufferCache>,
     image_cache: Mutex<ImageCache>,
     staging: Mutex<Staging>,
 }
@@ -138,9 +145,9 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
-        let image_cache = ImageCache::default();
-        let geo_cache = GeometryCache::new(&device, &pdevice)?;
-        let staging = Staging::new(&device, &pdevice)?;
+        let image_cache = ImageCache::new(IMAGE_CHUNK_SIZE, IMAGE_CHUNK_THRESHOLD);
+        let geo_cache = BufferCache::new(&device, &pdevice, BUFFER_CACHE_SIZE)?;
+        let staging = Staging::new(&device, &pdevice, STAGING_SIZE)?;
 
         Ok(Arc::new(Self {
             instance,
@@ -362,15 +369,12 @@ impl Device {
         Ok(())
     }
 
-    pub fn create_geometry_buffer(&self, size: usize) -> BackendResult<GeometryBuffer> {
+    pub fn create_geometry_buffer(&self, size: usize) -> BackendResult<Buffer> {
         let mut geo_cache = self.geo_cache.lock().unwrap();
         geo_cache.allocate(size as _)
     }
 
-    pub fn create_geometry_buffer_from<T: Sized>(
-        &self,
-        data: &[T],
-    ) -> BackendResult<GeometryBuffer> {
+    pub fn create_geometry_buffer_from<T: Sized>(&self, data: &[T]) -> BackendResult<Buffer> {
         let size = data.len() * size_of::<T>();
         let buffer = self.create_geometry_buffer(size)?;
         let ptr = data.as_ptr() as *const u8;
@@ -380,7 +384,7 @@ impl Device {
         Ok(buffer)
     }
 
-    pub fn upload_geometry(&self, buffer: &GeometryBuffer, data: &[u8]) -> BackendResult<()> {
+    pub fn upload_geometry(&self, buffer: &Buffer, data: &[u8]) -> BackendResult<()> {
         let mut staging = self.staging.lock().unwrap();
         match staging.upload_buffer(&self.raw, buffer, data) {
             Ok(_) => Ok(()),
