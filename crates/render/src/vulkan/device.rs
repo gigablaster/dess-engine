@@ -213,6 +213,7 @@ impl Device {
     }
 
     fn commit_staging(&self) -> BackendResult<()> {
+        puffin::profile_scope!("commit staging");
         let mut staging = self.staging.lock().unwrap();
         self.setup_cb.wait(&self.raw)?;
         self.setup_cb.reset(&self.raw)?;
@@ -230,6 +231,7 @@ impl Device {
     }
 
     pub fn begin_frame(&self) -> BackendResult<Arc<FrameContext>> {
+        puffin::profile_scope!("begin frame");
         let mut frame0 = self.frames[0].lock().unwrap();
         {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
