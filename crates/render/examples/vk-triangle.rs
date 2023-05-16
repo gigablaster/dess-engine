@@ -143,123 +143,9 @@ fn main() -> Result<(), String> {
         },
     ];
     let indices = [0u16, 1u16, 2u16];
-    let _vertex_buffer = device.create_geometry_buffer_from(&vertices).unwrap();
-    let _index_buffer = device.create_geometry_buffer_from(&indices).unwrap();
+    let vertex_buffer = device.create_geometry_buffer_from(&vertices).unwrap();
+    let index_buffer = device.create_geometry_buffer_from(&indices).unwrap();
 
-    /*let mut vertex_staging = Buffer::new(
-        &device,
-        BufferDesc::staging(3 * size_of::<Vertex>()),
-        Some("Vertex staging"),
-    )
-    .unwrap();
-    let mut index_staging = Buffer::new(
-        &device,
-        BufferDesc::staging(3 * size_of::<u16>()),
-        Some("Index staging"),
-    )
-    .unwrap();
-    let vertex_buffer = Buffer::new(
-        &device,
-        BufferDesc::vertex::<Vertex>(3),
-        Some("Vertex buffer"),
-    )
-    .unwrap();
-    let index_buffer = Buffer::new(&device, BufferDesc::index(3), Some("Index buffer")).unwrap();
-
-
-    let mut map = vertex_staging.map().unwrap();
-    map.push(&vertices);
-    vertex_staging.unmap().unwrap();
-
-    let mut map = index_staging.map().unwrap();
-    map.push(&indices).unwrap();
-    index_staging.unmap();
-
-    device
-        .with_setup_cb(|recorder| {
-            let barriers = [
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferRead],
-                    next_accesses: &[AccessType::TransferRead],
-                    src_queue_family_index: device.graphics_queue.family.index,
-                    dst_queue_family_index: device.transfer_queue.family.index,
-                    buffer: vertex_staging.raw,
-                    offset: 0,
-                    size: vertex_staging.desc.size,
-                },
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferRead],
-                    next_accesses: &[AccessType::TransferRead],
-                    src_queue_family_index: device.graphics_queue.family.index,
-                    dst_queue_family_index: device.transfer_queue.family.index,
-                    buffer: index_staging.raw,
-                    offset: 0,
-                    size: index_staging.desc.size,
-                },
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::TransferWrite],
-                    src_queue_family_index: device.graphics_queue.family.index,
-                    dst_queue_family_index: device.transfer_queue.family.index,
-                    buffer: vertex_buffer.raw,
-                    offset: 0,
-                    size: vertex_buffer.desc.size,
-                },
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::TransferWrite],
-                    src_queue_family_index: device.graphics_queue.family.index,
-                    dst_queue_family_index: device.transfer_queue.family.index,
-                    buffer: index_buffer.raw,
-                    offset: 0,
-                    size: index_buffer.desc.size,
-                },
-            ];
-            pipeline_barrier(&device.raw, *recorder.cb, None, &barriers, &[]);
-            recorder.copy_buffers(&index_staging, &index_buffer);
-            recorder.copy_buffers(&vertex_staging, &vertex_buffer);
-            let barriers = [
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferRead],
-                    next_accesses: &[AccessType::TransferRead],
-                    src_queue_family_index: device.transfer_queue.family.index,
-                    dst_queue_family_index: device.graphics_queue.family.index,
-                    buffer: vertex_staging.raw,
-                    offset: 0,
-                    size: vertex_staging.desc.size,
-                },
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferRead],
-                    next_accesses: &[AccessType::TransferRead],
-                    src_queue_family_index: device.transfer_queue.family.index,
-                    dst_queue_family_index: device.graphics_queue.family.index,
-                    buffer: index_staging.raw,
-                    offset: 0,
-                    size: index_staging.desc.size,
-                },
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::VertexBuffer],
-                    src_queue_family_index: device.transfer_queue.family.index,
-                    dst_queue_family_index: device.graphics_queue.family.index,
-                    buffer: vertex_buffer.raw,
-                    offset: 0,
-                    size: vertex_buffer.desc.size,
-                },
-                BufferBarrier {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::VertexBuffer],
-                    src_queue_family_index: device.transfer_queue.family.index,
-                    dst_queue_family_index: device.graphics_queue.family.index,
-                    buffer: index_buffer.raw,
-                    offset: 0,
-                    size: index_buffer.desc.size,
-                },
-            ];
-            pipeline_barrier(&device.raw, *recorder.cb, None, &barriers, &[]);
-        })
-        .unwrap();
-    */
     let mut skip_render = false;
     'running: loop {
         let mut recreate_swapchain = false;
@@ -343,9 +229,9 @@ fn main() -> Result<(), String> {
                     },
                 )];
                 {
-                    let _pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
-                    let _render_area = swapchain.render_area();
-                    /*pass.set_scissor(render_area);
+                    let pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
+                    let render_area = swapchain.render_area();
+                    pass.set_scissor(render_area);
                     pass.set_viewport(vk::Viewport {
                         x: 0.0,
                         y: 0.0,
@@ -357,7 +243,7 @@ fn main() -> Result<(), String> {
                     pass.bind_pipeline(&pipeline);
                     pass.bind_index_buffer(&index_buffer);
                     pass.bind_vertex_buffer(&vertex_buffer);
-                    pass.draw(3, 1, 0, 0); */
+                    pass.draw(3, 1, 0, 0);
                 }
             }
             device

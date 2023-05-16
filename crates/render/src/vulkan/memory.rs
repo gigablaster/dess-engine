@@ -469,7 +469,7 @@ impl GeometryCache {
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
             None,
         )?;
-        unsafe { device.bind_buffer_memory(buffer, memory, 0) };
+        unsafe { device.bind_buffer_memory(buffer, memory, 0) }?;
         let allocator = DynamicAllocator::new(GEOMETRY_CACHE_SIZE, 16);
 
         Ok(Self {
