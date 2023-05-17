@@ -143,8 +143,8 @@ fn main() -> Result<(), String> {
         },
     ];
     let indices = [0u16, 1u16, 2u16];
-    let vertex_buffer = device.create_geometry_buffer_from(&vertices).unwrap();
-    let index_buffer = device.create_geometry_buffer_from(&indices).unwrap();
+    let vertex_buffer = device.create_buffer_from(&vertices).unwrap();
+    let index_buffer = device.create_buffer_from(&indices).unwrap();
 
     let mut skip_render = false;
     'running: loop {

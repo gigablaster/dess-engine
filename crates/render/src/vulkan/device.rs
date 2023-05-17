@@ -369,22 +369,22 @@ impl Device {
         Ok(())
     }
 
-    pub fn create_geometry_buffer(&self, size: usize) -> BackendResult<Buffer> {
+    pub fn create_buffer(&self, size: usize) -> BackendResult<Buffer> {
         let mut geo_cache = self.geo_cache.lock().unwrap();
         geo_cache.allocate(size as _)
     }
 
-    pub fn create_geometry_buffer_from<T: Sized>(&self, data: &[T]) -> BackendResult<Buffer> {
+    pub fn create_buffer_from<T: Sized>(&self, data: &[T]) -> BackendResult<Buffer> {
         let size = data.len() * size_of::<T>();
-        let buffer = self.create_geometry_buffer(size)?;
+        let buffer = self.create_buffer(size)?;
         let ptr = data.as_ptr() as *const u8;
         let data = unsafe { from_raw_parts(ptr, size) };
-        self.upload_geometry(&buffer, data)?;
+        self.upload_buffer(&buffer, data)?;
 
         Ok(buffer)
     }
 
-    pub fn upload_geometry(&self, buffer: &Buffer, data: &[u8]) -> BackendResult<()> {
+    pub fn upload_buffer(&self, buffer: &Buffer, data: &[u8]) -> BackendResult<()> {
         let mut staging = self.staging.lock().unwrap();
         match staging.upload_buffer(&self.raw, buffer, data) {
             Ok(_) => Ok(()),

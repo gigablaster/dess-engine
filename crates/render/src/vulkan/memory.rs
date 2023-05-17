@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::ptr::copy_nonoverlapping;
+use std::{mem::size_of, ptr::copy_nonoverlapping};
 
 use ash::vk;
 use log::debug;
@@ -436,11 +436,21 @@ fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFla
         .map(|(index, _memory_type)| index as _)
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default, Eq, PartialEq)]
 pub struct Buffer {
     pub buffer: vk::Buffer,
     pub offset: u64,
     pub size: u64,
+}
+
+impl Buffer {
+    pub fn new(buffer: vk::Buffer, offset: u64, size: u64) -> Self {
+        Self {
+            buffer,
+            offset,
+            size,
+        }
+    }
 }
 
 /// Giant buffer that used for all static geometry data.
@@ -672,7 +682,8 @@ impl ImageCache {
             requirement.memory_type_bits,
             Chunk::purpose(&requirement, self.threshold),
         )?);
-        return Ok(self.chunks[index].allocate(index as _, device, pdevice, &requirement)?);
+
+        self.chunks[index].allocate(index as _, device, pdevice, &requirement)
     }
 
     pub fn deallocate(&mut self, device: &ash::Device, memory: ImageMemory) -> BackendResult<()> {
@@ -688,8 +699,168 @@ impl FreeGpuResource for ImageCache {
     }
 }
 
+struct RingAllocator {
+    size: u64,
+    aligment: u64,
+    head: u64,
+    tail: u64,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum RingAllocation {
+    Normal(u64, u64),
+    MustCommit(u64, u64),
+}
+
+impl RingAllocator {
+    pub fn new(size: u64, aligment: u64) -> Self {
+        Self {
+            head: 0,
+            tail: 0,
+            size,
+            aligment,
+        }
+    }
+
+    pub fn allocate(&mut self, size: u64) -> RingAllocation {
+        let aligned_size = align(size, self.aligment);
+        let old_head = self.head;
+        let new_head = self.head + aligned_size;
+        self.head = self.size.min(new_head);
+        if new_head > self.size {
+            return RingAllocation::MustCommit(self.tail, self.head - self.tail);
+        }
+
+        RingAllocation::Normal(old_head, size)
+    }
+
+    pub fn commited(&mut self) {
+        if self.head == self.size {
+            self.head = 0;
+        }
+        self.tail = self.head;
+    }
+
+    pub fn commit_range(&self) -> (u64, u64) {
+        (self.tail, self.head - self.tail)
+    }
+}
+
+pub struct RingBuffer {
+    buffer: vk::Buffer,
+    memory: vk::DeviceMemory,
+    ring: RingAllocator,
+    mapping: *mut u8,
+}
+
+impl RingBuffer {
+    pub fn new(
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        size: u64,
+        flags: vk::BufferUsageFlags,
+    ) -> BackendResult<Self> {
+        let buffer_info = vk::BufferCreateInfo::builder()
+            .usage(flags)
+            .size(size)
+            .build();
+        let buffer = unsafe { device.create_buffer(&buffer_info, None) }?;
+        let requirement = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let (_, memory) = allocate_vram(
+            device,
+            pdevice,
+            requirement.size,
+            requirement.memory_type_bits,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE,
+            None,
+        )?;
+        unsafe { device.bind_buffer_memory(buffer, memory, 0) }?;
+        let ring = RingAllocator::new(
+            size,
+            pdevice
+                .properties
+                .limits
+                .min_uniform_buffer_offset_alignment,
+        );
+        let mapping =
+            unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8 };
+
+        Ok(Self {
+            buffer,
+            ring,
+            memory,
+            mapping,
+        })
+    }
+
+    pub fn push<T: Sized>(&mut self, device: &ash::Device, data: &[T]) -> BackendResult<Buffer> {
+        let size = (size_of::<T>() * data.len()) as u64;
+        match self.ring.allocate(size) {
+            RingAllocation::Normal(offset, buffer_size) => {
+                unsafe {
+                    copy_nonoverlapping(
+                        data.as_ptr() as *const u8,
+                        self.mapping.add(offset as _),
+                        size as _,
+                    )
+                };
+                Ok(Buffer::new(self.buffer, offset, buffer_size))
+            }
+            RingAllocation::MustCommit(offset, size) => {
+                self.do_commit(device, offset, size)?;
+                if let RingAllocation::Normal(offset, buffer_size) = self.ring.allocate(size) {
+                    unsafe {
+                        copy_nonoverlapping(
+                            data.as_ptr() as *const u8,
+                            self.mapping.add(offset as _),
+                            size as _,
+                        )
+                    };
+                    Ok(Buffer::new(self.buffer, offset, buffer_size))
+                } else {
+                    panic!("Shit happened in ring buffer");
+                }
+            }
+        }
+    }
+
+    pub fn commit(&mut self, device: &ash::Device) -> BackendResult<()> {
+        let (offset, size) = self.ring.commit_range();
+        self.do_commit(device, offset, size)
+    }
+
+    fn do_commit(&mut self, device: &ash::Device, offset: u64, size: u64) -> BackendResult<()> {
+        if size == 0 {
+            return Ok(());
+        }
+        let range = vk::MappedMemoryRange::builder()
+            .size(size)
+            .offset(offset)
+            .memory(self.memory)
+            .build();
+        unsafe { device.flush_mapped_memory_ranges(slice::from_ref(&range)) }?;
+        self.ring.commited();
+
+        Ok(())
+    }
+}
+
+impl FreeGpuResource for RingBuffer {
+    fn free(&self, device: &ash::Device) {
+        unsafe {
+            device.free_memory(self.memory, None);
+            device.destroy_buffer(self.buffer, None);
+        }
+    }
+}
 #[cfg(test)]
 mod test {
+    
+
+    use crate::vulkan::{
+        memory::{RingAllocation, RingAllocator},
+    };
+
     use super::DynamicAllocator;
 
     #[test]
@@ -747,5 +918,25 @@ mod test {
         allocator.alloc(500).unwrap();
         allocator.alloc(200).unwrap();
         assert!(allocator.alloc(500).is_err());
+    }
+
+    #[test]
+    fn ring_alloc_overflow() {
+        let mut buffer = RingAllocator::new(1024, 64);
+        assert_eq!(RingAllocation::Normal(0, 500), buffer.allocate(500));
+        assert_eq!(RingAllocation::Normal(512, 500), buffer.allocate(500));
+        assert_eq!(RingAllocation::MustCommit(0, 1024), buffer.allocate(128));
+        buffer.commited();
+        assert_eq!(RingAllocation::Normal(0, 128), buffer.allocate(128));
+    }
+
+    #[test]
+    fn ring_partial_commit() {
+        let mut buffer = RingAllocator::new(1024, 64);
+        assert_eq!(RingAllocation::Normal(0, 500), buffer.allocate(500));
+        buffer.commited();
+        assert_eq!(RingAllocation::Normal(512, 500), buffer.allocate(500));
+        buffer.commited();
+        assert_eq!(RingAllocation::Normal(0, 128), buffer.allocate(128));
     }
 }
