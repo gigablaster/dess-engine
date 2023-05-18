@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod buffer;
 mod command_buffer;
 mod device;
 mod droplist;
@@ -25,15 +26,16 @@ mod physical_device;
 mod pipeline;
 mod render_pass;
 mod shader;
+mod staging;
 mod swapchain;
 
+pub use buffer::*;
 pub use command_buffer::*;
 pub use device::*;
 pub use error::*;
 pub use frame_context::*;
 pub use image::*;
 pub use instance::*;
-pub use memory::Buffer;
 pub use physical_device::*;
 pub use pipeline::*;
 pub use render_pass::*;

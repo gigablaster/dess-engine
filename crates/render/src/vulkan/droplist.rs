@@ -1,6 +1,6 @@
 use ash::vk;
 
-use super::memory::{Buffer, BufferCache, ImageCache, ImageMemory};
+use super::{Buffer, BufferAllocator, ImageAllocator, ImageMemory};
 
 const CAPACITY: usize = 32;
 
@@ -43,8 +43,8 @@ impl DropList {
     pub fn free(
         &mut self,
         device: &ash::Device,
-        image_cache: &mut ImageCache,
-        geometry_cache: &mut BufferCache,
+        image_cache: &mut ImageAllocator,
+        geometry_cache: &mut BufferAllocator,
     ) {
         self.image_views_to_free.drain(..).for_each(|view| {
             unsafe { device.destroy_image_view(view, None) };

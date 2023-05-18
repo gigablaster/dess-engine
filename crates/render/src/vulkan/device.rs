@@ -30,13 +30,11 @@ use ash::{
 };
 use log::info;
 
-use crate::vulkan::BackendError;
+use crate::vulkan::{staging::Staging, BackendError, BufferAllocator, ImageAllocator};
 
 use super::{
-    droplist::DropList,
-    memory::{Buffer, BufferCache, ImageCache, ImageMemory, Staging, StagingError},
-    BackendResult, CommandBuffer, FrameContext, FreeGpuResource, Instance, PhysicalDevice,
-    QueueFamily,
+    droplist::DropList, staging::StagingError, BackendResult, Buffer, CommandBuffer, FrameContext,
+    FreeGpuResource, ImageMemory, Instance, PhysicalDevice, QueueFamily,
 };
 
 const STAGING_SIZE: u64 = 32 * 1024 * 1024;
@@ -74,8 +72,8 @@ pub struct Device {
     setup_cb: CommandBuffer,
     frames: [Mutex<Arc<FrameContext>>; 2],
     drop_lists: [Mutex<DropList>; 2],
-    geo_cache: Mutex<BufferCache>,
-    image_cache: Mutex<ImageCache>,
+    geo_cache: Mutex<BufferAllocator>,
+    image_cache: Mutex<ImageAllocator>,
     staging: Mutex<Staging>,
 }
 
@@ -145,8 +143,15 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
-        let image_cache = ImageCache::new(IMAGE_CHUNK_SIZE, IMAGE_CHUNK_THRESHOLD);
-        let geo_cache = BufferCache::new(&device, &pdevice, BUFFER_CACHE_SIZE)?;
+        let image_cache = ImageAllocator::new(IMAGE_CHUNK_SIZE, IMAGE_CHUNK_THRESHOLD);
+        let geo_cache = BufferAllocator::new(
+            &device,
+            &pdevice,
+            BUFFER_CACHE_SIZE,
+            vk::BufferUsageFlags::VERTEX_BUFFER
+                | vk::BufferUsageFlags::INDEX_BUFFER
+                | vk::BufferUsageFlags::TRANSFER_DST,
+        )?;
         let staging = Staging::new(&device, &pdevice, STAGING_SIZE)?;
 
         Ok(Arc::new(Self {
