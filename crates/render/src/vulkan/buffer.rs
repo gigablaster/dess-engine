@@ -20,7 +20,7 @@ use ash::vk;
 use log::debug;
 
 use super::{
-    memory::{allocate_vram, DynamicAllocator, RingAllocation, RingAllocator},
+    memory::{allocate_vram, DynamicAllocator, RingAllocator},
     BackendResult, FreeGpuResource, PhysicalDevice,
 };
 
@@ -112,6 +112,7 @@ impl FreeGpuResource for BufferAllocator {
 pub struct RingBuffer {
     buffer: vk::Buffer,
     memory: vk::DeviceMemory,
+    size: u64,
     ring: RingAllocator,
     mapping: *mut u8,
 }
@@ -151,58 +152,33 @@ impl RingBuffer {
         Ok(Self {
             buffer,
             ring,
+            size,
             memory,
             mapping,
         })
     }
 
-    pub fn push<T: Sized>(&mut self, device: &ash::Device, data: &[T]) -> BackendResult<Buffer> {
+    pub fn push<T: Sized>(&self, data: &[T]) -> Buffer {
         let size = (size_of::<T>() * data.len()) as u64;
-        match self.ring.allocate(size) {
-            RingAllocation::Normal(offset, buffer_size) => {
-                unsafe {
-                    copy_nonoverlapping(
-                        data.as_ptr() as *const u8,
-                        self.mapping.add(offset as _),
-                        size as _,
-                    )
-                };
-                Ok(Buffer::new(self.buffer, offset, buffer_size))
-            }
-            RingAllocation::MustCommit(offset, size) => {
-                self.do_commit(device, offset, size)?;
-                if let RingAllocation::Normal(offset, buffer_size) = self.ring.allocate(size) {
-                    unsafe {
-                        copy_nonoverlapping(
-                            data.as_ptr() as *const u8,
-                            self.mapping.add(offset as _),
-                            size as _,
-                        )
-                    };
-                    Ok(Buffer::new(self.buffer, offset, buffer_size))
-                } else {
-                    panic!("Shit happened in ring buffer");
-                }
-            }
-        }
+        let block = self.ring.allocate(size);
+        unsafe {
+            copy_nonoverlapping(
+                data.as_ptr() as *const u8,
+                self.mapping.add(block.offset as _),
+                size as _,
+            )
+        };
+
+        Buffer::new(self.buffer, block.offset, block.size)
     }
 
-    pub fn commit(&mut self, device: &ash::Device) -> BackendResult<()> {
-        let (offset, size) = self.ring.commit_range();
-        self.do_commit(device, offset, size)
-    }
-
-    fn do_commit(&mut self, device: &ash::Device, offset: u64, size: u64) -> BackendResult<()> {
-        if size == 0 {
-            return Ok(());
-        }
+    pub fn commit(&self, device: &ash::Device) -> BackendResult<()> {
         let range = vk::MappedMemoryRange::builder()
-            .size(size)
-            .offset(offset)
+            .size(self.size)
+            .offset(0)
             .memory(self.memory)
             .build();
         unsafe { device.flush_mapped_memory_ranges(slice::from_ref(&range)) }?;
-        self.ring.commited();
 
         Ok(())
     }

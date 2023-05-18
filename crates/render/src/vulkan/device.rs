@@ -34,7 +34,7 @@ use crate::vulkan::{staging::Staging, BackendError, BufferAllocator, ImageAlloca
 
 use super::{
     droplist::DropList, staging::StagingError, BackendResult, Buffer, CommandBuffer, FrameContext,
-    FreeGpuResource, ImageMemory, Instance, PhysicalDevice, QueueFamily,
+    FreeGpuResource, ImageMemory, Instance, PhysicalDevice, QueueFamily, RingBuffer,
 };
 
 const STAGING_SIZE: u64 = 32 * 1024 * 1024;
@@ -74,6 +74,8 @@ pub struct Device {
     drop_lists: [Mutex<DropList>; 2],
     geo_cache: Mutex<BufferAllocator>,
     image_cache: Mutex<ImageAllocator>,
+    uniform_buffer: RingBuffer,
+    dynamic_buffer: RingBuffer,
     staging: Mutex<Staging>,
 }
 
@@ -153,6 +155,18 @@ impl Device {
                 | vk::BufferUsageFlags::TRANSFER_DST,
         )?;
         let staging = Staging::new(&device, &pdevice, STAGING_SIZE)?;
+        let uniform_buffer = RingBuffer::new(
+            &device,
+            &pdevice,
+            UNIFORM_BUFFER_SIZE,
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+        )?;
+        let dynamic_buffer = RingBuffer::new(
+            &device,
+            &pdevice,
+            DYN_GEO_BUFFER_SIZE,
+            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
+        )?;
 
         Ok(Arc::new(Self {
             instance,
@@ -168,6 +182,8 @@ impl Device {
             image_cache: Mutex::new(image_cache),
             geo_cache: Mutex::new(geo_cache),
             staging: Mutex::new(staging),
+            uniform_buffer,
+            dynamic_buffer,
         }))
     }
 
@@ -265,6 +281,8 @@ impl Device {
                     &mut image_cache,
                     &mut geo_cache,
                 );
+                self.uniform_buffer.commit(&self.raw)?;
+                self.dynamic_buffer.commit(&self.raw)?;
                 frame0.reset(&self.raw)?;
             } else {
                 return Err(BackendError::Other(
@@ -382,6 +400,12 @@ impl Device {
         geo_cache.allocate(size as _)
     }
 
+    pub fn drop_buffer(&self, buffer: Buffer) {
+        self.with_drop_list(|drop_list| {
+            drop_list.drop_buffer(buffer);
+        });
+    }
+
     pub fn create_buffer_from<T: Sized>(&self, data: &[T]) -> BackendResult<Buffer> {
         let size = data.len() * size_of::<T>();
         let buffer = self.create_buffer(size)?;
@@ -424,6 +448,14 @@ impl Device {
 
         Ok(memory)
     }
+
+    pub fn push_uniforms<T: Sized>(&self, data: &[T]) -> Buffer {
+        self.uniform_buffer.push(data)
+    }
+
+    pub fn push_dynamic_geo<T: Sized>(&self, data: &[T]) -> Buffer {
+        self.dynamic_buffer.push(data)
+    }
 }
 
 impl Drop for Device {
@@ -449,6 +481,8 @@ impl Drop for Device {
         staging.free(&self.raw);
         image_cache.free(&self.raw);
         geo_cache.free(&self.raw);
+        self.uniform_buffer.free(&self.raw);
+        self.dynamic_buffer.free(&self.raw);
         unsafe { self.raw.destroy_device(None) };
     }
 }

@@ -143,9 +143,8 @@ fn main() -> Result<(), String> {
         },
     ];
     let indices = [0u16, 1u16, 2u16];
-    let vertex_buffer = device.create_buffer_from(&vertices).unwrap();
-    let index_buffer = device.create_buffer_from(&indices).unwrap();
 
+    let vertex_buffer = device.create_buffer_from(&vertices).unwrap();
     let mut skip_render = false;
     'running: loop {
         let mut recreate_swapchain = false;
@@ -195,6 +194,7 @@ fn main() -> Result<(), String> {
             render_pass.clear_fbos(&device.raw);
             continue;
         }
+        let index_buffer = device.push_dynamic_geo(&indices);
         let frame = device.begin_frame().unwrap();
         {
             {

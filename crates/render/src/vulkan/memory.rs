@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use ash::vk;
 use log::debug;
 
@@ -29,10 +31,16 @@ enum Block {
     Used(BlockData),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub struct MemoryBlock {
     pub offset: u64,
     pub size: u64,
+}
+
+impl MemoryBlock {
+    pub fn new(offset: u64, size: u64) -> Self {
+        Self { offset, size }
+    }
 }
 
 /// Sub-buffer allocator for all in-game geometry.
@@ -210,53 +218,43 @@ fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFla
 pub struct RingAllocator {
     size: u64,
     aligment: u64,
-    head: u64,
-    tail: u64,
-}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum RingAllocation {
-    Normal(u64, u64),
-    MustCommit(u64, u64),
+    head: AtomicU64,
 }
 
 impl RingAllocator {
     pub fn new(size: u64, aligment: u64) -> Self {
         Self {
-            head: 0,
-            tail: 0,
+            head: AtomicU64::new(0),
             size,
             aligment,
         }
     }
 
-    pub fn allocate(&mut self, size: u64) -> RingAllocation {
+    pub fn allocate(&self, size: u64) -> MemoryBlock {
+        assert!(size <= self.size);
         let aligned_size = align(size, self.aligment);
-        let old_head = self.head;
-        let new_head = self.head + aligned_size;
-        self.head = self.size.min(new_head);
-        if new_head > self.size {
-            return RingAllocation::MustCommit(self.tail, self.head - self.tail);
+        loop {
+            let old_head = self.head.load(Ordering::Acquire);
+            let end = old_head + aligned_size;
+            let (head, new_head) = if end > self.size {
+                (0, aligned_size)
+            } else {
+                (old_head, end)
+            };
+            if self
+                .head
+                .compare_exchange(old_head, new_head, Ordering::Release, Ordering::Acquire)
+                .is_ok()
+            {
+                return MemoryBlock { offset: head, size };
+            }
         }
-
-        RingAllocation::Normal(old_head, size)
-    }
-
-    pub fn commited(&mut self) {
-        if self.head == self.size {
-            self.head = 0;
-        }
-        self.tail = self.head;
-    }
-
-    pub fn commit_range(&self) -> (u64, u64) {
-        (self.tail, self.head - self.tail)
     }
 }
 
 #[cfg(test)]
 mod test {
-    use crate::vulkan::memory::{RingAllocation, RingAllocator};
+    use crate::vulkan::memory::{MemoryBlock, RingAllocator};
 
     use super::DynamicAllocator;
 
@@ -319,24 +317,9 @@ mod test {
 
     #[test]
     fn ring_alloc_overflow() {
-        let mut buffer = RingAllocator::new(1024, 64);
-        assert_eq!(RingAllocation::Normal(0, 500), buffer.allocate(500));
-        assert_eq!(RingAllocation::Normal(512, 500), buffer.allocate(500));
-        assert_eq!(RingAllocation::MustCommit(0, 1024), buffer.allocate(128));
-        buffer.commited();
-        assert_eq!(RingAllocation::Normal(0, 128), buffer.allocate(128));
-    }
-
-    #[test]
-    fn ring_partial_commit() {
-        let mut buffer = RingAllocator::new(1024, 64);
-        assert_eq!(RingAllocation::Normal(0, 500), buffer.allocate(500));
-        assert_eq!((0, 512), buffer.commit_range());
-        buffer.commited();
-        assert_eq!(RingAllocation::Normal(512, 500), buffer.allocate(500));
-        assert_eq!((512, 512), buffer.commit_range());
-        buffer.commited();
-        assert_eq!(RingAllocation::Normal(0, 128), buffer.allocate(128));
-        assert_eq!((0, 128), buffer.commit_range());
+        let buffer = RingAllocator::new(1024, 64);
+        assert_eq!(MemoryBlock::new(0, 500), buffer.allocate(500));
+        assert_eq!(MemoryBlock::new(512, 500), buffer.allocate(500));
+        assert_eq!(MemoryBlock::new(0, 128), buffer.allocate(128));
     }
 }
