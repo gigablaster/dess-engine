@@ -13,9 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
-
-
 use ash::vk;
 use log::debug;
 
@@ -334,9 +331,12 @@ mod test {
     fn ring_partial_commit() {
         let mut buffer = RingAllocator::new(1024, 64);
         assert_eq!(RingAllocation::Normal(0, 500), buffer.allocate(500));
+        assert_eq!((0, 512), buffer.commit_range());
         buffer.commited();
         assert_eq!(RingAllocation::Normal(512, 500), buffer.allocate(500));
+        assert_eq!((512, 512), buffer.commit_range());
         buffer.commited();
         assert_eq!(RingAllocation::Normal(0, 128), buffer.allocate(128));
+        assert_eq!((0, 128), buffer.commit_range());
     }
 }
