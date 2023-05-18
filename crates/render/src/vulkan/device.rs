@@ -227,6 +227,9 @@ impl Device {
     fn commit_staging(&self) -> BackendResult<()> {
         puffin::profile_scope!("commit staging");
         let mut staging = self.staging.lock().unwrap();
+        if staging.is_empty() {
+            return Ok(());
+        }
         self.setup_cb.wait(&self.raw)?;
         self.setup_cb.reset(&self.raw)?;
         {

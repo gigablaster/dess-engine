@@ -141,6 +141,10 @@ impl Staging {
         Ok(())
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.upload_buffers.is_empty() && self.upload_images.is_empty()
+    }
+
     pub fn upload(
         &mut self,
         device: &ash::Device,
@@ -148,9 +152,6 @@ impl Staging {
         transfer_queue_index: u32,
         graphics_queue_index: u32,
     ) {
-        if self.upload_buffers.is_empty() && self.upload_images.is_empty() {
-            return;
-        }
         if self.mapping.is_some() {
             self.unmap_buffer(device);
             self.mapping = None;
