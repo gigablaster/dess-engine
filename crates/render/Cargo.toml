@@ -12,17 +12,21 @@ arrayvec = "0.7"
 vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
 puffin = "0.15"
 rspirv = "0.11"
-rspirv-reflect = "0.7"
+rspirv-reflect = "0.8"
 byte-slice-cast = "1.2"
 glam = "0.24"
 
 [[example]]
 name = "vk-clear"
 
-#[[example]]
-#name = "vk-triangle"
+[[example]]
+name = "vk-triangle"
+
+[[example]]
+name = "vk-texture"
 
 [dev-dependencies]
 simple_logger = "4.0"
 puffin_http = "0.12"
 vfs = { path = "../vfs" }
+image = "0.24"

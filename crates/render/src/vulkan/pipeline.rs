@@ -13,13 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ffi::{CStr, CString}, mem::size_of, slice};
+use std::{ffi::CString, mem::size_of, slice, sync::Arc};
 
+use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
-use super::{BackendError, BackendResult, FreeGpuResource, RenderPass};
+use super::{BackendError, BackendResult, Device, FreeGpuResource, RenderPass, SamplerDesc};
+
+const MAX_SAMPLERS: usize = 16;
 
 pub struct ShaderDesc<'a> {
     pub stage: vk::ShaderStageFlags,
@@ -59,31 +62,36 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn new(device: &ash::Device, desc: ShaderDesc) -> BackendResult<Self> {
+    pub fn new(device: &Arc<Device>, desc: ShaderDesc, name: Option<&str>) -> BackendResult<Self> {
         let shader_create_info = vk::ShaderModuleCreateInfo::builder()
             .code(desc.code.as_slice_of::<u32>().unwrap())
             .build();
 
-        let shader = unsafe { device.create_shader_module(&shader_create_info, None) }?;
+        let shader = unsafe { device.raw.create_shader_module(&shader_create_info, None) }?;
+        if let Some(name) = name {
+            device.set_object_name(shader, name)?;
+        }
 
         Ok(Self {
             stage: desc.stage,
             raw: shader,
             layouts: Self::create_descriptor_set_layouts(device, desc.stage, desc.code)?,
-            entry: CString::new(desc.entry).unwrap()
+            entry: CString::new(desc.entry).unwrap(),
         })
     }
 
     fn create_descriptor_set_layouts(
-        device: &ash::Device,
+        device: &Device,
         stage: vk::ShaderStageFlags,
         code: &[u8],
     ) -> BackendResult<Vec<vk::DescriptorSetLayout>> {
         let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
         let sets = info.get_descriptor_sets()?;
+        dbg!(&sets);
         let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
         let mut layouts = Vec::with_capacity(8);
         let create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
+        let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
         for index in 0..set_count {
             let set = sets.get(&index);
             if let Some(set) = set {
@@ -99,6 +107,23 @@ impl Shader {
                         }
                         rspirv_reflect::DescriptorType::SAMPLED_IMAGE => bindings
                             .push(Self::create_sampled_image_binding(*index, stage, binding)),
+                        rspirv_reflect::DescriptorType::SAMPLER | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                            let sampler_index = samplers.len();
+                            samplers.push(
+                                device
+                                    .get_sampler(SamplerDesc {
+                                        texel_filter: vk::Filter::LINEAR,
+                                        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                                        address_mode: vk::SamplerAddressMode::REPEAT,
+                                    })
+                                    .unwrap(),
+                            );
+                            bindings.push(Self::create_sampler_binding(
+                                *index,
+                                stage,
+                                &samplers[sampler_index],
+                            ));
+                        }
                         _ => unimplemented!("{:?}", binding),
                     }
                 }
@@ -106,11 +131,12 @@ impl Shader {
                     .flags(create_flags)
                     .bindings(&bindings)
                     .build();
-                let layout = unsafe { device.create_descriptor_set_layout(&layout_info, None) }?;
+                let layout =
+                    unsafe { device.raw.create_descriptor_set_layout(&layout_info, None) }?;
                 layouts.push(layout);
             } else {
                 let layout = unsafe {
-                    device.create_descriptor_set_layout(
+                    device.raw.create_descriptor_set_layout(
                         &vk::DescriptorSetLayoutCreateInfo::builder().build(),
                         None,
                     )
@@ -164,10 +190,27 @@ impl Shader {
             .stage_flags(stage)
             .build()
     }
+
+    fn create_sampler_binding(
+        index: u32,
+        stage: vk::ShaderStageFlags,
+        sampler: &vk::Sampler,
+    ) -> vk::DescriptorSetLayoutBinding {
+        vk::DescriptorSetLayoutBinding::builder()
+            .binding(index)
+            .descriptor_count(1)
+            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .stage_flags(stage)
+            .immutable_samplers(slice::from_ref(sampler))
+            .build()
+    }
 }
 
 impl FreeGpuResource for Shader {
     fn free(&self, device: &ash::Device) {
+        self.layouts.iter().for_each(|layout| {
+            unsafe { device.destroy_descriptor_set_layout(*layout, None) };
+        });
         unsafe { device.destroy_shader_module(self.raw, None) }
     }
 }

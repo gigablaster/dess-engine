@@ -102,13 +102,15 @@ fn main() -> Result<(), String> {
 
     let vertex_shader = Shader::new(
         &device,
-        ShaderDesc::vertex(vfs::get("shaders/simple.vert.spv").unwrap().data()),
+        ShaderDesc::vertex(vfs::get("shaders/unlit.vert.spv").unwrap().data()),
+        Some("vert")
     )
     .unwrap();
 
     let fragment_shader = Shader::new(
         &device,
-        ShaderDesc::fragment(vfs::get("shaders/simple.frag.spv").unwrap().data()),
+        ShaderDesc::fragment(vfs::get("shaders/unlit.frag.spv").unwrap().data()),
+        Some("frag")
     )
     .unwrap();
 
@@ -230,7 +232,7 @@ fn main() -> Result<(), String> {
                 )];
                 {
                     let pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
-                    let render_area = swapchain.render_area();
+                    /*let render_area = swapchain.render_area();
                     pass.set_scissor(render_area);
                     pass.set_viewport(vk::Viewport {
                         x: 0.0,
@@ -243,7 +245,7 @@ fn main() -> Result<(), String> {
                     pass.bind_pipeline(&pipeline);
                     pass.bind_index_buffer(&index_buffer);
                     pass.bind_vertex_buffer(&vertex_buffer);
-                    pass.draw(3, 1, 0, 0);
+                    pass.draw(3, 1, 0, 0);*/
                 }
             }
             device
