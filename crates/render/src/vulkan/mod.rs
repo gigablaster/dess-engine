@@ -25,7 +25,6 @@ mod memory;
 mod physical_device;
 mod pipeline;
 mod render_pass;
-mod shader;
 mod staging;
 mod swapchain;
 
@@ -39,7 +38,6 @@ pub use instance::*;
 pub use physical_device::*;
 pub use pipeline::*;
 pub use render_pass::*;
-pub use shader::*;
 pub use swapchain::*;
 
 pub trait FreeGpuResource {
