@@ -22,8 +22,8 @@ use glam::Vec3;
 use render::vulkan::{
     create_pipeline_cache, BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList,
     Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment,
-    RenderPassAttachmentDesc, RenderPassLayout, Shader, SubImage, SubmitWaitDesc, Surface,
-    Swapchain,
+    RenderPassAttachmentDesc, RenderPassLayout, Shader, ShaderDesc, SubImage, SubmitWaitDesc,
+    Surface, Swapchain,
 };
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
@@ -100,15 +100,15 @@ fn main() -> Result<(), String> {
 
     let device = Device::create(instance, pdevice).unwrap();
 
-    let vertex_shader = Shader::vertex(
+    let vertex_shader = Shader::new(
         &device.raw,
-        vfs::get("shaders/simple.vert.spv").unwrap().data(),
+        ShaderDesc::vertex(vfs::get("shaders/simple.vert.spv").unwrap().data()),
     )
     .unwrap();
 
-    let fragment_shader = Shader::fragment(
+    let fragment_shader = Shader::new(
         &device.raw,
-        vfs::get("shaders/simple.frag.spv").unwrap().data(),
+        ShaderDesc::fragment(vfs::get("shaders/simple.frag.spv").unwrap().data()),
     )
     .unwrap();
 

@@ -13,42 +13,65 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ffi::CStr, mem::size_of, slice, collections::HashMap};
+use std::{ffi::{CStr, CString}, mem::size_of, slice};
 
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
-use rspirv_reflect::{DescriptorInfo, BindingCount};
+use rspirv_reflect::{BindingCount, DescriptorInfo};
 
 use super::{BackendError, BackendResult, FreeGpuResource, RenderPass};
+
+pub struct ShaderDesc<'a> {
+    pub stage: vk::ShaderStageFlags,
+    pub entry: &'a str,
+    pub code: &'a [u8],
+}
+
+impl<'a> ShaderDesc<'a> {
+    pub fn vertex(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::VERTEX,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn fragment(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn entry(mut self, entry: &'a str) -> Self {
+        self.entry = entry;
+        self
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Shader {
     pub raw: vk::ShaderModule,
     pub stage: vk::ShaderStageFlags,
     pub layouts: Vec<vk::DescriptorSetLayout>,
+    pub entry: CString,
 }
 
 impl Shader {
-    fn new(device: &ash::Device, stage: vk::ShaderStageFlags, code: &[u8]) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, desc: ShaderDesc) -> BackendResult<Self> {
         let shader_create_info = vk::ShaderModuleCreateInfo::builder()
-            .code(code.as_slice_of::<u32>().unwrap())
+            .code(desc.code.as_slice_of::<u32>().unwrap())
             .build();
 
         let shader = unsafe { device.create_shader_module(&shader_create_info, None) }?;
 
         Ok(Self {
-            stage,
+            stage: desc.stage,
             raw: shader,
-            layouts: Self::create_descriptor_set_layouts(device, stage, code)?,
+            layouts: Self::create_descriptor_set_layouts(device, desc.stage, desc.code)?,
+            entry: CString::new(desc.entry).unwrap()
         })
-    }
-
-    pub fn vertex(device: &ash::Device, code: &[u8]) -> BackendResult<Self> {
-        Self::new(device, vk::ShaderStageFlags::VERTEX, code)
-    }
-
-    pub fn fragment(device: &ash::Device, code: &[u8]) -> BackendResult<Self> {
-        Self::new(device, vk::ShaderStageFlags::FRAGMENT, code)
     }
 
     fn create_descriptor_set_layouts(
@@ -223,7 +246,6 @@ impl Pipeline {
         cache: &vk::PipelineCache,
         desc: PipelineDesc,
     ) -> BackendResult<Self> {
-        let entry = CStr::from_bytes_with_nul(b"main\0").unwrap();
         let shader_create_info = desc
             .shaders
             .iter()
@@ -231,7 +253,7 @@ impl Pipeline {
                 vk::PipelineShaderStageCreateInfo::builder()
                     .stage(shader.stage)
                     .module(shader.raw)
-                    .name(entry)
+                    .name(&shader.entry)
                     .build()
             })
             .collect::<Vec<_>>();
