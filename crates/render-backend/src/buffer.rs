@@ -14,181 +14,120 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{mem::size_of, ptr::copy_nonoverlapping};
+use std::{mem::size_of, ptr::copy_nonoverlapping, sync::Arc};
 
-use ash::vk;
+use ash::vk::{self, BufferCreateInfo};
+use gpu_alloc::{UsageFlags, MemoryBlock, Request};
+use gpu_alloc_ash::AshMemoryDevice;
+use gpu_descriptor_ash::AshDescriptorDevice;
 use log::debug;
+
+use crate::Device;
 
 use super::{
     memory::{allocate_vram, DynamicAllocator, RingAllocator},
     BackendResult, FreeGpuResource, PhysicalDevice,
 };
 
-#[derive(Debug, Copy, Clone, Default, Eq, PartialEq)]
+#[derive(Debug)]
+pub struct BufferDesc {
+    pub size: usize,
+    pub usage: vk::BufferUsageFlags,
+    pub memory_location: UsageFlags,
+    pub alignment: Option<u64>
+}
+
+impl BufferDesc {
+    pub fn gpu_only(size: usize, usage: vk::BufferUsageFlags) -> Self {
+        Self {
+            size,
+            usage,
+            memory_location: UsageFlags::FAST_DEVICE_ACCESS,
+            alignment: None
+        }
+    }
+
+    pub fn host_only(size: usize, usage: vk::BufferUsageFlags) -> Self {
+        Self {
+            size,
+            usage,
+            memory_location: UsageFlags::HOST_ACCESS,
+            alignment: None
+        }
+    }
+
+    pub fn upload(size: usize, usage: vk::BufferUsageFlags) -> Self {
+        Self {
+            size,
+            usage,
+            memory_location: UsageFlags::UPLOAD,
+            alignment: None
+        }
+    }
+
+    pub fn aligment(mut self, aligment: u64) -> Self {
+        self.alignment = Some(aligment);
+        self
+    }
+}
+
+#[derive(Debug)]
 pub struct Buffer {
-    pub buffer: vk::Buffer,
-    pub offset: u64,
-    pub size: u64,
+    device: Arc<Device>,
+    pub raw: vk::Buffer,
+    pub desc: BufferDesc,
+    pub allocation: Option<MemoryBlock<vk::DeviceMemory>>
 }
 
 impl Buffer {
-    pub fn new(buffer: vk::Buffer, offset: u64, size: u64) -> Self {
-        Self {
-            buffer,
-            offset,
-            size,
-        }
-    }
-}
-
-/// Giant buffer that used for all static geometry data.
-/// Clients are supposed to suballocate buffers by calling alloc and
-/// free them by calling free.
-pub struct BufferAllocator {
-    buffer: vk::Buffer,
-    memory: vk::DeviceMemory,
-    allocator: DynamicAllocator,
-}
-
-impl BufferAllocator {
-    pub fn new(
-        device: &ash::Device,
-        pdevice: &PhysicalDevice,
-        size: u64,
-        flags: vk::BufferUsageFlags,
-    ) -> BackendResult<Self> {
-        let create_info = vk::BufferCreateInfo::builder()
-            .size(size)
-            .usage(flags)
+    pub(crate) fn new(device: &Arc<Device>, desc: BufferDesc, queue_family_index: u32,  name: Option<&str>) -> BackendResult<Self> {
+        let buffer_create_info = BufferCreateInfo::builder()
+            .size(desc.size as _)
+            .usage(desc.usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .queue_family_indices(slice::from_ref(&queue_family_index))
             .build();
-
-        let buffer = unsafe { device.create_buffer(&create_info, None) }?;
-        let requirement = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let (_, memory) = allocate_vram(
-            device,
-            pdevice,
-            requirement.size,
-            requirement.memory_type_bits,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-            None,
-        )?;
-        unsafe { device.bind_buffer_memory(buffer, memory, 0) }?;
-        let allocator = DynamicAllocator::new(size, 64.max(requirement.alignment));
-
-        Ok(Self {
-            buffer,
-            memory,
-            allocator,
-        })
-    }
-
-    pub fn allocate(&mut self, size: u64) -> BackendResult<Buffer> {
-        let block = self.allocator.alloc(size)?;
-        debug!("Allocate buffer size {}", size);
-        Ok(Buffer {
-            buffer: self.buffer,
-            offset: block.offset as _,
-            size: block.size as _,
-        })
-    }
-
-    pub fn free(&mut self, buffer: Buffer) -> BackendResult<()> {
-        self.allocator.free(buffer.offset as _)?;
-
-        Ok(())
-    }
-}
-
-impl FreeGpuResource for BufferAllocator {
-    fn free(&self, device: &ash::Device) {
-        unsafe {
-            device.free_memory(self.memory, None);
-            device.destroy_buffer(self.buffer, None);
-        }
-    }
-}
-
-pub struct RingBuffer {
-    buffer: vk::Buffer,
-    memory: vk::DeviceMemory,
-    size: u64,
-    ring: RingAllocator,
-    mapping: *mut u8,
-}
-
-impl RingBuffer {
-    pub fn new(
-        device: &ash::Device,
-        pdevice: &PhysicalDevice,
-        size: u64,
-        flags: vk::BufferUsageFlags,
-    ) -> BackendResult<Self> {
-        let buffer_info = vk::BufferCreateInfo::builder()
-            .usage(flags)
-            .size(size)
-            .build();
-        let buffer = unsafe { device.create_buffer(&buffer_info, None) }?;
-        let requirement = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let (_, memory) = allocate_vram(
-            device,
-            pdevice,
-            requirement.size,
-            requirement.memory_type_bits,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL | vk::MemoryPropertyFlags::HOST_VISIBLE,
-            None,
-        )?;
-        unsafe { device.bind_buffer_memory(buffer, memory, 0) }?;
-        let ring = RingAllocator::new(
-            size,
-            pdevice
-                .properties
-                .limits
-                .min_uniform_buffer_offset_alignment,
-        );
-        let mapping =
-            unsafe { device.map_memory(memory, 0, size, vk::MemoryMapFlags::empty())? as *mut u8 };
-
-        Ok(Self {
-            buffer,
-            ring,
-            size,
-            memory,
-            mapping,
-        })
-    }
-
-    pub fn push<T: Sized>(&self, data: &[T]) -> Buffer {
-        let size = (size_of::<T>() * data.len()) as u64;
-        let block = self.ring.allocate(size);
-        unsafe {
-            copy_nonoverlapping(
-                data.as_ptr() as *const u8,
-                self.mapping.add(block.offset as _),
-                size as _,
-            )
+        let buffer = unsafe { device.raw.create_buffer(&buffer_create_info, None) }?;
+        let requirement = unsafe { device.raw.get_buffer_memory_requirements(buffer) };
+        let aligment = if let Some(aligment) = desc.alignment {
+            aligment.max(requirement.alignment)
+        } else {
+            requirement.alignment
         };
+        let allocation = unsafe { device.allocator().alloc(AshMemoryDevice::wrap(&device.raw), Request {
+            size: requirement.size,
+            align_mask: aligment,
+            memory_types: requirement.memory_type_bits,
+            usage: desc.memory_location
+        }) }?;
+        unsafe { device.raw.bind_buffer_memory(buffer, *allocation.memory(), allocation.offset()) }?;
 
-        Buffer::new(self.buffer, block.offset, block.size)
+        Ok(Self {
+            device: device.clone(),
+            raw: buffer,
+            desc,
+            allocation: Some(allocation)
+        })
+    }
+}
+
+pub trait BufferView {
+    fn buffer(&self) -> vk::Buffer;
+    fn offset(&self) -> u64;
+    fn size(&self) -> u64;
+}
+
+impl BufferView for Buffer {
+    fn buffer(&self) -> vk::Buffer {
+        self.raw
     }
 
-    pub fn commit(&self, device: &ash::Device) -> BackendResult<()> {
-        let range = vk::MappedMemoryRange::builder()
-            .size(self.size)
-            .offset(0)
-            .memory(self.memory)
-            .build();
-        unsafe { device.flush_mapped_memory_ranges(slice::from_ref(&range)) }?;
+    fn offset(&self) -> u64 {
+        0
+    }
 
-        Ok(())
+    fn size(&self) -> u64 {
+        self.desc.size as _
     }
 }
 
-impl FreeGpuResource for RingBuffer {
-    fn free(&self, device: &ash::Device) {
-        unsafe {
-            device.free_memory(self.memory, None);
-            device.destroy_buffer(self.buffer, None);
-        }
-    }
-}

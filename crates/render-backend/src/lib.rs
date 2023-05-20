@@ -21,7 +21,6 @@ mod error;
 mod frame_context;
 mod image;
 mod instance;
-mod memory;
 mod physical_device;
 mod pipeline;
 mod render_pass;
@@ -29,12 +28,14 @@ mod staging;
 mod swapchain;
 
 pub use self::image::*;
+use ash::vk;
 pub use buffer::*;
 pub use command_buffer::*;
 pub use device::*;
 pub use error::*;
 pub use frame_context::*;
 pub use instance::*;
+use log::debug;
 pub use physical_device::*;
 pub use pipeline::*;
 pub use render_pass::*;
@@ -43,3 +44,48 @@ pub use swapchain::*;
 pub trait FreeGpuResource {
     fn free(&self, device: &ash::Device);
 }
+
+fn allocate_vram(
+    device: &ash::Device,
+    pdevice: &PhysicalDevice,
+    size: u64,
+    mask: u32,
+    desired_flags: vk::MemoryPropertyFlags,
+    required_flags: Option<vk::MemoryPropertyFlags>,
+) -> BackendResult<vk::DeviceMemory> {
+    let mut index = find_memory(pdevice, mask, desired_flags);
+    if index.is_none() {
+        if let Some(required_flags) = required_flags {
+            index = find_memory(pdevice, mask, required_flags);
+        }
+    }
+
+    if let Some(index) = index {
+        let alloc_info = vk::MemoryAllocateInfo::builder()
+            .allocation_size(size)
+            .memory_type_index(index)
+            .build();
+        let mem = unsafe { device.allocate_memory(&alloc_info, None) }?;
+
+        debug!(
+            "Allocate {} bytes flags {:?}/{:?} type {}",
+            size, desired_flags, required_flags, index
+        );
+
+        Ok(mem)
+    } else {
+        Err(BackendError::VramTypeNotFound)
+    }
+}
+
+fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFlags) -> Option<u32> {
+    let memory_prop = pdevice.memory_properties;
+    memory_prop.memory_types[..memory_prop.memory_type_count as _]
+        .iter()
+        .enumerate()
+        .find(|(index, memory_type)| {
+            (1 << index) & mask != 0 && memory_type.property_flags & flags == flags
+        })
+        .map(|(index, _memory_type)| index as _)
+}
+

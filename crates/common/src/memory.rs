@@ -15,12 +15,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use ash::vk;
-use log::debug;
-
-use crate::BackendError;
-
-use super::{BackendResult, PhysicalDevice};
+use crate::Align;
 
 #[derive(Debug, Clone, Copy)]
 struct BlockData(u64, u64);
@@ -29,18 +24,6 @@ struct BlockData(u64, u64);
 enum Block {
     Free(BlockData),
     Used(BlockData),
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub struct MemoryBlock {
-    pub offset: u64,
-    pub size: u64,
-}
-
-impl MemoryBlock {
-    pub fn new(offset: u64, size: u64) -> Self {
-        Self { offset, size }
-    }
 }
 
 /// Sub-buffer allocator for all in-game geometry.
@@ -77,10 +60,10 @@ impl DynamicAllocator {
         }
     }
 
-    pub fn alloc(&mut self, size: u64) -> Result<MemoryBlock, AllocError> {
+    pub fn alloc(&mut self, size: u64) -> Result<u64, AllocError> {
         if let Some(index) = self.find_free_block(size) {
             if let Some(offset) = self.split_and_insert_block(index, size) {
-                return Ok(MemoryBlock { offset, size });
+                return Ok(offset);
             }
         }
 
@@ -171,50 +154,6 @@ impl DynamicAllocator {
     }
 }
 
-pub fn allocate_vram(
-    device: &ash::Device,
-    pdevice: &PhysicalDevice,
-    size: u64,
-    mask: u32,
-    desired_flags: vk::MemoryPropertyFlags,
-    required_flags: Option<vk::MemoryPropertyFlags>,
-) -> BackendResult<(u32, vk::DeviceMemory)> {
-    let mut index = find_memory(pdevice, mask, desired_flags);
-    if index.is_none() {
-        if let Some(required_flags) = required_flags {
-            index = find_memory(pdevice, mask, required_flags);
-        }
-    }
-
-    if let Some(index) = index {
-        let alloc_info = vk::MemoryAllocateInfo::builder()
-            .allocation_size(size)
-            .memory_type_index(index)
-            .build();
-        let mem = unsafe { device.allocate_memory(&alloc_info, None) }?;
-
-        debug!(
-            "Allocate {} bytes flags {:?}/{:?} type {}",
-            size, desired_flags, required_flags, index
-        );
-
-        Ok((index, mem))
-    } else {
-        Err(BackendError::VramTypeNotFund)
-    }
-}
-
-fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFlags) -> Option<u32> {
-    let memory_prop = pdevice.memory_properties;
-    memory_prop.memory_types[..memory_prop.memory_type_count as _]
-        .iter()
-        .enumerate()
-        .find(|(index, memory_type)| {
-            (1 << index) & mask != 0 && memory_type.property_flags & flags == flags
-        })
-        .map(|(index, _memory_type)| index as _)
-}
-
 pub struct RingAllocator {
     size: u64,
     aligment: u64,
@@ -230,7 +169,7 @@ impl RingAllocator {
         }
     }
 
-    pub fn allocate(&self, size: u64) -> MemoryBlock {
+    pub fn allocate(&self, size: u64) -> u64 {
         assert!(size <= self.size);
         let aligned_size = align(size, self.aligment);
         loop {
@@ -246,27 +185,55 @@ impl RingAllocator {
                 .compare_exchange(old_head, new_head, Ordering::Release, Ordering::Acquire)
                 .is_ok()
             {
-                return MemoryBlock { offset: head, size };
+                return head;
             }
         }
     }
 }
 
+pub struct BumpAllocator {
+    size: u64,
+    top: u64,
+    aligment: u64
+}
+
+impl BumpAllocator {
+    pub fn new(size: u64, aligment: u64) -> Self {
+        Self {
+            size,
+            aligment,
+            top: 0
+        }
+    }
+
+    pub fn allocate(&mut self, size: u64) -> Option<u64> {
+        let base = self.top.align(self.aligment);
+        if base + size > self.size {
+            None
+        } else {
+            self.top = base + size;
+            Some(base)
+        }
+    }
+
+    pub fn reset(&mut self) {
+        self.top = 0;
+    }
+}
+
 #[cfg(test)]
 mod test {
-    use crate::vulkan::memory::{MemoryBlock, RingAllocator};
+    use crate::memory::RingAllocator;
 
-    use super::DynamicAllocator;
+    use super::{DynamicAllocator, BumpAllocator};
 
     #[test]
     fn alloc() {
         let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let block2 = allocator.alloc(200).unwrap();
-        assert_eq!(0, block1.offset);
-        assert_eq!(100, block1.size);
-        assert_eq!(128, block2.offset);
-        assert_eq!(200, block2.size);
+        assert_eq!(0, block1);
+        assert_eq!(128, block2);
     }
 
     #[test]
@@ -274,11 +241,10 @@ mod test {
         let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1.offset).unwrap();
-        allocator.free(block2.offset).unwrap();
+        allocator.free(block1).unwrap();
+        allocator.free(block2).unwrap();
         let block = allocator.alloc(300).unwrap();
-        assert_eq!(0, block.offset);
-        assert_eq!(300, block.size);
+        assert_eq!(0, block);
     }
 
     #[test]
@@ -286,10 +252,9 @@ mod test {
         let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let _block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1.offset).unwrap();
+        allocator.free(block1).unwrap();
         let block = allocator.alloc(300).unwrap();
-        assert_eq!(384, block.offset);
-        assert_eq!(300, block.size);
+        assert_eq!(384, block);
     }
 
     #[test]
@@ -298,13 +263,11 @@ mod test {
         allocator.alloc(100).unwrap();
         let block = allocator.alloc(200).unwrap();
         allocator.alloc(100).unwrap();
-        allocator.free(block.offset).unwrap();
+        allocator.free(block).unwrap();
         let block1 = allocator.alloc(50).unwrap();
         let block2 = allocator.alloc(50).unwrap();
-        assert_eq!(128, block1.offset);
-        assert_eq!(50, block1.size);
-        assert_eq!(192, block2.offset);
-        assert_eq!(50, block2.size);
+        assert_eq!(128, block1);
+        assert_eq!(192, block2);
     }
 
     #[test]
@@ -316,10 +279,24 @@ mod test {
     }
 
     #[test]
-    fn ring_alloc_overflow() {
+    fn ring_allocator() {
         let buffer = RingAllocator::new(1024, 64);
-        assert_eq!(MemoryBlock::new(0, 500), buffer.allocate(500));
-        assert_eq!(MemoryBlock::new(512, 500), buffer.allocate(500));
-        assert_eq!(MemoryBlock::new(0, 128), buffer.allocate(128));
+        assert_eq!(0, buffer.allocate(500));
+        assert_eq!(512, buffer.allocate(500));
+        assert_eq!(0, buffer.allocate(128));
+    }
+
+    #[test]
+    fn bump_allocator() {
+        let mut allocator = BumpAllocator::new(1024, 64);
+        assert_eq!(Some(0), allocator.allocate(500));
+        assert_eq!(Some(512), allocator.allocate(100));
+        assert_eq!(Some(640), allocator.allocate(100));
+        assert_eq!(None, allocator.allocate(500));
+        allocator.reset();
+        assert_eq!(Some(0), allocator.allocate(500));
+        assert_eq!(Some(512), allocator.allocate(100));
+        assert_eq!(Some(640), allocator.allocate(100));
+        assert_eq!(None, allocator.allocate(500));
     }
 }

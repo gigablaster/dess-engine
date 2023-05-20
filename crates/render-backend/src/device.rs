@@ -18,9 +18,8 @@ use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     fmt::Debug,
-    mem::size_of,
     slice::{self, from_raw_parts},
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, MutexGuard},
 };
 
 use arrayvec::ArrayVec;
@@ -28,21 +27,18 @@ use ash::{
     extensions::khr,
     vk::{self, Handle},
 };
+use gpu_alloc::{GpuAllocator, Config};
+use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
-use crate::{staging::Staging, BackendError, BufferAllocator, ImageAllocator};
+use crate::{staging::Staging, BackendError, BufferView};
 
 use super::{
     droplist::DropList, staging::StagingError, BackendResult, Buffer, CommandBuffer, FrameContext,
-    FreeGpuResource, ImageMemory, Instance, PhysicalDevice, QueueFamily, RingBuffer,
+    FreeGpuResource, Instance, PhysicalDevice, QueueFamily,
 };
 
 const STAGING_SIZE: u64 = 32 * 1024 * 1024;
-const BUFFER_CACHE_SIZE: u64 = 64 * 1024 * 1024;
-const IMAGE_CHUNK_SIZE: u64 = 256 * 1024 * 1024;
-const IMAGE_CHUNK_THRESHOLD: u64 = 2 * 1024 * 1024;
-const UNIFORM_BUFFER_SIZE: u64 = 8 * 1024 * 1024;
-const DYN_GEO_BUFFER_SIZE: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -72,11 +68,8 @@ pub struct Device {
     setup_cb: CommandBuffer,
     frames: [Mutex<Arc<FrameContext>>; 2],
     drop_lists: [Mutex<DropList>; 2],
-    geo_cache: Mutex<BufferAllocator>,
-    image_cache: Mutex<ImageAllocator>,
-    uniform_buffer: RingBuffer,
-    dynamic_buffer: RingBuffer,
     staging: Mutex<Staging>,
+    allocator: Mutex<GpuAllocator<vk::DeviceMemory>>,
 }
 
 impl Device {
@@ -145,28 +138,19 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
-        let image_cache = ImageAllocator::new(IMAGE_CHUNK_SIZE, IMAGE_CHUNK_THRESHOLD);
-        let geo_cache = BufferAllocator::new(
-            &device,
-            &pdevice,
-            BUFFER_CACHE_SIZE,
-            vk::BufferUsageFlags::VERTEX_BUFFER
-                | vk::BufferUsageFlags::INDEX_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_DST,
-        )?;
-        let staging = Staging::new(&device, &pdevice, STAGING_SIZE)?;
-        let uniform_buffer = RingBuffer::new(
-            &device,
-            &pdevice,
-            UNIFORM_BUFFER_SIZE,
-            vk::BufferUsageFlags::UNIFORM_BUFFER,
-        )?;
-        let dynamic_buffer = RingBuffer::new(
-            &device,
-            &pdevice,
-            DYN_GEO_BUFFER_SIZE,
-            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
-        )?;
+        let staging = Staging::new(&device, &pdevice, STAGING_SIZE, graphics_queue.index, transfer_queue.index)?;
+
+        let allocator_config = Config {
+            dedicated_threshold: 64 * 1024 * 1024,
+            preferred_dedicated_threshold: 32 * 1024 * 1024,
+            transient_dedicated_threshold: 32 * 1024 * 1024,
+            final_free_list_chunk: 1024 * 1024,
+            minimal_buddy_size: 128,
+            starting_free_list_chunk: 16 * 1024,
+            initial_buddy_dedicated_size: 32 * 1024 * 1024
+        };
+        let allocator_props = unsafe { device_properties(&instance.raw, Instance::vulkan_version() , pdevice.raw) }?;
+        let allocator = GpuAllocator::new(allocator_config, allocator_props);
 
         Ok(Arc::new(Self {
             instance,
@@ -179,11 +163,8 @@ impl Device {
             frames,
             drop_lists,
             setup_pool,
-            image_cache: Mutex::new(image_cache),
-            geo_cache: Mutex::new(geo_cache),
             staging: Mutex::new(staging),
-            uniform_buffer,
-            dynamic_buffer,
+            allocator: Mutex::new(allocator)
         }))
     }
 
@@ -253,8 +234,6 @@ impl Device {
             staging.upload(
                 &self.raw,
                 self.setup_cb.raw,
-                self.transfer_queue.family.index,
-                self.graphics_queue.family.index,
             );
         }
         self.submit_transfer(&self.setup_cb, &[], &[])?;
@@ -274,15 +253,10 @@ impl Device {
                         u64::MAX,
                     )
                 }?;
-                let mut image_cache = self.image_cache.lock().unwrap();
-                let mut geo_cache = self.geo_cache.lock().unwrap();
                 self.drop_lists[0].lock().unwrap().free(
                     &self.raw,
-                    &mut image_cache,
-                    &mut geo_cache,
+                    &mut self.allocator()
                 );
-                self.uniform_buffer.commit(&self.raw)?;
-                self.dynamic_buffer.commit(&self.raw)?;
                 frame0.reset(&self.raw)?;
             } else {
                 return Err(BackendError::Other(
@@ -395,28 +369,7 @@ impl Device {
         Ok(())
     }
 
-    pub fn create_buffer(&self, size: usize) -> BackendResult<Buffer> {
-        let mut geo_cache = self.geo_cache.lock().unwrap();
-        geo_cache.allocate(size as _)
-    }
-
-    pub fn drop_buffer(&self, buffer: Buffer) {
-        self.with_drop_list(|drop_list| {
-            drop_list.drop_buffer(buffer);
-        });
-    }
-
-    pub fn create_buffer_from<T: Sized>(&self, data: &[T]) -> BackendResult<Buffer> {
-        let size = data.len() * size_of::<T>();
-        let buffer = self.create_buffer(size)?;
-        let ptr = data.as_ptr() as *const u8;
-        let data = unsafe { from_raw_parts(ptr, size) };
-        self.upload_buffer(&buffer, data)?;
-
-        Ok(buffer)
-    }
-
-    pub fn upload_buffer(&self, buffer: &Buffer, data: &[u8]) -> BackendResult<()> {
+    pub fn upload_buffer(&self, buffer: &impl BufferView, data: &[u8]) -> BackendResult<()> {
         let mut staging = self.staging.lock().unwrap();
         match staging.upload_buffer(&self.raw, buffer, data) {
             Ok(_) => Ok(()),
@@ -438,37 +391,21 @@ impl Device {
         }
     }
 
-    pub(crate) fn allocate_image(&self, image: vk::Image) -> BackendResult<ImageMemory> {
-        let mut image_cache = self.image_cache.lock().unwrap();
-        let memory = image_cache.allocate(&self.raw, &self.pdevice, image)?;
-        unsafe {
-            self.raw
-                .bind_image_memory(image, memory.memory, memory.offset as _)
-        }?;
-
-        Ok(memory)
-    }
-
-    pub fn push_uniforms<T: Sized>(&self, data: &[T]) -> Buffer {
-        self.uniform_buffer.push(data)
-    }
-
-    pub fn push_dynamic_geo<T: Sized>(&self, data: &[T]) -> Buffer {
-        self.dynamic_buffer.push(data)
+    pub(crate) fn allocator(&self) -> MutexGuard<GpuAllocator<vk::DeviceMemory>> {
+        self.allocator.lock().unwrap()
     }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle().ok() };
-        let mut image_cache = self.image_cache.lock().unwrap();
-        let mut geo_cache = self.geo_cache.lock().unwrap();
         let staging = self.staging.lock().unwrap();
+        let mut allocator = self.allocator();
         self.setup_cb.free(&self.raw);
         unsafe { self.raw.destroy_command_pool(self.setup_pool, None) };
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
-            list.free(&self.raw, &mut image_cache, &mut geo_cache);
+            list.free(&self.raw, &mut allocator);
         });
         self.frames.iter().for_each(|frame| {
             let mut frame = frame.lock().unwrap();
@@ -479,10 +416,7 @@ impl Drop for Device {
             self.raw.destroy_sampler(*sampler, None);
         });
         staging.free(&self.raw);
-        image_cache.free(&self.raw);
-        geo_cache.free(&self.raw);
-        self.uniform_buffer.free(&self.raw);
-        self.dynamic_buffer.free(&self.raw);
+        unsafe { allocator.cleanup(AshMemoryDevice::wrap(&self.raw)) };
         unsafe { self.raw.destroy_device(None) };
     }
 }

@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::{vk, LoadingError};
+use gpu_alloc::AllocationError;
 use rspirv_reflect::ReflectError;
 
 use super::memory::AllocError;
@@ -22,13 +23,13 @@ use super::memory::AllocError;
 pub enum BackendError {
     Loading(LoadingError),
     Vulkan(vk::Result),
-    Allocation(AllocError),
+    Allocation(AllocationError),
     NoExtension(String),
     Other(String),
     Reflection(ReflectError),
     RecreateSwapchain,
     WaitForSurface,
-    VramTypeNotFund,
+    VramTypeNotFound,
 }
 
 impl From<LoadingError> for BackendError {
@@ -49,8 +50,8 @@ impl From<String> for BackendError {
     }
 }
 
-impl From<AllocError> for BackendError {
-    fn from(value: AllocError) -> Self {
+impl From<AllocationError> for BackendError {
+    fn from(value: AllocationError) -> Self {
         BackendError::Allocation(value)
     }
 }

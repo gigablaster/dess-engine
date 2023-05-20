@@ -16,12 +16,14 @@
 use std::{ptr::copy_nonoverlapping, slice};
 
 use ash::vk;
+use dess_common::{Align, memory::BumpAllocator};
 use log::debug;
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier};
 
+use crate::{BufferView, allocate_vram};
+
 use super::{
-    memory::{allocate_vram, DynamicAllocator},
-    BackendResult, Buffer, FreeGpuResource, PhysicalDevice,
+    BackendResult, FreeGpuResource, PhysicalDevice,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -46,7 +48,9 @@ pub struct Staging {
     memory: vk::DeviceMemory,
     size: u64,
     granularity: u64,
-    allocator: DynamicAllocator, // We supposed to use bump allocator but it will work in same way.
+    graphics_queue_index: u32,
+    transfer_queue_index: u32,
+    allocator: BumpAllocator,
     upload_buffers: Vec<BufferUploadRequest>,
     upload_images: Vec<BufferUploadRequest>,
     mapping: Option<*mut u8>,
@@ -65,15 +69,17 @@ impl From<vk::Result> for StagingError {
 }
 
 impl Staging {
-    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64, graphics_queue_index: u32, transfer_queue_index: u32) -> BackendResult<Self> {
         let buffer_info = vk::BufferCreateInfo::builder()
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .size(size)
             .flags(vk::BufferCreateFlags::empty())
+            .queue_family_indices(slice::from_ref(&transfer_queue_index))
             .build();
+
         let buffer = unsafe { device.create_buffer(&buffer_info, None) }?;
         let requirement = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let (_, memory) = allocate_vram(
+        let memory = allocate_vram(
             device,
             pdevice,
             requirement.size,
@@ -87,8 +93,10 @@ impl Staging {
             buffer,
             memory,
             size,
+            transfer_queue_index,
+            graphics_queue_index,
             granularity: pdevice.properties.limits.buffer_image_granularity,
-            allocator: DynamicAllocator::new(
+            allocator: BumpAllocator::new(
                 size,
                 pdevice.properties.limits.buffer_image_granularity,
             ),
@@ -112,24 +120,24 @@ impl Staging {
     pub fn upload_buffer(
         &mut self,
         device: &ash::Device,
-        buffer: &Buffer,
+        buffer: &impl BufferView,
         data: &[u8],
     ) -> Result<(), StagingError> {
         assert!(data.len() as u64 <= self.size);
-        assert_eq!(buffer.size, data.len() as u64);
+        assert_eq!(buffer.size(), data.len() as u64);
         if self.mapping.is_none() {
             self.mapping = Some(self.map_buffer(device)?);
         }
         let mapping = self.mapping.unwrap();
-        if let Ok(block) = self.allocator.alloc(data.len() as _) {
+        if let Some(offset) = self.allocator.allocate(data.len() as _) {
             unsafe {
-                copy_nonoverlapping(data.as_ptr(), mapping.add(block.offset as _), data.len())
+                copy_nonoverlapping(data.as_ptr(), mapping.add(offset as _), data.len())
             }
             let request = BufferUploadRequest {
-                dst: buffer.buffer,
-                src_offset: block.offset,
-                dst_offset: buffer.offset,
-                size: buffer.size,
+                dst: buffer.buffer(),
+                src_offset: offset,
+                dst_offset: buffer.offset(),
+                size: buffer.size(),
             };
             self.upload_buffers.push(request);
             debug!("Query buffer upload {:?}", request);
@@ -149,52 +157,38 @@ impl Staging {
         &mut self,
         device: &ash::Device,
         cb: vk::CommandBuffer,
-        transfer_queue_index: u32,
-        graphics_queue_index: u32,
     ) {
         if self.mapping.is_some() {
             self.unmap_buffer(device);
             self.mapping = None;
         }
 
-        // Move main buffer to transfer queue and keep it there
-        let barrier = BufferBarrier {
-            previous_accesses: &[AccessType::HostWrite, AccessType::TransferRead],
-            next_accesses: &[AccessType::HostWrite, AccessType::TransferRead],
-            src_queue_family_index: 0,
-            dst_queue_family_index: transfer_queue_index,
-            buffer: self.buffer,
-            offset: 0,
-            size: self.size as _,
-        };
-        pipeline_barrier(device, cb, None, &[barrier], &[]);
-
         // Record buffer uploads
         self.move_requests_to_queue(
-            &self.upload_buffers,
             device,
             cb,
-            graphics_queue_index,
-            transfer_queue_index,
+            &self.upload_buffers,
+            self.graphics_queue_index,
+            self.transfer_queue_index,
         );
         self.copy_buffers(&self.upload_buffers, device, cb);
         self.move_requests_to_queue(
-            &self.upload_buffers,
             device,
             cb,
-            transfer_queue_index,
-            graphics_queue_index,
+            &self.upload_buffers,
+            self.transfer_queue_index,
+            self.graphics_queue_index,
         );
 
-        self.allocator = DynamicAllocator::new(self.size, self.granularity);
+        self.allocator.reset();
         self.upload_buffers.clear();
     }
 
     fn move_requests_to_queue(
         &self,
-        requests: &[BufferUploadRequest],
         device: &ash::Device,
         cb: vk::CommandBuffer,
+        requests: &[BufferUploadRequest],
         from: u32,
         to: u32,
     ) {

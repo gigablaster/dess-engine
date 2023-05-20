@@ -16,6 +16,7 @@
 mod client;
 mod serialization;
 mod time;
+pub mod memory;
 
 pub mod traits;
 

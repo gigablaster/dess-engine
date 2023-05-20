@@ -18,6 +18,8 @@ use std::slice;
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 
+use crate::BufferView;
+
 use super::{
     BackendResult, Buffer, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass,
     MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
@@ -168,27 +170,27 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn copy_buffers_range(
         &self,
-        from: &Buffer,
-        to: &Buffer,
+        from: &impl BufferView,
+        to: &impl BufferView,
         source: usize,
         destination: usize,
         size: usize,
     ) {
-        assert!(source + size <= from.size as _);
-        assert!(destination + size <= to.size as _);
+        assert!(source + size <= from.size() as _);
+        assert!(destination + size <= to.size() as _);
         let region = vk::BufferCopy::builder()
-            .src_offset(source as _)
-            .dst_offset(destination as _)
+            .src_offset(from.offset() + source as u64)
+            .dst_offset(to.offset() + destination as u64)
             .size(size as _)
             .build();
         unsafe {
             self.device
-                .cmd_copy_buffer(*self.cb, from.buffer, to.buffer, slice::from_ref(&region))
+                .cmd_copy_buffer(*self.cb, from.buffer(), to.buffer(), slice::from_ref(&region))
         };
     }
 
-    pub fn copy_buffers(&self, from: &Buffer, to: &Buffer) {
-        self.copy_buffers_range(from, to, 0, 0, from.size as _);
+    pub fn copy_buffers(&self, from: &impl BufferView, to: &impl BufferView) {
+        self.copy_buffers_range(from, to, 0, 0, from.size() as _);
     }
 }
 
@@ -228,24 +230,24 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_index_buffer(&self, buffer: &Buffer) {
+    pub fn bind_index_buffer(&self, buffer: &impl BufferView) {
         unsafe {
             self.device.cmd_bind_index_buffer(
                 *self.cb,
-                buffer.buffer,
-                buffer.offset,
+                buffer.buffer(),
+                buffer.offset(),
                 vk::IndexType::UINT16,
             )
         };
     }
 
-    pub fn bind_vertex_buffer(&self, buffer: &Buffer) {
+    pub fn bind_vertex_buffer(&self, buffer: &impl BufferView) {
         unsafe {
             self.device.cmd_bind_vertex_buffers(
                 *self.cb,
                 0,
-                slice::from_ref(&buffer.buffer),
-                &[buffer.offset],
+                slice::from_ref(&buffer.buffer()),
+                &[buffer.offset()],
             )
         };
     }
