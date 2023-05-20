@@ -103,14 +103,14 @@ fn main() -> Result<(), String> {
     let vertex_shader = Shader::new(
         &device,
         ShaderDesc::vertex(vfs::get("shaders/unlit.vert.spv").unwrap().data()),
-        Some("vert")
+        Some("vert"),
     )
     .unwrap();
 
     let fragment_shader = Shader::new(
         &device,
         ShaderDesc::fragment(vfs::get("shaders/unlit.frag.spv").unwrap().data()),
-        Some("frag")
+        Some("frag"),
     )
     .unwrap();
 

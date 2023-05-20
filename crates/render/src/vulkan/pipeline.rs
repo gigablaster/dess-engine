@@ -13,7 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ffi::CString, mem::size_of, slice, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    ffi::CString,
+    mem::size_of,
+    slice,
+    sync::Arc,
+};
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -25,6 +31,8 @@ use super::{BackendError, BackendResult, Device, FreeGpuResource, RenderPass, Sa
 const MAX_SAMPLERS: usize = 16;
 
 type DescriptorSetLayouts = Vec<vk::DescriptorSetLayout>;
+type DescriptorSetIndex = (u32, u32);
+type DescriptorSetMap = HashMap<String, DescriptorSetIndex>;
 
 pub struct ShaderDesc<'a> {
     pub stage: vk::ShaderStageFlags,
@@ -60,6 +68,7 @@ pub struct Shader {
     pub raw: vk::ShaderModule,
     pub stage: vk::ShaderStageFlags,
     pub layouts: DescriptorSetLayouts,
+    pub names: DescriptorSetMap,
     pub entry: CString,
 }
 
@@ -73,11 +82,12 @@ impl Shader {
         if let Some(name) = name {
             device.set_object_name(shader, name)?;
         }
-
+        let (names, layouts) = Self::create_descriptor_set_layouts(device, desc.stage, desc.code)?;
         Ok(Self {
             stage: desc.stage,
             raw: shader,
-            layouts: Self::create_descriptor_set_layouts(device, desc.stage, desc.code)?,
+            layouts,
+            names,
             entry: CString::new(desc.entry).unwrap(),
         })
     }
@@ -86,15 +96,16 @@ impl Shader {
         device: &Device,
         stage: vk::ShaderStageFlags,
         code: &[u8],
-    ) -> BackendResult<Vec<vk::DescriptorSetLayout>> {
+    ) -> BackendResult<(DescriptorSetMap, DescriptorSetLayouts)> {
         let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
         let sets = info.get_descriptor_sets()?;
         let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
-        let mut layouts = Vec::with_capacity(8);
+        let mut layouts = DescriptorSetLayouts::with_capacity(8);
         let create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
-        for index in 0..set_count {
-            let set = sets.get(&index);
+        let mut names = DescriptorSetMap::with_capacity(8);
+        for set_index in 0..set_count {
+            let set = sets.get(&set_index);
             if let Some(set) = set {
                 let mut bindings = Vec::with_capacity(set.len());
                 for (index, binding) in set.iter() {
@@ -128,7 +139,8 @@ impl Shader {
                             ));
                         }
                         _ => unimplemented!("{:?}", binding),
-                    }
+                    };
+                    names.insert(binding.name.clone(), (set_index, *index));
                 }
                 let layout_info = vk::DescriptorSetLayoutCreateInfo::builder()
                     .flags(create_flags)
@@ -148,7 +160,7 @@ impl Shader {
             }
         }
 
-        Ok(layouts)
+        Ok((names, layouts))
     }
 
     fn create_uniform_binding(
@@ -238,6 +250,7 @@ pub trait PipelineVertex: Sized {
 pub struct Pipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
+    pub names: DescriptorSetMap,
 }
 
 pub enum PipelineBlend {
@@ -444,10 +457,22 @@ impl Pipeline {
         }
         .map_err(|_| BackendError::Other("Shit happened".into()))?[0];
 
+        let mut names = DescriptorSetMap::with_capacity(8);
+        desc.shaders.iter().for_each(|shader| {
+            shader.names.iter().for_each(|(name, index)| {
+                names.insert(name.into(), *index);
+            })
+        });
+
         Ok(Self {
             pipeline_layout,
             pipeline,
+            names,
         })
+    }
+
+    pub fn descriptor_index(&self, name: &str) -> Option<DescriptorSetIndex> {
+        self.names.get(name).copied()
     }
 
     fn combine_layouts(layouts: &[&DescriptorSetLayouts]) -> DescriptorSetLayouts {
