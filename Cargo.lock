@@ -486,8 +486,7 @@ checksum = "d2fabcfbdc87f4758337ca535fb41a6d701b65693ce38287d856d1674551ec9b"
 [[package]]
 name = "gpu-alloc"
 version = "0.5.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22beaafc29b38204457ea030f6fb7a84c9e4dd1b86e311ba0542533453d87f62"
+source = "git+https://git.sr.ht/~gigablaster/gpu-alloc#b9a434a213e919b2dd00e2fa170262d02d48654f"
 dependencies = [
  "bitflags",
  "gpu-alloc-types",
@@ -496,8 +495,7 @@ dependencies = [
 [[package]]
 name = "gpu-alloc-ash"
 version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e9da2bd10e936c5afb95331c748d608ab36ef1457796953459d09a2ac30b2c3"
+source = "git+https://git.sr.ht/~gigablaster/gpu-alloc#b9a434a213e919b2dd00e2fa170262d02d48654f"
 dependencies = [
  "ash",
  "gpu-alloc-types",
@@ -506,9 +504,8 @@ dependencies = [
 
 [[package]]
 name = "gpu-alloc-types"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "54804d0d6bc9d7f26db4eaec1ad10def69b599315f487d32c334a80d1efe67a5"
+version = "0.2.1"
+source = "git+https://git.sr.ht/~gigablaster/gpu-alloc#b9a434a213e919b2dd00e2fa170262d02d48654f"
 dependencies = [
  "bitflags",
 ]
@@ -516,8 +513,7 @@ dependencies = [
 [[package]]
 name = "gpu-descriptor"
 version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0b0c02e1ba0bdb14e965058ca34e09c020f8e507a760df1121728e0aef68d57a"
+source = "git+https://git.sr.ht/~gigablaster/gpu-descriptor#657c0e9df7cfd68ec1fca442363dda5c08161f1b"
 dependencies = [
  "bitflags",
  "gpu-descriptor-types",
@@ -527,8 +523,7 @@ dependencies = [
 [[package]]
 name = "gpu-descriptor-ash"
 version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27ff7237a36b887e5cf7e7e33b02fa550314f0688d12a66237150956cd781cdb"
+source = "git+https://git.sr.ht/~gigablaster/gpu-descriptor#657c0e9df7cfd68ec1fca442363dda5c08161f1b"
 dependencies = [
  "ash",
  "gpu-descriptor-types",
@@ -538,8 +533,7 @@ dependencies = [
 [[package]]
 name = "gpu-descriptor-types"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "363e3677e55ad168fef68cf9de3a4a310b53124c5e784c53a1d70e92d23f2126"
+source = "git+https://git.sr.ht/~gigablaster/gpu-descriptor#657c0e9df7cfd68ec1fca442363dda5c08161f1b"
 dependencies = [
  "bitflags",
 ]

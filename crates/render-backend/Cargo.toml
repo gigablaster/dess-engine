@@ -14,10 +14,10 @@ rspirv-reflect = "0.8"
 byte-slice-cast = "1.2"
 vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
 glam = "0.24"
-gpu-alloc = "0.5"
-gpu-alloc-ash = "0.5"
-gpu-descriptor = "0.2"
-gpu-descriptor-ash = "0.2"
+gpu-alloc = { git = "https://git.sr.ht/~gigablaster/gpu-alloc" }
+gpu-alloc-ash = { git = "https://git.sr.ht/~gigablaster/gpu-alloc" }
+gpu-descriptor = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
+gpu-descriptor-ash = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
 dess-common = { path = "../common" }
 
 [[example]]
