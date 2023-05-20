@@ -7,8 +7,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-common = { path = "../../crates/common" }
-vfs = { path = "../../crates/vfs" }
+dess-common = { path = "../../crates/common" }
+dess-vfs = { path = "../../crates/vfs" }
 log = "0.4"
 simple_logger = "4.1"
 glob = "0.3"

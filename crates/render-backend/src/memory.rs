@@ -18,7 +18,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use ash::vk;
 use log::debug;
 
-use crate::vulkan::BackendError;
+use crate::BackendError;
 
 use super::{BackendResult, PhysicalDevice};
 

@@ -18,42 +18,13 @@ use std::{thread::sleep, time::Duration};
 
 use ash::vk;
 
-use glam::Vec3;
-use render::vulkan::{
-    create_pipeline_cache, BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList,
-    Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment,
-    RenderPassAttachmentDesc, RenderPassLayout, Shader, ShaderDesc, SubImage, SubmitWaitDesc,
+use dess_render_backend::{
+    BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList, RenderPass,
+    RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout, SubImage, SubmitWaitDesc,
     Surface, Swapchain,
 };
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
-
-#[repr(C, packed)]
-struct Vertex {
-    pos: Vec3,
-    color: Vec3,
-}
-
-impl PipelineVertex for Vertex {
-    fn attribute_description() -> &'static [vk::VertexInputAttributeDescription] {
-        static desc: [vk::VertexInputAttributeDescription; 2] = [
-            vk::VertexInputAttributeDescription {
-                location: 0,
-                binding: 0,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 0,
-            },
-            vk::VertexInputAttributeDescription {
-                location: 1,
-                binding: 0,
-                format: vk::Format::R32G32B32_SFLOAT,
-                offset: 12,
-            },
-        ];
-
-        &desc
-    }
-}
 
 fn main() -> Result<(), String> {
     simple_logger::init().unwrap();
@@ -64,13 +35,11 @@ fn main() -> Result<(), String> {
     let server_addr = format!("0.0.0.0:{}", puffin_http::DEFAULT_PORT);
     eprintln!("Serving demo profile data on {server_addr}");
 
-    vfs::scan(".").unwrap();
-
     let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
 
     puffin::set_scopes_on(true);
     let window = video
-        .window("vk-triangle", 1280, 720)
+        .window("vk-clear", 1280, 720)
         .position_centered()
         .resizable()
         .vulkan()
@@ -100,18 +69,6 @@ fn main() -> Result<(), String> {
 
     let device = Device::create(instance, pdevice).unwrap();
 
-    let vertex_shader = Shader::new(
-        &device,
-        ShaderDesc::vertex(vfs::get("shaders/simple.vert.spv").unwrap().data()),
-    )
-    .unwrap();
-
-    let fragment_shader = Shader::new(
-        &device,
-        ShaderDesc::fragment(vfs::get("shaders/simple.frag.spv").unwrap().data()),
-    )
-    .unwrap();
-
     let mut swapchain = Swapchain::new(&device, surface).unwrap();
 
     let color_attachment_desc =
@@ -121,30 +78,7 @@ fn main() -> Result<(), String> {
         depth_attachment: None,
     };
     let render_pass = RenderPass::new(&device.raw, render_pass_desc).unwrap();
-    let pipeline_cache = create_pipeline_cache(&device.raw).unwrap();
-    let pipeline_desc = PipelineDesc::new(&render_pass)
-        .add_shader(&fragment_shader)
-        .add_shader(&vertex_shader)
-        .face_cull(false);
-    let pipeline = Pipeline::new::<Vertex>(&device.raw, &pipeline_cache, pipeline_desc).unwrap();
 
-    let vertices = [
-        Vertex {
-            pos: Vec3::new(0.0, -0.5, 0.0),
-            color: Vec3::new(1.0, 0.0, 0.0),
-        },
-        Vertex {
-            pos: Vec3::new(-0.5, 0.5, 0.0),
-            color: Vec3::new(0.0, 1.0, 0.0),
-        },
-        Vertex {
-            pos: Vec3::new(0.5, 0.5, 0.0),
-            color: Vec3::new(0.0, 0.0, 1.0),
-        },
-    ];
-    let indices = [0u16, 1u16, 2u16];
-
-    let vertex_buffer = device.create_buffer_from(&vertices).unwrap();
     let mut skip_render = false;
     'running: loop {
         let mut recreate_swapchain = false;
@@ -194,7 +128,6 @@ fn main() -> Result<(), String> {
             render_pass.clear_fbos(&device.raw);
             continue;
         }
-        let index_buffer = device.push_dynamic_geo(&indices);
         let frame = device.begin_frame().unwrap();
         {
             {
@@ -224,26 +157,12 @@ fn main() -> Result<(), String> {
                     &image.image,
                     vk::ClearValue {
                         color: vk::ClearColorValue {
-                            float32: [0.1, 0.1, 0.15, 1.0],
+                            float32: [1.0, 0.5, 0.25, 1.0],
                         },
                     },
                 )];
                 {
-                    let pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
-                    let render_area = swapchain.render_area();
-                    pass.set_scissor(render_area);
-                    pass.set_viewport(vk::Viewport {
-                        x: 0.0,
-                        y: 0.0,
-                        width: render_area.extent.width as f32,
-                        height: render_area.extent.height as f32,
-                        min_depth: 0.0,
-                        max_depth: 1.0,
-                    });
-                    pass.bind_pipeline(&pipeline);
-                    pass.bind_index_buffer(&index_buffer);
-                    pass.bind_vertex_buffer(&vertex_buffer);
-                    pass.draw(3, 1, 0, 0);
+                    let _pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
                 }
             }
             device
@@ -262,12 +181,12 @@ fn main() -> Result<(), String> {
             {
                 let recorder = frame.presentation_cb.record(&device).unwrap();
                 let barrier = ImageBarrier {
-                    previous_accesses: &[AccessType::ColorAttachmentWrite],
+                    previous_accesses: &[AccessType::Nothing],
                     next_accesses: &[AccessType::Present],
                     previous_layout: vk_sync::ImageLayout::Optimal,
                     next_layout: vk_sync::ImageLayout::Optimal,
-                    discard_contents: false,
-                    src_queue_family_index: device.graphics_queue.family.index,
+                    discard_contents: true,
+                    src_queue_family_index: 0,
                     dst_queue_family_index: device.graphics_queue.family.index,
                     image: image.image.raw,
                     range: image
@@ -297,11 +216,6 @@ fn main() -> Result<(), String> {
         swapchain.present_image(image);
     }
     device.wait();
-
-    unsafe { device.raw.destroy_pipeline_cache(pipeline_cache, None) };
-    pipeline.free(&device.raw);
-    vertex_shader.free(&device.raw);
-    fragment_shader.free(&device.raw);
     render_pass.free(&device.raw);
 
     Ok(())

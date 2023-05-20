@@ -18,7 +18,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::vulkan::memory::allocate_vram;
+use crate::memory::allocate_vram;
 
 use super::{
     memory::DynamicAllocator, BackendError, BackendResult, Device, FreeGpuResource, PhysicalDevice,

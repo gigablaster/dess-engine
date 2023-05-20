@@ -22,7 +22,7 @@ use ash::{
 use log::info;
 use sdl2::video::Window;
 
-use crate::vulkan::{BackendError, ImageDesc, ImageType};
+use crate::{BackendError, ImageDesc, ImageType};
 
 use super::{BackendResult, Device, Image, Instance};
 

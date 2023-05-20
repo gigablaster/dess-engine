@@ -30,7 +30,7 @@ use ash::{
 };
 use log::info;
 
-use crate::vulkan::{staging::Staging, BackendError, BufferAllocator, ImageAllocator};
+use crate::{staging::Staging, BackendError, BufferAllocator, ImageAllocator};
 
 use super::{
     droplist::DropList, staging::StagingError, BackendResult, Buffer, CommandBuffer, FrameContext,

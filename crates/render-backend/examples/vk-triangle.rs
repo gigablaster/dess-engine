@@ -18,13 +18,13 @@ use std::{thread::sleep, time::Duration};
 
 use ash::vk;
 
-use glam::Vec3;
-use render::vulkan::{
+use dess_render_backend::{
     create_pipeline_cache, BackendError, Device, FreeGpuResource, Instance, PhysicalDeviceList,
     Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassAttachment,
     RenderPassAttachmentDesc, RenderPassLayout, Shader, ShaderDesc, SubImage, SubmitWaitDesc,
     Surface, Swapchain,
 };
+use glam::Vec3;
 use sdl2::event::{Event, WindowEvent};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
 
@@ -64,7 +64,7 @@ fn main() -> Result<(), String> {
     let server_addr = format!("0.0.0.0:{}", puffin_http::DEFAULT_PORT);
     eprintln!("Serving demo profile data on {server_addr}");
 
-    vfs::scan(".").unwrap();
+    dess_vfs::scan(".").unwrap();
 
     let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
 
@@ -102,15 +102,15 @@ fn main() -> Result<(), String> {
 
     let vertex_shader = Shader::new(
         &device,
-        ShaderDesc::vertex(vfs::get("shaders/unlit.vert.spv").unwrap().data()),
-        Some("vert"),
+        ShaderDesc::vertex(dess_vfs::get("shaders/simple.vert.spv").unwrap().data()),
+        None,
     )
     .unwrap();
 
     let fragment_shader = Shader::new(
         &device,
-        ShaderDesc::fragment(vfs::get("shaders/unlit.frag.spv").unwrap().data()),
-        Some("frag"),
+        ShaderDesc::fragment(dess_vfs::get("shaders/simple.frag.spv").unwrap().data()),
+        None,
     )
     .unwrap();
 
@@ -232,7 +232,7 @@ fn main() -> Result<(), String> {
                 )];
                 {
                     let pass = recorder.render_pass(&device.raw, &render_pass, &attachments, None);
-                    /*let render_area = swapchain.render_area();
+                    let render_area = swapchain.render_area();
                     pass.set_scissor(render_area);
                     pass.set_viewport(vk::Viewport {
                         x: 0.0,
@@ -245,7 +245,7 @@ fn main() -> Result<(), String> {
                     pass.bind_pipeline(&pipeline);
                     pass.bind_index_buffer(&index_buffer);
                     pass.bind_vertex_buffer(&vertex_buffer);
-                    pass.draw(3, 1, 0, 0);*/
+                    pass.draw(3, 1, 0, 0);
                 }
             }
             device

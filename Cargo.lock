@@ -207,17 +207,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "common"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "four-cc",
- "log",
- "simple_logger",
- "uuid",
-]
-
-[[package]]
 name = "crc"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -289,6 +278,57 @@ name = "crunchy"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7a81dae078cea95a014a339291cec439d2f232ebe854a9d672b796c6afafa9b7"
+
+[[package]]
+name = "dess-common"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "four-cc",
+ "log",
+ "simple_logger",
+ "uuid",
+]
+
+[[package]]
+name = "dess-render"
+version = "0.1.0"
+dependencies = [
+ "dess-render-backend",
+]
+
+[[package]]
+name = "dess-render-backend"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "ash",
+ "byte-slice-cast",
+ "dess-vfs",
+ "glam",
+ "image",
+ "log",
+ "puffin",
+ "puffin_http",
+ "rspirv",
+ "rspirv-reflect",
+ "sdl2",
+ "simple_logger",
+ "vk-sync",
+]
+
+[[package]]
+name = "dess-vfs"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "crc",
+ "dess-common",
+ "four-cc",
+ "lazy_static",
+ "log",
+ "memmap2",
+]
 
 [[package]]
 name = "either"
@@ -703,11 +743,11 @@ name = "packer"
 version = "0.1.0"
 dependencies = [
  "clap",
- "common",
+ "dess-common",
+ "dess-vfs",
  "glob",
  "log",
  "simple_logger",
- "vfs",
 ]
 
 [[package]]
@@ -860,27 +900,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "render"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "ash",
- "byte-slice-cast",
- "common",
- "glam",
- "image",
- "log",
- "puffin",
- "puffin_http",
- "rspirv",
- "rspirv-reflect",
- "sdl2",
- "simple_logger",
- "vfs",
- "vk-sync",
-]
-
-[[package]]
 name = "rspirv"
 version = "0.11.0+1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -899,19 +918,6 @@ checksum = "b482432a4d407e1aa135839be12f4f838f84b5bfe00825e6239abf813ccfcc27"
 dependencies = [
  "rspirv",
  "thiserror",
-]
-
-[[package]]
-name = "runner"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ash",
- "common",
- "log",
- "render",
- "sdl2",
- "simple_logger",
 ]
 
 [[package]]
@@ -1148,19 +1154,6 @@ name = "version-compare"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "579a42fc0b8e0c63b76519a339be31bed574929511fa53c1a3acae26eb258f29"
-
-[[package]]
-name = "vfs"
-version = "0.1.0"
-dependencies = [
- "byteorder",
- "common",
- "crc",
- "four-cc",
- "lazy_static",
- "log",
- "memmap2",
-]
 
 [[package]]
 name = "vk-sync"

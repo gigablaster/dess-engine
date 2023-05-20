@@ -20,7 +20,7 @@ use std::{
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use common::traits::{BinaryDeserialization, BinarySerialization};
+use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use four_cc::FourCC;
 
 use crate::VfsError;

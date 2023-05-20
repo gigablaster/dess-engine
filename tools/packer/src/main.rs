@@ -5,8 +5,8 @@ use std::{
 };
 
 use clap::{Arg, ArgAction};
+use dess_vfs::DirectoryBaker;
 use glob::Pattern;
-use vfs::DirectoryBaker;
 
 trait Excluded {
     fn is_excluded(&self, path: &Path) -> bool;

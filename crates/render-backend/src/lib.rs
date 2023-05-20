@@ -13,6 +13,33 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod mainloop;
+mod buffer;
+mod command_buffer;
+mod device;
+mod droplist;
+mod error;
+mod frame_context;
+mod image;
+mod instance;
+mod memory;
+mod physical_device;
+mod pipeline;
+mod render_pass;
+mod staging;
+mod swapchain;
 
-pub use mainloop::*;
+pub use self::image::*;
+pub use buffer::*;
+pub use command_buffer::*;
+pub use device::*;
+pub use error::*;
+pub use frame_context::*;
+pub use instance::*;
+pub use physical_device::*;
+pub use pipeline::*;
+pub use render_pass::*;
+pub use swapchain::*;
+
+pub trait FreeGpuResource {
+    fn free(&self, device: &ash::Device);
+}

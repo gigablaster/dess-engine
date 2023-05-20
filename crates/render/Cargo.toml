@@ -1,32 +1,7 @@
 [package]
-name = "render"
+name = "dess-render"
 version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-ash =  "0.37"
-sdl2 = "0.35"
-common = { path = "../common" }
-log = "0.4"
-arrayvec = "0.7"
-vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
-puffin = "0.15"
-rspirv = "0.11"
-rspirv-reflect = "0.8"
-byte-slice-cast = "1.2"
-glam = "0.24"
-
-[[example]]
-name = "vk-clear"
-
-[[example]]
-name = "vk-triangle"
-
-[[example]]
-name = "vk-texture"
-
-[dev-dependencies]
-simple_logger = "4.0"
-puffin_http = "0.12"
-vfs = { path = "../vfs" }
-image = "0.24"
+dess-render-backend = { path = "../render-backend" }
