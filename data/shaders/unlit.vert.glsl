@@ -3,12 +3,12 @@
 layout (location = 0) in vec3 inPos;
 layout (location = 1) in vec2 inUV;
 
-layout (binding = 0) uniform Camera {
+layout (set = 0, binding = 0) uniform Camera {
     mat4 view;
     mat4 projection;
 } camera;
 
-layout (binding = 1) uniform Instance {
+layout (set = 1, binding = 0) uniform Instance {
     mat4 model;
 } instance;
 

@@ -24,6 +24,8 @@ use super::{BackendError, BackendResult, Device, FreeGpuResource, RenderPass, Sa
 
 const MAX_SAMPLERS: usize = 16;
 
+type DescriptorSetLayouts = Vec<vk::DescriptorSetLayout>;
+
 pub struct ShaderDesc<'a> {
     pub stage: vk::ShaderStageFlags,
     pub entry: &'a str,
@@ -57,7 +59,7 @@ impl<'a> ShaderDesc<'a> {
 pub struct Shader {
     pub raw: vk::ShaderModule,
     pub stage: vk::ShaderStageFlags,
-    pub layouts: Vec<vk::DescriptorSetLayout>,
+    pub layouts: DescriptorSetLayouts,
     pub entry: CString,
 }
 
@@ -87,7 +89,6 @@ impl Shader {
     ) -> BackendResult<Vec<vk::DescriptorSetLayout>> {
         let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
         let sets = info.get_descriptor_sets()?;
-        dbg!(&sets);
         let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
         let mut layouts = Vec::with_capacity(8);
         let create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
@@ -107,7 +108,8 @@ impl Shader {
                         }
                         rspirv_reflect::DescriptorType::SAMPLED_IMAGE => bindings
                             .push(Self::create_sampled_image_binding(*index, stage, binding)),
-                        rspirv_reflect::DescriptorType::SAMPLER | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                        rspirv_reflect::DescriptorType::SAMPLER
+                        | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
                             let sampler_index = samplers.len();
                             samplers.push(
                                 device
@@ -121,6 +123,7 @@ impl Shader {
                             bindings.push(Self::create_sampler_binding(
                                 *index,
                                 stage,
+                                binding,
                                 &samplers[sampler_index],
                             ));
                         }
@@ -194,12 +197,25 @@ impl Shader {
     fn create_sampler_binding(
         index: u32,
         stage: vk::ShaderStageFlags,
+        binding: &DescriptorInfo,
         sampler: &vk::Sampler,
     ) -> vk::DescriptorSetLayoutBinding {
+        let descriptor_count = match binding.binding_count {
+            BindingCount::One => 1,
+            BindingCount::StaticSized(size) => size,
+            _ => unimplemented!("{:?}", binding.binding_count),
+        };
+        let ty = match binding.ty {
+            rspirv_reflect::DescriptorType::SAMPLER => vk::DescriptorType::SAMPLER,
+            rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                vk::DescriptorType::COMBINED_IMAGE_SAMPLER
+            }
+            _ => unimplemented!(),
+        };
         vk::DescriptorSetLayoutBinding::builder()
             .binding(index)
-            .descriptor_count(1)
-            .descriptor_type(vk::DescriptorType::SAMPLER)
+            .descriptor_count(descriptor_count as _)
+            .descriptor_type(ty)
             .stage_flags(stage)
             .immutable_samplers(slice::from_ref(sampler))
             .build()
@@ -394,10 +410,13 @@ impl Pipeline {
             .logic_op_enable(false)
             .build();
 
-        let mut descriptor_layouts = Vec::new();
-        desc.shaders
-            .iter()
-            .for_each(|shader| descriptor_layouts.extend_from_slice(&shader.layouts));
+        let descriptor_layouts = Self::combine_layouts(
+            &desc
+                .shaders
+                .iter()
+                .map(|shader| &shader.layouts)
+                .collect::<Vec<_>>(),
+        );
 
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&descriptor_layouts)
@@ -429,6 +448,21 @@ impl Pipeline {
             pipeline_layout,
             pipeline,
         })
+    }
+
+    fn combine_layouts(layouts: &[&DescriptorSetLayouts]) -> DescriptorSetLayouts {
+        let count = layouts.iter().map(|x| x.len()).max().unwrap_or(0);
+        let mut result = DescriptorSetLayouts::with_capacity(count);
+        result.resize(count, vk::DescriptorSetLayout::null());
+        for layout in layouts {
+            for index in 0..layout.len() {
+                if layout[index] != vk::DescriptorSetLayout::null() {
+                    result[index] = layout[index];
+                }
+            }
+        }
+
+        result
     }
 }
 
