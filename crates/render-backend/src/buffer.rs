@@ -120,6 +120,17 @@ impl Buffer {
     }
 }
 
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        self.device.with_drop_list(|droplist| {
+            droplist.drop_buffer(self.raw);
+            if let Some(allocation) = self.allocation.take() {
+                droplist.free_memory(allocation);
+            }
+        })
+    }
+}
+
 pub trait BufferView {
     fn buffer(&self) -> vk::Buffer;
     fn offset(&self) -> u64;
