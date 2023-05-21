@@ -13,12 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use core::panic;
+
 use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     fmt::Debug,
-    slice::{self},
+    slice,
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -31,14 +31,12 @@ use gpu_alloc::{Config, GpuAllocator};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
-use crate::{staging::Staging, BackendError, BufferView};
+use crate::BackendError;
 
 use super::{
-    droplist::DropList, staging::StagingError, BackendResult, CommandBuffer, FrameContext,
-    FreeGpuResource, Instance, PhysicalDevice, QueueFamily,
+    droplist::DropList, BackendResult, CommandBuffer, FrameContext, FreeGpuResource, Instance,
+    PhysicalDevice, QueueFamily,
 };
-
-const STAGING_SIZE: u64 = 32 * 1024 * 1024;
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
@@ -64,11 +62,8 @@ pub struct Device {
     pub graphics_queue: Queue,
     pub transfer_queue: Queue,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
-    setup_pool: vk::CommandPool,
-    setup_cb: CommandBuffer,
     frames: [Mutex<Arc<FrameContext>>; 2],
     drop_lists: [Mutex<DropList>; 2],
-    staging: Mutex<Staging>,
     allocator: Mutex<GpuAllocator<vk::DeviceMemory>>,
 }
 
@@ -120,14 +115,6 @@ impl Device {
 
         info!("Created a Vulkan device");
 
-        let pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(transfer_queue.index)
-            .build();
-
-        let setup_pool = unsafe { device.create_command_pool(&pool_create_info, None)? };
-        let setup_cb = CommandBuffer::new(&device, setup_pool)?;
-
         let frames = [
             Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
             Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
@@ -137,14 +124,6 @@ impl Device {
             Mutex::new(DropList::default()),
             Mutex::new(DropList::default()),
         ];
-
-        let staging = Staging::new(
-            &device,
-            &pdevice,
-            STAGING_SIZE,
-            graphics_queue.index,
-            transfer_queue.index,
-        )?;
 
         let allocator_config = Config {
             dedicated_threshold: 64 * 1024 * 1024,
@@ -164,13 +143,10 @@ impl Device {
             pdevice,
             graphics_queue: Self::create_queue(&device, graphics_queue),
             transfer_queue: Self::create_queue(&device, transfer_queue),
-            setup_cb,
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
             drop_lists,
-            setup_pool,
-            staging: Mutex::new(staging),
             allocator: Mutex::new(allocator),
         }))
     }
@@ -228,31 +204,14 @@ impl Device {
         }
     }
 
-    fn commit_staging(&self) -> BackendResult<()> {
-        puffin::profile_scope!("commit staging");
-        let mut staging = self.staging.lock().unwrap();
-        if staging.is_empty() {
-            return Ok(());
-        }
-        self.setup_cb.wait(&self.raw)?;
-        self.setup_cb.reset(&self.raw)?;
-        {
-            let _recorder = self.setup_cb.record(self)?;
-            staging.upload(&self.raw, self.setup_cb.raw);
-        }
-        self.submit_transfer(&self.setup_cb, &[], &[])?;
-        Ok(())
-    }
-
     pub fn begin_frame(&self) -> BackendResult<Arc<FrameContext>> {
         puffin::profile_scope!("begin frame");
         let mut frame0 = self.frames[0].lock().unwrap();
         {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
-                self.commit_staging()?;
                 unsafe {
                     self.raw.wait_for_fences(
-                        &[frame0.presentation_cb.fence, self.setup_cb.fence],
+                        &[frame0.presentation_cb.fence, frame0.main_cb.fence],
                         true,
                         u64::MAX,
                     )
@@ -373,28 +332,6 @@ impl Device {
         Ok(())
     }
 
-    pub fn upload_buffer(&self, buffer: &impl BufferView, data: &[u8]) -> BackendResult<()> {
-        let mut staging = self.staging.lock().unwrap();
-        match staging.upload_buffer(&self.raw, buffer, data) {
-            Ok(_) => Ok(()),
-            Err(StagingError::NeedUpload) => {
-                self.commit_staging()?;
-                unsafe {
-                    self.raw
-                        .wait_for_fences(slice::from_ref(&self.setup_cb.fence), true, u64::MAX)
-                }?;
-                match staging.upload_buffer(&self.raw, buffer, data) {
-                    Ok(()) => Ok(()),
-                    Err(StagingError::NeedUpload) => {
-                        panic!("Shit happened when trying to stage data right after uploading")
-                    }
-                    Err(StagingError::VulkanError(vk)) => Err(BackendError::Vulkan(vk)),
-                }
-            }
-            Err(StagingError::VulkanError(vk)) => Err(BackendError::Vulkan(vk)),
-        }
-    }
-
     pub(crate) fn allocator(&self) -> MutexGuard<GpuAllocator<vk::DeviceMemory>> {
         self.allocator.lock().unwrap()
     }
@@ -403,10 +340,7 @@ impl Device {
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle().ok() };
-        let staging = self.staging.lock().unwrap();
         let mut allocator = self.allocator();
-        self.setup_cb.free(&self.raw);
-        unsafe { self.raw.destroy_command_pool(self.setup_pool, None) };
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
             list.free(&self.raw, &mut allocator);
@@ -419,7 +353,6 @@ impl Drop for Device {
         self.samplers.iter().for_each(|(_, sampler)| unsafe {
             self.raw.destroy_sampler(*sampler, None);
         });
-        staging.free(&self.raw);
         unsafe { allocator.cleanup(AshMemoryDevice::wrap(&self.raw)) };
         unsafe { self.raw.destroy_device(None) };
     }

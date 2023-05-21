@@ -20,7 +20,7 @@ use ash::vk::{self, BufferCreateInfo};
 use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{device, BackendError, Device};
+use crate::{BackendError, Device};
 
 use super::BackendResult;
 
