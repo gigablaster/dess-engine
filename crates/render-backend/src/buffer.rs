@@ -20,7 +20,7 @@ use ash::vk::{self, BufferCreateInfo};
 use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::Device;
+use crate::{device, BackendError, Device};
 
 use super::BackendResult;
 
@@ -84,11 +84,11 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub(crate) fn new(
+    fn new(
         device: &Arc<Device>,
         desc: BufferDesc,
         queue_family_index: u32,
-        _name: Option<&str>,
+        name: Option<&str>,
     ) -> BackendResult<Self> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
@@ -97,6 +97,9 @@ impl Buffer {
             .queue_family_indices(slice::from_ref(&queue_family_index))
             .build();
         let buffer = unsafe { device.raw.create_buffer(&buffer_create_info, None) }?;
+        if let Some(name) = name {
+            device.set_object_name(buffer, name)?;
+        }
         let requirement = unsafe { device.raw.get_buffer_memory_requirements(buffer) };
         let aligment = if let Some(aligment) = desc.alignment {
             aligment.max(requirement.alignment)
@@ -110,11 +113,13 @@ impl Buffer {
             usage: desc.memory_location,
         };
         let allocation = if desc.dedicated {
-            unsafe { device.allocator().alloc_with_dedicated(
-                AshMemoryDevice::wrap(&device.raw),
-                request,
-                Dedicated::Required,
-            ) }?
+            unsafe {
+                device.allocator().alloc_with_dedicated(
+                    AshMemoryDevice::wrap(&device.raw),
+                    request,
+                    Dedicated::Required,
+                )
+            }?
         } else {
             unsafe {
                 device
@@ -134,6 +139,39 @@ impl Buffer {
             desc,
             allocation: Some(allocation),
         })
+    }
+
+    pub fn graphics(
+        device: &Arc<Device>,
+        desc: BufferDesc,
+        name: Option<&str>,
+    ) -> BackendResult<Self> {
+        Self::new(device, desc, device.graphics_queue.family.index, name)
+    }
+
+    pub fn transfer(
+        device: &Arc<Device>,
+        desc: BufferDesc,
+        name: Option<&str>,
+    ) -> BackendResult<Self> {
+        Self::new(device, desc, device.transfer_queue.family.index, name)
+    }
+
+    pub fn map(&mut self) -> BackendResult<*mut u8> {
+        if let Some(allocation) = &mut self.allocation {
+            Ok(unsafe {
+                allocation.map(AshMemoryDevice::wrap(&self.device.raw), 0, self.desc.size)
+            }?
+            .as_ptr() as *mut u8)
+        } else {
+            Err(BackendError::MemoryNotAllocated)
+        }
+    }
+
+    pub fn unmap(&mut self) {
+        if let Some(allocation) = &mut self.allocation {
+            unsafe { allocation.unmap(AshMemoryDevice::wrap(&self.device.raw)) };
+        }
     }
 }
 
