@@ -202,6 +202,7 @@ dependencies = [
  "ash",
  "dess-common",
  "dess-render-backend",
+ "sdl2",
  "vk-sync",
 ]
 

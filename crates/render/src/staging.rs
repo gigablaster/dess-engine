@@ -134,6 +134,12 @@ impl Staging {
         self.index
     }
 
+    pub fn wait(&self) -> RenderResult<()> {
+        self.tranfser_cb.wait(&self.device.raw)?;
+
+        Ok(())
+    }
+
     pub fn upload(&mut self) -> RenderResult<()> {
         self.tranfser_cb.wait(&self.device.raw)?;
         self.tranfser_cb.reset(&self.device.raw)?;

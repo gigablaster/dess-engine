@@ -2,6 +2,8 @@ use dess_render_backend::BackendError;
 
 pub enum RenderError {
     Backend(BackendError),
+    DeviceNotFound,
+    RecreateBuffers,
 }
 
 impl From<BackendError> for RenderError {
