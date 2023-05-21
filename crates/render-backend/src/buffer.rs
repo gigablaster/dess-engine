@@ -14,27 +14,22 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::{mem::size_of, ptr::copy_nonoverlapping, sync::Arc};
+use std::sync::Arc;
 
 use ash::vk::{self, BufferCreateInfo};
-use gpu_alloc::{UsageFlags, MemoryBlock, Request};
+use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
-use gpu_descriptor_ash::AshDescriptorDevice;
-use log::debug;
 
 use crate::Device;
 
-use super::{
-    memory::{allocate_vram, DynamicAllocator, RingAllocator},
-    BackendResult, FreeGpuResource, PhysicalDevice,
-};
+use super::BackendResult;
 
 #[derive(Debug)]
 pub struct BufferDesc {
     pub size: usize,
     pub usage: vk::BufferUsageFlags,
     pub memory_location: UsageFlags,
-    pub alignment: Option<u64>
+    pub alignment: Option<u64>,
 }
 
 impl BufferDesc {
@@ -43,7 +38,7 @@ impl BufferDesc {
             size,
             usage,
             memory_location: UsageFlags::FAST_DEVICE_ACCESS,
-            alignment: None
+            alignment: None,
         }
     }
 
@@ -52,7 +47,7 @@ impl BufferDesc {
             size,
             usage,
             memory_location: UsageFlags::HOST_ACCESS,
-            alignment: None
+            alignment: None,
         }
     }
 
@@ -61,7 +56,7 @@ impl BufferDesc {
             size,
             usage,
             memory_location: UsageFlags::UPLOAD,
-            alignment: None
+            alignment: None,
         }
     }
 
@@ -76,11 +71,16 @@ pub struct Buffer {
     device: Arc<Device>,
     pub raw: vk::Buffer,
     pub desc: BufferDesc,
-    pub allocation: Option<MemoryBlock<vk::DeviceMemory>>
+    pub allocation: Option<MemoryBlock<vk::DeviceMemory>>,
 }
 
 impl Buffer {
-    pub(crate) fn new(device: &Arc<Device>, desc: BufferDesc, queue_family_index: u32,  name: Option<&str>) -> BackendResult<Self> {
+    pub(crate) fn new(
+        device: &Arc<Device>,
+        desc: BufferDesc,
+        queue_family_index: u32,
+        _name: Option<&str>,
+    ) -> BackendResult<Self> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
             .usage(desc.usage)
@@ -94,19 +94,28 @@ impl Buffer {
         } else {
             requirement.alignment
         };
-        let allocation = unsafe { device.allocator().alloc(AshMemoryDevice::wrap(&device.raw), Request {
-            size: requirement.size,
-            align_mask: aligment,
-            memory_types: requirement.memory_type_bits,
-            usage: desc.memory_location
-        }) }?;
-        unsafe { device.raw.bind_buffer_memory(buffer, *allocation.memory(), allocation.offset()) }?;
+        let allocation = unsafe {
+            device.allocator().alloc(
+                AshMemoryDevice::wrap(&device.raw),
+                Request {
+                    size: requirement.size,
+                    align_mask: aligment,
+                    memory_types: requirement.memory_type_bits,
+                    usage: desc.memory_location,
+                },
+            )
+        }?;
+        unsafe {
+            device
+                .raw
+                .bind_buffer_memory(buffer, *allocation.memory(), allocation.offset())
+        }?;
 
         Ok(Self {
             device: device.clone(),
             raw: buffer,
             desc,
-            allocation: Some(allocation)
+            allocation: Some(allocation),
         })
     }
 }
@@ -130,4 +139,3 @@ impl BufferView for Buffer {
         self.desc.size as _
     }
 }
-

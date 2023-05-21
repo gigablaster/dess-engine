@@ -17,8 +17,6 @@ use ash::{vk, LoadingError};
 use gpu_alloc::AllocationError;
 use rspirv_reflect::ReflectError;
 
-use super::memory::AllocError;
-
 #[derive(Debug)]
 pub enum BackendError {
     Loading(LoadingError),

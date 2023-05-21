@@ -40,11 +40,7 @@ impl DropList {
         self.memory_to_free.push(block);
     }
 
-    pub fn free(
-        &mut self,
-        device: &ash::Device,
-        allocator: &mut GpuAllocator<vk::DeviceMemory>,
-    ) {
+    pub fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator<vk::DeviceMemory>) {
         self.image_views_to_free.drain(..).for_each(|view| {
             unsafe { device.destroy_image_view(view, None) };
         });

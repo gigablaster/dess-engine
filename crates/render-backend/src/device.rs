@@ -18,7 +18,7 @@ use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     fmt::Debug,
-    slice::{self, from_raw_parts},
+    slice::{self},
     sync::{Arc, Mutex, MutexGuard},
 };
 
@@ -27,14 +27,14 @@ use ash::{
     extensions::khr,
     vk::{self, Handle},
 };
-use gpu_alloc::{GpuAllocator, Config};
+use gpu_alloc::{Config, GpuAllocator};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
 use crate::{staging::Staging, BackendError, BufferView};
 
 use super::{
-    droplist::DropList, staging::StagingError, BackendResult, Buffer, CommandBuffer, FrameContext,
+    droplist::DropList, staging::StagingError, BackendResult, CommandBuffer, FrameContext,
     FreeGpuResource, Instance, PhysicalDevice, QueueFamily,
 };
 
@@ -138,7 +138,13 @@ impl Device {
             Mutex::new(DropList::default()),
         ];
 
-        let staging = Staging::new(&device, &pdevice, STAGING_SIZE, graphics_queue.index, transfer_queue.index)?;
+        let staging = Staging::new(
+            &device,
+            &pdevice,
+            STAGING_SIZE,
+            graphics_queue.index,
+            transfer_queue.index,
+        )?;
 
         let allocator_config = Config {
             dedicated_threshold: 64 * 1024 * 1024,
@@ -147,9 +153,10 @@ impl Device {
             final_free_list_chunk: 1024 * 1024,
             minimal_buddy_size: 128,
             starting_free_list_chunk: 16 * 1024,
-            initial_buddy_dedicated_size: 32 * 1024 * 1024
+            initial_buddy_dedicated_size: 32 * 1024 * 1024,
         };
-        let allocator_props = unsafe { device_properties(&instance.raw, Instance::vulkan_version() , pdevice.raw) }?;
+        let allocator_props =
+            unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
         let allocator = GpuAllocator::new(allocator_config, allocator_props);
 
         Ok(Arc::new(Self {
@@ -164,7 +171,7 @@ impl Device {
             drop_lists,
             setup_pool,
             staging: Mutex::new(staging),
-            allocator: Mutex::new(allocator)
+            allocator: Mutex::new(allocator),
         }))
     }
 
@@ -231,10 +238,7 @@ impl Device {
         self.setup_cb.reset(&self.raw)?;
         {
             let _recorder = self.setup_cb.record(self)?;
-            staging.upload(
-                &self.raw,
-                self.setup_cb.raw,
-            );
+            staging.upload(&self.raw, self.setup_cb.raw);
         }
         self.submit_transfer(&self.setup_cb, &[], &[])?;
         Ok(())
@@ -253,10 +257,10 @@ impl Device {
                         u64::MAX,
                     )
                 }?;
-                self.drop_lists[0].lock().unwrap().free(
-                    &self.raw,
-                    &mut self.allocator()
-                );
+                self.drop_lists[0]
+                    .lock()
+                    .unwrap()
+                    .free(&self.raw, &mut self.allocator());
                 frame0.reset(&self.raw)?;
             } else {
                 return Err(BackendError::Other(

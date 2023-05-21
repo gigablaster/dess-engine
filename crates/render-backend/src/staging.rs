@@ -16,15 +16,13 @@
 use std::{ptr::copy_nonoverlapping, slice};
 
 use ash::vk;
-use dess_common::{Align, memory::BumpAllocator};
+use dess_common::memory::BumpAllocator;
 use log::debug;
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier};
 
-use crate::{BufferView, allocate_vram};
+use crate::{allocate_vram, BufferView};
 
-use super::{
-    BackendResult, FreeGpuResource, PhysicalDevice,
-};
+use super::{BackendResult, FreeGpuResource, PhysicalDevice};
 
 #[derive(Debug, Copy, Clone)]
 struct BufferUploadRequest {
@@ -69,7 +67,13 @@ impl From<vk::Result> for StagingError {
 }
 
 impl Staging {
-    pub fn new(device: &ash::Device, pdevice: &PhysicalDevice, size: u64, graphics_queue_index: u32, transfer_queue_index: u32) -> BackendResult<Self> {
+    pub fn new(
+        device: &ash::Device,
+        pdevice: &PhysicalDevice,
+        size: u64,
+        graphics_queue_index: u32,
+        transfer_queue_index: u32,
+    ) -> BackendResult<Self> {
         let buffer_info = vk::BufferCreateInfo::builder()
             .usage(vk::BufferUsageFlags::TRANSFER_SRC)
             .size(size)
@@ -96,10 +100,7 @@ impl Staging {
             transfer_queue_index,
             graphics_queue_index,
             granularity: pdevice.properties.limits.buffer_image_granularity,
-            allocator: BumpAllocator::new(
-                size,
-                pdevice.properties.limits.buffer_image_granularity,
-            ),
+            allocator: BumpAllocator::new(size, pdevice.properties.limits.buffer_image_granularity),
             upload_buffers: Vec::with_capacity(128),
             upload_images: Vec::with_capacity(32),
             mapping: None,
@@ -130,9 +131,7 @@ impl Staging {
         }
         let mapping = self.mapping.unwrap();
         if let Some(offset) = self.allocator.allocate(data.len() as _) {
-            unsafe {
-                copy_nonoverlapping(data.as_ptr(), mapping.add(offset as _), data.len())
-            }
+            unsafe { copy_nonoverlapping(data.as_ptr(), mapping.add(offset as _), data.len()) }
             let request = BufferUploadRequest {
                 dst: buffer.buffer(),
                 src_offset: offset,
@@ -153,11 +152,7 @@ impl Staging {
         self.upload_buffers.is_empty() && self.upload_images.is_empty()
     }
 
-    pub fn upload(
-        &mut self,
-        device: &ash::Device,
-        cb: vk::CommandBuffer,
-    ) {
+    pub fn upload(&mut self, device: &ash::Device, cb: vk::CommandBuffer) {
         if self.mapping.is_some() {
             self.unmap_buffer(device);
             self.mapping = None;

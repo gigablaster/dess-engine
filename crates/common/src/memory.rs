@@ -194,7 +194,7 @@ impl RingAllocator {
 pub struct BumpAllocator {
     size: u64,
     top: u64,
-    aligment: u64
+    aligment: u64,
 }
 
 impl BumpAllocator {
@@ -202,7 +202,7 @@ impl BumpAllocator {
         Self {
             size,
             aligment,
-            top: 0
+            top: 0,
         }
     }
 
@@ -225,7 +225,7 @@ impl BumpAllocator {
 mod test {
     use crate::memory::RingAllocator;
 
-    use super::{DynamicAllocator, BumpAllocator};
+    use super::{BumpAllocator, DynamicAllocator};
 
     #[test]
     fn alloc() {

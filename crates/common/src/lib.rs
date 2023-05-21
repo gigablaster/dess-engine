@@ -14,9 +14,9 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod client;
+pub mod memory;
 mod serialization;
 mod time;
-pub mod memory;
 
 pub mod traits;
 

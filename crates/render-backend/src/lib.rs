@@ -88,4 +88,3 @@ fn find_memory(pdevice: &PhysicalDevice, mask: u32, flags: vk::MemoryPropertyFla
         })
         .map(|(index, _memory_type)| index as _)
 }
-

@@ -21,7 +21,7 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use crate::BufferView;
 
 use super::{
-    BackendResult, Buffer, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass,
+    BackendResult, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass,
     MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
@@ -184,8 +184,12 @@ impl<'a> CommandBufferRecorder<'a> {
             .size(size as _)
             .build();
         unsafe {
-            self.device
-                .cmd_copy_buffer(*self.cb, from.buffer(), to.buffer(), slice::from_ref(&region))
+            self.device.cmd_copy_buffer(
+                *self.cb,
+                from.buffer(),
+                to.buffer(),
+                slice::from_ref(&region),
+            )
         };
     }
 

@@ -15,14 +15,12 @@
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex}, mem::take,
+    sync::{Arc, Mutex},
 };
 
-use super::{
-    memory::DynamicAllocator, BackendError, BackendResult, Device, FreeGpuResource, PhysicalDevice,
-};
+use super::{BackendError, BackendResult, Device};
 use ash::vk;
-use gpu_alloc::{MemoryHeap, MemoryBlock, Request, UsageFlags};
+use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
@@ -149,14 +147,22 @@ impl Image {
     ) -> BackendResult<Self> {
         let image = unsafe { device.raw.create_image(&image_desc.build(), None) }?;
         let requirement = unsafe { device.raw.get_image_memory_requirements(image) };
-        let allocation = unsafe { device.allocator().alloc(AshMemoryDevice::wrap(&device.raw),
-                                                  Request{
-                                                      size: requirement.size,
-                                                      align_mask: requirement.alignment,
-                                                      memory_types: requirement.memory_type_bits,
-                                                      usage: UsageFlags::FAST_DEVICE_ACCESS,
-                                                  }) }?;
-        unsafe { device.raw.bind_image_memory(image, *allocation.memory(), allocation.offset()) }?;
+        let allocation = unsafe {
+            device.allocator().alloc(
+                AshMemoryDevice::wrap(&device.raw),
+                Request {
+                    size: requirement.size,
+                    align_mask: requirement.alignment,
+                    memory_types: requirement.memory_type_bits,
+                    usage: UsageFlags::FAST_DEVICE_ACCESS,
+                },
+            )
+        }?;
+        unsafe {
+            device
+                .raw
+                .bind_image_memory(image, *allocation.memory(), allocation.offset())
+        }?;
 
         if let Some(name) = name {
             device.set_object_name(image, name)?;
@@ -167,7 +173,7 @@ impl Image {
             raw: image,
             desc: image_desc,
             views: Default::default(),
-            allocation: Some(allocation)
+            allocation: Some(allocation),
         })
     }
 
