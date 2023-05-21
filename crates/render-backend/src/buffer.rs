@@ -17,7 +17,7 @@ use core::slice;
 use std::sync::Arc;
 
 use ash::vk::{self, BufferCreateInfo};
-use gpu_alloc::{MemoryBlock, Request, UsageFlags};
+use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::Device;
@@ -30,6 +30,7 @@ pub struct BufferDesc {
     pub usage: vk::BufferUsageFlags,
     pub memory_location: UsageFlags,
     pub alignment: Option<u64>,
+    pub dedicated: bool,
 }
 
 impl BufferDesc {
@@ -39,6 +40,7 @@ impl BufferDesc {
             usage,
             memory_location: UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
+            dedicated: false,
         }
     }
 
@@ -48,6 +50,7 @@ impl BufferDesc {
             usage,
             memory_location: UsageFlags::HOST_ACCESS,
             alignment: None,
+            dedicated: false,
         }
     }
 
@@ -57,11 +60,17 @@ impl BufferDesc {
             usage,
             memory_location: UsageFlags::UPLOAD,
             alignment: None,
+            dedicated: false,
         }
     }
 
     pub fn aligment(mut self, aligment: u64) -> Self {
         self.alignment = Some(aligment);
+        self
+    }
+
+    pub fn dedicated(mut self, value: bool) -> Self {
+        self.dedicated = value;
         self
     }
 }
@@ -94,17 +103,25 @@ impl Buffer {
         } else {
             requirement.alignment
         };
-        let allocation = unsafe {
-            device.allocator().alloc(
+        let request = Request {
+            size: requirement.size,
+            align_mask: aligment,
+            memory_types: requirement.memory_type_bits,
+            usage: desc.memory_location,
+        };
+        let allocation = if desc.dedicated {
+            unsafe { device.allocator().alloc_with_dedicated(
                 AshMemoryDevice::wrap(&device.raw),
-                Request {
-                    size: requirement.size,
-                    align_mask: aligment,
-                    memory_types: requirement.memory_type_bits,
-                    usage: desc.memory_location,
-                },
-            )
-        }?;
+                request,
+                Dedicated::Required,
+            ) }?
+        } else {
+            unsafe {
+                device
+                    .allocator()
+                    .alloc(AshMemoryDevice::wrap(&device.raw), request)
+            }?
+        };
         unsafe {
             device
                 .raw
