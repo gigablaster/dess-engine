@@ -5,3 +5,6 @@ edition = "2021"
 
 [dependencies]
 dess-render-backend = { path = "../render-backend" }
+dess-common = { path = "../common" }
+ash =  "0.37"
+vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }

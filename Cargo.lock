@@ -199,7 +199,10 @@ dependencies = [
 name = "dess-render"
 version = "0.1.0"
 dependencies = [
+ "ash",
+ "dess-common",
  "dess-render-backend",
+ "vk-sync",
 ]
 
 [[package]]

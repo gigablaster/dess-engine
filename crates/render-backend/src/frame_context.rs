@@ -20,19 +20,11 @@ use super::{BackendResult, CommandBuffer, FreeGpuResource, QueueFamily};
 pub struct FrameContext {
     pub presentation_cb: CommandBuffer,
     pub main_cb: CommandBuffer,
-    pub pool: vk::CommandPool,
     pub render_finished: vk::Semaphore,
 }
 
 impl FrameContext {
-    pub fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
-        let pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER)
-            .queue_family_index(queue_family.index)
-            .build();
-
-        let pool = unsafe { device.create_command_pool(&pool_create_info, None)? };
-
+    pub(crate) fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
         let semaphore_info = vk::SemaphoreCreateInfo::builder()
             .flags(vk::SemaphoreCreateFlags::default())
             .build();
@@ -40,15 +32,15 @@ impl FrameContext {
         let render_finished = unsafe { device.create_semaphore(&semaphore_info, None) }?;
 
         Ok(Self {
-            presentation_cb: CommandBuffer::new(device, pool)?,
-            main_cb: CommandBuffer::new(device, pool)?,
-            pool,
+            presentation_cb: CommandBuffer::new(device, queue_family.index)?,
+            main_cb: CommandBuffer::new(device, queue_family.index)?,
             render_finished,
         })
     }
 
     pub(crate) fn reset(&self, device: &ash::Device) -> BackendResult<()> {
-        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
+        self.main_cb.reset(device)?;
+        self.presentation_cb.reset(device)?;
 
         Ok(())
     }
@@ -59,7 +51,6 @@ impl FreeGpuResource for FrameContext {
         self.presentation_cb.free(device);
         self.main_cb.free(device);
         unsafe {
-            device.destroy_command_pool(self.pool, None);
             device.destroy_semaphore(self.render_finished, None);
         }
     }

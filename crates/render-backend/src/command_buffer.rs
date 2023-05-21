@@ -26,18 +26,18 @@ use super::{
 };
 
 pub struct CommandBuffer {
+    pub pool: vk::CommandPool,
     pub raw: vk::CommandBuffer,
     pub fence: vk::Fence,
-    pub pool: vk::CommandPool,
-}
-
-pub enum QueueType {
-    RENDER,
-    TRANSFER,
 }
 
 impl CommandBuffer {
-    pub(crate) fn new(device: &ash::Device, pool: vk::CommandPool) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, queue_family_index: u32) -> BackendResult<Self> {
+        let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
+            .queue_family_index(queue_family_index)
+            .build();
+        let pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }?;
+
         let command_buffer_allocation_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .command_pool(pool)
@@ -60,8 +60,15 @@ impl CommandBuffer {
         })
     }
 
-    pub fn record<'a>(&'a self, device: &'a Device) -> BackendResult<CommandBufferRecorder<'a>> {
-        CommandBufferRecorder::new(&device.raw, &self.raw)
+    pub fn record<F: FnOnce(CommandBufferRecorder)>(
+        &self,
+        device: &ash::Device,
+        cb: F,
+    ) -> BackendResult<()> {
+        let recorder = CommandBufferRecorder::new(&device, &self.raw)?;
+        cb(recorder);
+
+        Ok(())
     }
 
     pub fn wait(&self, device: &ash::Device) -> BackendResult<()> {
@@ -70,7 +77,7 @@ impl CommandBuffer {
     }
 
     pub fn reset(&self, device: &ash::Device) -> BackendResult<()> {
-        unsafe { device.reset_command_buffer(self.raw, vk::CommandBufferResetFlags::empty()) }?;
+        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
         Ok(())
     }
 }
@@ -79,6 +86,7 @@ impl FreeGpuResource for CommandBuffer {
     fn free(&self, device: &ash::Device) {
         unsafe {
             device.free_command_buffers(self.pool, slice::from_ref(&self.raw));
+            device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
         }
     }
@@ -109,13 +117,14 @@ impl<'a> CommandBufferRecorder<'a> {
         Ok(Self { device, cb })
     }
 
-    pub fn render_pass(
+    pub fn render_pass<F: FnOnce(RenderPassRecorder)>(
         &self,
         device: &ash::Device,
         render_pass: &RenderPass,
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<RenderPassAttachment>,
-    ) -> RenderPassRecorder {
+        cb: F,
+    ) {
         let clear_values = color_attachments
             .iter()
             .chain(depth_attachment.iter())
@@ -159,10 +168,10 @@ impl<'a> CommandBufferRecorder<'a> {
                 )
             };
 
-            RenderPassRecorder {
+            cb(RenderPassRecorder {
                 device: self.device,
                 cb: self.cb,
-            }
+            });
         } else {
             panic!("Can't start render pass without attachments");
         }
