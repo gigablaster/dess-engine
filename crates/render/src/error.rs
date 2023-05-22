@@ -4,6 +4,7 @@ pub enum RenderError {
     Backend(BackendError),
     DeviceNotFound,
     RecreateBuffers,
+    NotEnoughCacheMemory,
 }
 
 impl From<BackendError> for RenderError {

@@ -18,7 +18,7 @@ use std::{ptr::copy_nonoverlapping, slice, sync::Arc};
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 use dess_render_backend::{
-    BackendError, Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device,
+    Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device,
 };
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier};
 
@@ -87,7 +87,7 @@ impl Staging {
 
     pub fn upload_buffer(
         &mut self,
-        device: &ash::Device,
+        _device: &ash::Device,
         buffer: &impl BufferView,
         data: &[u8],
     ) -> RenderResult<u64> {

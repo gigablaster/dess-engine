@@ -2,15 +2,63 @@ use std::sync::{Arc, Mutex};
 
 use ash::vk;
 use dess_render_backend::{
-    BackendError, CommandBuffer, Device, FrameContext, Image, Instance, PhysicalDeviceList,
-    SubImage, SubmitWaitDesc, Surface, Swapchain, SwapchainImage,
+    BackendError, Buffer, CommandBuffer, Device, Image, Instance, PhysicalDeviceList, SubImage,
+    SubmitWaitDesc, Surface, Swapchain,
 };
 use sdl2::video::Window;
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
-use crate::{RenderError, RenderResult, Staging};
+use crate::{geometry::GeometryCache, RenderError, RenderResult, Staging};
 
 const STAGING_SIZE: usize = 64 * 1024 * 1024;
+const GEOMETRY_CACHE_SIZE: usize = 64 * 1024 * 1024;
+
+const RING_BUFFER_MASK: u32 = 1 << 31;
+
+pub enum BufferOffset {
+    Main(u32),
+    Ring(u32),
+}
+
+pub struct Offset {
+    raw: u32,
+}
+
+impl Offset {
+    pub fn main(offset: u32) -> Self {
+        assert!(offset & RING_BUFFER_MASK == 0);
+        Self { raw: offset }
+    }
+
+    pub fn ring(offset: u32) -> Self {
+        assert!(offset & RING_BUFFER_MASK == 0);
+        Self {
+            raw: offset | RING_BUFFER_MASK,
+        }
+    }
+
+    pub fn offset(&self) -> BufferOffset {
+        let raw_offset = self.raw & !RING_BUFFER_MASK;
+        if self.raw & RING_BUFFER_MASK == 0 {
+            BufferOffset::Main(raw_offset)
+        } else {
+            BufferOffset::Ring(raw_offset)
+        }
+    }
+
+    pub fn same_buffer(&self, other: &Offset) -> bool {
+        self.raw & RING_BUFFER_MASK == other.raw & RING_BUFFER_MASK
+    }
+}
+
+#[repr(C, align(16))]
+pub struct RenderOp {
+    pso: u32,
+    vertex_offset: Offset,
+    index_offset: Offset,
+    primitve_count: u32,
+    descs: [u32; 4],
+}
 
 pub enum GpuType {
     DiscreteOnly,
@@ -21,8 +69,9 @@ pub enum GpuType {
 pub struct RenderSystem<'a> {
     window: &'a Window,
     device: Arc<Device>,
-    swapchain: Swapchain<'a>,
+    swapchain: Mutex<Swapchain<'a>>,
     staging: Mutex<Staging>,
+    geo_cache: Mutex<GeometryCache>,
 }
 
 pub struct RenderSystemDesc {
@@ -52,6 +101,11 @@ impl RenderSystemDesc {
 struct RenderContext<'a> {
     pub cb: &'a CommandBuffer,
     pub image: &'a Image,
+    geo_cache: &'a Buffer,
+}
+
+impl<'a> RenderContext<'a> {
+    pub fn render(&self, _rops: &[RenderOp]) {}
 }
 
 impl<'a> RenderSystem<'a> {
@@ -76,33 +130,36 @@ impl<'a> RenderSystem<'a> {
             let device = Device::create(instance, pdevice)?;
             let swapchain = Swapchain::new(&device, surface)?;
             let staging = Staging::new(&device, STAGING_SIZE)?;
+            let geo_cache = GeometryCache::new(&device, GEOMETRY_CACHE_SIZE)?;
 
             Ok(Self {
                 device,
                 window,
-                swapchain,
+                swapchain: Mutex::new(swapchain),
                 staging: Mutex::new(staging),
+                geo_cache: Mutex::new(geo_cache),
             })
         } else {
             Err(crate::RenderError::DeviceNotFound)
         }
     }
 
-    pub fn render<F: FnOnce(RenderContext)>(&mut self, cb: F) -> RenderResult<()> {
+    pub fn render_frame<F: FnOnce(RenderContext)>(&self, frame_cb: F) -> RenderResult<()> {
         let size = self.window.size();
-        let render_area = self.swapchain.render_area();
+        let mut swapchain = self.swapchain.lock().unwrap();
+        let render_area = swapchain.render_area();
         if size.0 != render_area.extent.width || size.1 != render_area.extent.height {
             self.device.wait();
-            self.swapchain.recreate()?;
+            swapchain.recreate()?;
 
             return Err(RenderError::RecreateBuffers);
         }
 
         let frame = self.device.begin_frame()?;
-        let image = match self.swapchain.acquire_next_image() {
+        let image = match swapchain.acquire_next_image() {
             Err(BackendError::RecreateSwapchain) => {
                 self.device.wait();
-                self.swapchain.recreate()?;
+                swapchain.recreate()?;
 
                 return Err(RenderError::RecreateBuffers);
             }
@@ -114,12 +171,15 @@ impl<'a> RenderSystem<'a> {
         staging.upload()?;
         staging.wait()?;
 
+        let geo_cache = self.geo_cache.lock().unwrap();
+
         let context = RenderContext {
             cb: &frame.main_cb,
             image: &image.image,
+            geo_cache: &geo_cache.buffer,
         };
 
-        cb(context);
+        frame_cb(context);
 
         self.device.submit_render(
             &frame.main_cb,
@@ -154,7 +214,7 @@ impl<'a> RenderSystem<'a> {
             &[image.presentation_finished],
         )?;
         self.device.end_frame(frame)?;
-        self.swapchain.present_image(image);
+        swapchain.present_image(image);
 
         Ok(())
     }

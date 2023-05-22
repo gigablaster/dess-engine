@@ -21,8 +21,8 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use crate::BufferView;
 
 use super::{
-    BackendResult, Device, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass,
-    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    BackendResult, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass, MAX_ATTACHMENTS,
+    MAX_COLOR_ATTACHMENTS,
 };
 
 pub struct CommandBuffer {
