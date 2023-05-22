@@ -35,12 +35,6 @@ pub struct DynamicAllocator {
     blocks: Vec<Block>,
 }
 
-#[derive(Debug)]
-pub enum AllocError {
-    NotEnoughMemory,
-    WrongBlock,
-}
-
 fn align(value: u64, align: u64) -> u64 {
     if value == 0 || value % align == 0 {
         value
@@ -60,26 +54,24 @@ impl DynamicAllocator {
         }
     }
 
-    pub fn alloc(&mut self, size: u64) -> Result<u64, AllocError> {
+    pub fn alloc(&mut self, size: u64) -> Option<u64> {
         if let Some(index) = self.find_free_block(size) {
-            if let Some(offset) = self.split_and_insert_block(index, size) {
-                return Ok(offset);
-            }
+            self.split_and_insert_block(index, size)
+        } else {
+            None
         }
-
-        Err(AllocError::NotEnoughMemory)
     }
 
-    pub fn free(&mut self, offset: u64) -> Result<(), AllocError> {
+    pub fn free(&mut self, offset: u64) {
         if let Some(index) = self.find_used_block(offset) {
             if let Block::Used(block) = self.blocks[index] {
                 self.blocks[index] = Block::Free(block);
                 self.merge_free_blocks(index);
-                return Ok(());
+                return;
             }
         }
 
-        Err(AllocError::WrongBlock)
+        panic!("Attempt to free already freed block or block from different allocator");
     }
 
     fn find_used_block(&self, offset: u64) -> Option<usize> {
@@ -241,8 +233,8 @@ mod test {
         let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1).unwrap();
-        allocator.free(block2).unwrap();
+        allocator.free(block1);
+        allocator.free(block2);
         let block = allocator.alloc(300).unwrap();
         assert_eq!(0, block);
     }
@@ -252,7 +244,7 @@ mod test {
         let mut allocator = DynamicAllocator::new(1024, 64);
         let block1 = allocator.alloc(100).unwrap();
         let _block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1).unwrap();
+        allocator.free(block1);
         let block = allocator.alloc(300).unwrap();
         assert_eq!(384, block);
     }
@@ -263,7 +255,7 @@ mod test {
         allocator.alloc(100).unwrap();
         let block = allocator.alloc(200).unwrap();
         allocator.alloc(100).unwrap();
-        allocator.free(block).unwrap();
+        allocator.free(block);
         let block1 = allocator.alloc(50).unwrap();
         let block2 = allocator.alloc(50).unwrap();
         assert_eq!(128, block1);
@@ -275,7 +267,7 @@ mod test {
         let mut allocator = DynamicAllocator::new(1024, 64);
         allocator.alloc(500).unwrap();
         allocator.alloc(200).unwrap();
-        assert!(allocator.alloc(500).is_err());
+        assert!(allocator.alloc(500).is_none());
     }
 
     #[test]
