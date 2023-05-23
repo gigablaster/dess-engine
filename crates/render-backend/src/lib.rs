@@ -28,6 +28,7 @@ mod swapchain;
 
 pub use self::image::*;
 
+use ash::vk;
 pub use buffer::*;
 pub use command_buffer::*;
 pub use device::*;
@@ -43,3 +44,9 @@ pub use swapchain::*;
 pub trait FreeGpuResource {
     fn free(&self, device: &ash::Device);
 }
+
+pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
+pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
+pub type DescriptorAllocator =
+    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
+pub type DescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;

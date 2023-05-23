@@ -20,8 +20,9 @@ use std::{
 
 use ash::vk;
 use dess_render_backend::{
-    BackendError, Buffer, CommandBuffer, Device, Image, Instance, PhysicalDeviceList,
-    PipelineVertex, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
+    BackendError, Buffer, CommandBuffer, DescriptorAllocator, Device, Image, Instance,
+    PhysicalDeviceList, PipelineVertex, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface,
+    Swapchain,
 };
 use sdl2::video::Window;
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
@@ -87,13 +88,13 @@ impl RenderSystemDesc {
 pub struct UpdateContext<'a> {
     drop_list: &'a mut DropList,
     staging: &'a mut Staging,
+    descriptors: &'a mut DescriptorAllocator,
 }
 
 pub struct RenderContext<'a> {
     pub cb: &'a CommandBuffer,
     pub image: &'a Image,
     geo_cache: &'a Buffer,
-    device: &'a Device,
 }
 
 impl<'a> RenderContext<'a> {
@@ -199,9 +200,11 @@ impl<'a> RenderSystem<'a> {
         puffin::profile_scope!("update resources");
         let mut staging = self.staging.lock().unwrap();
         let mut drop_list = self.current_drop_list.lock().unwrap();
+        let mut descriptors = self.device.descriptors();
         let context = UpdateContext {
             drop_list: &mut drop_list,
             staging: &mut staging,
+            descriptors: &mut descriptors,
         };
 
         update_cb(context);
@@ -243,7 +246,6 @@ impl<'a> RenderSystem<'a> {
             cb: &frame.main_cb,
             image: &image.image,
             geo_cache: &geo_cache.buffer,
-            device: &self.device,
         };
 
         {
@@ -298,20 +300,5 @@ impl<'a> RenderSystem<'a> {
         }
 
         Ok(())
-    }
-
-    pub fn create_static_geometry<T: PipelineVertex>(
-        &self,
-        vertices: &[T],
-        indices: &[Index],
-        name: Option<&str>,
-    ) -> RenderResult<StaticGeometry> {
-        let mut geo_cache = self.geo_cache.lock().unwrap();
-        let geometry = geo_cache.create::<T>(vertices.len(), indices.len(), name)?;
-        let mut staging = self.staging.lock().unwrap();
-        staging.upload_buffer(&geometry.vertices, vertices)?;
-        staging.upload_buffer(&geometry.indices, indices)?;
-
-        Ok(geometry)
     }
 }

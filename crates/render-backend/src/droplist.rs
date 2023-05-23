@@ -1,15 +1,18 @@
 use ash::vk;
-use gpu_alloc::{GpuAllocator, MemoryBlock};
 use gpu_alloc_ash::AshMemoryDevice;
+use gpu_descriptor_ash::AshDescriptorDevice;
+
+use crate::{DescriptorAllocator, DescriptorSet, GpuAllocator, GpuMemory};
 
 const CAPACITY: usize = 128;
 
 #[derive(Debug)]
 pub(crate) struct DropList {
-    memory_to_free: Vec<MemoryBlock<vk::DeviceMemory>>,
+    memory_to_free: Vec<GpuMemory>,
     images_to_free: Vec<vk::Image>,
     image_views_to_free: Vec<vk::ImageView>,
     buffers_to_free: Vec<vk::Buffer>,
+    descriptors_to_free: Vec<DescriptorSet>,
 }
 
 impl Default for DropList {
@@ -19,6 +22,7 @@ impl Default for DropList {
             images_to_free: Vec::with_capacity(CAPACITY),
             image_views_to_free: Vec::with_capacity(CAPACITY),
             buffers_to_free: Vec::with_capacity(CAPACITY),
+            descriptors_to_free: Vec::with_capacity(CAPACITY),
         }
     }
 }
@@ -36,11 +40,20 @@ impl DropList {
         self.buffers_to_free.push(buffer);
     }
 
-    pub fn free_memory(&mut self, block: MemoryBlock<vk::DeviceMemory>) {
+    pub fn drop_descriptor(&mut self, descriptor: DescriptorSet) {
+        self.descriptors_to_free.push(descriptor);
+    }
+
+    pub fn free_memory(&mut self, block: GpuMemory) {
         self.memory_to_free.push(block);
     }
 
-    pub fn free(&mut self, device: &ash::Device, allocator: &mut GpuAllocator<vk::DeviceMemory>) {
+    pub fn free(
+        &mut self,
+        device: &ash::Device,
+        allocator: &mut GpuAllocator,
+        descriptors: &mut DescriptorAllocator,
+    ) {
         self.image_views_to_free.drain(..).for_each(|view| {
             unsafe { device.destroy_image_view(view, None) };
         });
@@ -53,9 +66,16 @@ impl DropList {
         self.memory_to_free.drain(..).for_each(|block| {
             unsafe { allocator.dealloc(AshMemoryDevice::wrap(device), block) };
         });
+        unsafe {
+            descriptors.free(
+                AshDescriptorDevice::wrap(device),
+                self.descriptors_to_free.drain(..),
+            )
+        };
         self.memory_to_free.shrink_to(CAPACITY);
         self.image_views_to_free.shrink_to(CAPACITY);
         self.images_to_free.shrink_to(CAPACITY);
         self.buffers_to_free.shrink_to(CAPACITY);
+        self.descriptors_to_free.shrink_to(CAPACITY);
     }
 }

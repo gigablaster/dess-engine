@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ptr::copy_nonoverlapping, slice, sync::Arc, mem::size_of};
+use std::{mem::size_of, ptr::copy_nonoverlapping, slice, sync::Arc};
 
 use ash::vk;
 use dess_common::memory::BumpAllocator;
@@ -110,7 +110,13 @@ impl Staging {
         Ok(self.index)
     }
 
-    fn try_push_buffer(&mut self, buffer: &impl BufferView, data: *const u8, mapping: *mut u8, size: usize) -> bool {
+    fn try_push_buffer(
+        &mut self,
+        buffer: &impl BufferView,
+        data: *const u8,
+        mapping: *mut u8,
+        size: usize,
+    ) -> bool {
         if let Some(offset) = self.allocator.allocate(size as _) {
             unsafe { copy_nonoverlapping(data, mapping.add(offset as _), size) }
             let request = BufferUploadRequest {
