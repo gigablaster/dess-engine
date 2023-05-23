@@ -1,62 +1,43 @@
-use std::sync::{Arc, Mutex};
+// Copyright (C) 2023 gigablaster
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use std::{sync::{Arc, Mutex}, mem::size_of};
 
 use ash::vk;
 use dess_render_backend::{
-    BackendError, Buffer, CommandBuffer, Device, Image, Instance, PhysicalDeviceList, SubImage,
-    SubmitWaitDesc, Surface, Swapchain,
+    BackendError, Buffer, CommandBuffer, Device, Image, Instance, PhysicalDeviceList,
+    PipelineVertex, SubImage, SubmitWaitDesc, Surface, Swapchain, RenderPassRecorder,
 };
 use sdl2::video::Window;
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
-use crate::{geometry::GeometryCache, RenderError, RenderResult, Staging};
+use crate::{
+    geometry::{GeometryCache, Index, StaticGeometry},
+    RenderError, RenderResult, Staging,
+};
 
 const STAGING_SIZE: usize = 64 * 1024 * 1024;
 const GEOMETRY_CACHE_SIZE: usize = 64 * 1024 * 1024;
-
-const RING_BUFFER_MASK: u32 = 1 << 31;
-
-pub enum BufferOffset {
-    Main(u32),
-    Ring(u32),
-}
-
-pub struct Offset {
-    raw: u32,
-}
-
-impl Offset {
-    pub fn main(offset: u32) -> Self {
-        assert!(offset & RING_BUFFER_MASK == 0);
-        Self { raw: offset }
-    }
-
-    pub fn ring(offset: u32) -> Self {
-        assert!(offset & RING_BUFFER_MASK == 0);
-        Self {
-            raw: offset | RING_BUFFER_MASK,
-        }
-    }
-
-    pub fn offset(&self) -> BufferOffset {
-        let raw_offset = self.raw & !RING_BUFFER_MASK;
-        if self.raw & RING_BUFFER_MASK == 0 {
-            BufferOffset::Main(raw_offset)
-        } else {
-            BufferOffset::Ring(raw_offset)
-        }
-    }
-
-    pub fn same_buffer(&self, other: &Offset) -> bool {
-        self.raw & RING_BUFFER_MASK == other.raw & RING_BUFFER_MASK
-    }
-}
+const DROP_LIST_DEFAULT_SIZE: usize = 32;
 
 #[repr(C, align(16))]
 pub struct RenderOp {
     pso: u32,
-    vertex_offset: Offset,
-    index_offset: Offset,
-    primitve_count: u32,
+    vertex_offset: u32,
+    index_offset: u32,
+    index_count: u32,
     descs: [u32; 4],
 }
 
@@ -72,6 +53,8 @@ pub struct RenderSystem<'a> {
     swapchain: Mutex<Swapchain<'a>>,
     staging: Mutex<Staging>,
     geo_cache: Mutex<GeometryCache>,
+    current_drop_list: Mutex<DropList>,
+    drop_list: [Mutex<DropList>; 2],
 }
 
 pub struct RenderSystemDesc {
@@ -98,14 +81,68 @@ impl RenderSystemDesc {
     }
 }
 
-struct RenderContext<'a> {
+pub struct UpdateContext<'a> {
+    drop_list: &'a mut DropList,
+    staging: &'a mut Staging,
+}
+
+pub struct RenderContext<'a> {
     pub cb: &'a CommandBuffer,
     pub image: &'a Image,
     geo_cache: &'a Buffer,
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn render(&self, _rops: &[RenderOp]) {}
+    pub fn render(&self, pass: &RenderPassRecorder, rops: &[RenderOp]) {
+        if rops.is_empty() {
+            return;
+        }
+        // TODO:: create some sort of Handle with not-valid state. For now we assume than 0 is no-state
+        let mut current_descs = [0u32; 4];
+        let mut current_pso = 0;
+        pass.bind_vertex_buffer(self.geo_cache);
+        pass.bind_index_buffer(self.geo_cache);
+        rops.iter().for_each(|rop| {
+            if current_pso != rop.pso {
+                // TODO:: get and bind PSO
+                current_pso = rop.pso;
+            }
+            rop.descs.iter().enumerate().for_each(|(index, desc)| {
+                if current_descs[index] != *desc {
+                    // TODO:: bind desc
+                    current_descs[index] = *desc;
+                }
+            });
+            assert_eq!(0, rop.index_offset % size_of::<Index>() as u32);
+            let first_index = rop.index_offset / size_of::<Index>() as u32;
+            pass.draw(rop.index_count, 0, first_index, rop.vertex_offset as _);
+        });
+    }
+}
+
+pub(crate) struct DropList {
+    geometry: Vec<StaticGeometry>,
+}
+
+impl Default for DropList {
+    fn default() -> Self {
+        Self {
+            geometry: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
+        }
+    }
+}
+
+impl DropList {
+    pub fn drop_static_geometry(&mut self, geometry: StaticGeometry) {
+        self.geometry.push(geometry);
+    }
+
+    pub fn free(&mut self, geo_cache: &mut GeometryCache) {
+        self.geometry
+            .drain(..)
+            .for_each(|geo| geo_cache.destroy(geo));
+        self.geometry.shrink_to(DROP_LIST_DEFAULT_SIZE);
+    }
 }
 
 impl<'a> RenderSystem<'a> {
@@ -138,15 +175,34 @@ impl<'a> RenderSystem<'a> {
                 swapchain: Mutex::new(swapchain),
                 staging: Mutex::new(staging),
                 geo_cache: Mutex::new(geo_cache),
+                current_drop_list: Mutex::new(DropList::default()),
+                drop_list: [
+                    Mutex::new(DropList::default()),
+                    Mutex::new(DropList::default()),
+                ],
             })
         } else {
             Err(crate::RenderError::DeviceNotFound)
         }
     }
 
+    pub fn update_resources<F: FnOnce(UpdateContext)>(&self, update_cb: F) -> RenderResult<()> {
+        let mut staging = self.staging.lock().unwrap();
+        let mut drop_list = self.current_drop_list.lock().unwrap();
+        let context = UpdateContext {
+            drop_list: &mut drop_list,
+            staging: &mut staging
+        };
+
+        update_cb(context);
+
+        Ok(())
+    }
+
     pub fn render_frame<F: FnOnce(RenderContext)>(&self, frame_cb: F) -> RenderResult<()> {
         let size = self.window.size();
         let mut swapchain = self.swapchain.lock().unwrap();
+        let mut geo_cache = self.geo_cache.lock().unwrap();
         let render_area = swapchain.render_area();
         if size.0 != render_area.extent.width || size.1 != render_area.extent.height {
             self.device.wait();
@@ -156,6 +212,7 @@ impl<'a> RenderSystem<'a> {
         }
 
         let frame = self.device.begin_frame()?;
+        self.drop_list[0].lock().unwrap().free(&mut geo_cache);
         let image = match swapchain.acquire_next_image() {
             Err(BackendError::RecreateSwapchain) => {
                 self.device.wait();
@@ -170,8 +227,6 @@ impl<'a> RenderSystem<'a> {
         let mut staging = self.staging.lock().unwrap();
         staging.upload()?;
         staging.wait()?;
-
-        let geo_cache = self.geo_cache.lock().unwrap();
 
         let context = RenderContext {
             cb: &frame.main_cb,
@@ -214,8 +269,29 @@ impl<'a> RenderSystem<'a> {
             &[image.presentation_finished],
         )?;
         self.device.end_frame(frame)?;
+        *self.drop_list[0].lock().unwrap() =
+            std::mem::take::<DropList>(&mut self.current_drop_list.lock().unwrap());
+        std::mem::swap(
+            &mut self.drop_list[0].lock().unwrap(),
+            &mut self.drop_list[1].lock().unwrap(),
+        );
         swapchain.present_image(image);
 
         Ok(())
+    }
+
+    pub fn create_static_geometry<T: PipelineVertex>(
+        &self,
+        vertices: &[T],
+        indices: &[Index],
+        name: Option<&str>,
+    ) -> RenderResult<StaticGeometry> {
+        let mut geo_cache = self.geo_cache.lock().unwrap();
+        let geometry = geo_cache.create::<T>(vertices.len(), indices.len(), name)?;
+        let mut staging = self.staging.lock().unwrap();
+        staging.upload_buffer(&geometry.vertices, vertices)?;
+        staging.upload_buffer(&geometry.indices, indices)?;
+
+        Ok(geometry)
     }
 }

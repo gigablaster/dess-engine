@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ptr::copy_nonoverlapping, slice, sync::Arc};
+use std::{ptr::copy_nonoverlapping, slice, sync::Arc, mem::size_of};
 
 use ash::vk;
 use dess_common::memory::BumpAllocator;
@@ -85,22 +85,22 @@ impl Staging {
         self.buffer.unmap();
     }
 
-    pub fn upload_buffer(
+    pub fn upload_buffer<T: Sized>(
         &mut self,
-        _device: &ash::Device,
         buffer: &impl BufferView,
-        data: &[u8],
+        data: &[T],
     ) -> RenderResult<u64> {
-        assert!(data.len() as u64 <= self.size);
-        assert_eq!(buffer.size(), data.len() as u64);
+        let size = data.len() * size_of::<T>();
+        assert!(size as u64 <= self.size);
+        assert_eq!(buffer.size(), size as u64);
         self.tranfser_cb.wait(&self.device.raw)?;
         if self.mapping.is_none() {
             self.mapping = Some(self.map_buffer()?);
         }
         let mapping = self.mapping.unwrap();
-        if !self.try_push_buffer(buffer, data, mapping) {
+        if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping, size) {
             self.upload()?;
-            if !self.try_push_buffer(buffer, data, mapping) {
+            if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping, size) {
                 panic!(
                     "Despite just pushing entire staging buffer we still can't push data in it."
                 );
@@ -110,9 +110,9 @@ impl Staging {
         Ok(self.index)
     }
 
-    fn try_push_buffer(&mut self, buffer: &impl BufferView, data: &[u8], mapping: *mut u8) -> bool {
-        if let Some(offset) = self.allocator.allocate(data.len() as _) {
-            unsafe { copy_nonoverlapping(data.as_ptr(), mapping.add(offset as _), data.len()) }
+    fn try_push_buffer(&mut self, buffer: &impl BufferView, data: *const u8, mapping: *mut u8, size: usize) -> bool {
+        if let Some(offset) = self.allocator.allocate(size as _) {
+            unsafe { copy_nonoverlapping(data, mapping.add(offset as _), size) }
             let request = BufferUploadRequest {
                 dst: buffer.buffer(),
                 src_offset: offset,
