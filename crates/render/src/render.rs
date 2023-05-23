@@ -13,18 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{sync::{Arc, Mutex}, mem::size_of};
+use std::{
+    mem::size_of,
+    sync::{Arc, Mutex},
+};
 
 use ash::vk;
 use dess_render_backend::{
     BackendError, Buffer, CommandBuffer, Device, Image, Instance, PhysicalDeviceList,
-    PipelineVertex, SubImage, SubmitWaitDesc, Surface, Swapchain, RenderPassRecorder,
+    PipelineVertex, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
 };
 use sdl2::video::Window;
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
-    geometry::{GeometryCache, Index, StaticGeometry, CachedBuffer},
+    geometry::{CachedBuffer, GeometryCache, Index, StaticGeometry},
     RenderError, RenderResult, Staging,
 };
 
@@ -90,7 +93,7 @@ pub struct RenderContext<'a> {
     pub cb: &'a CommandBuffer,
     pub image: &'a Image,
     geo_cache: &'a Buffer,
-    device: &'a Device
+    device: &'a Device,
 }
 
 impl<'a> RenderContext<'a> {
@@ -198,7 +201,7 @@ impl<'a> RenderSystem<'a> {
         let mut drop_list = self.current_drop_list.lock().unwrap();
         let context = UpdateContext {
             drop_list: &mut drop_list,
-            staging: &mut staging
+            staging: &mut staging,
         };
 
         update_cb(context);
@@ -240,7 +243,7 @@ impl<'a> RenderSystem<'a> {
             cb: &frame.main_cb,
             image: &image.image,
             geo_cache: &geo_cache.buffer,
-            device: &self.device
+            device: &self.device,
         };
 
         {
@@ -258,20 +261,20 @@ impl<'a> RenderSystem<'a> {
         {
             puffin::profile_scope!("present cb");
             frame.presentation_cb.record(&self.device.raw, |recorder| {
-            let barrier = ImageBarrier {
-                previous_accesses: &[AccessType::Nothing],
-                next_accesses: &[AccessType::Present],
-                previous_layout: ImageLayout::Optimal,
-                next_layout: ImageLayout::Optimal,
-                src_queue_family_index: self.device.graphics_queue.family.index,
-                dst_queue_family_index: self.device.graphics_queue.family.index,
-                discard_contents: false,
-                image: image.image.raw,
-                range: image
-                    .image
-                    .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
-            };
-            pipeline_barrier(&self.device.raw, *recorder.cb, None, &[], &[barrier]);
+                let barrier = ImageBarrier {
+                    previous_accesses: &[AccessType::Nothing],
+                    next_accesses: &[AccessType::Present],
+                    previous_layout: ImageLayout::Optimal,
+                    next_layout: ImageLayout::Optimal,
+                    src_queue_family_index: self.device.graphics_queue.family.index,
+                    dst_queue_family_index: self.device.graphics_queue.family.index,
+                    discard_contents: false,
+                    image: image.image.raw,
+                    range: image
+                        .image
+                        .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
+                };
+                pipeline_barrier(&self.device.raw, *recorder.cb, None, &[], &[barrier]);
             })?;
             self.device.submit_render(
                 &frame.presentation_cb,
