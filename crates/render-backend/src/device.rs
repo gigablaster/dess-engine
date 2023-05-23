@@ -17,6 +17,7 @@ use std::{
     collections::HashMap,
     ffi::{CStr, CString},
     fmt::Debug,
+    mem::take,
     slice,
     sync::{Arc, Mutex, MutexGuard},
 };
@@ -62,6 +63,7 @@ pub struct Device {
     pub transfer_queue: Queue,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     frames: [Mutex<Arc<FrameContext>>; 2],
+    current_drop_list: Mutex<DropList>,
     drop_lists: [Mutex<DropList>; 2],
     allocator: Mutex<GpuAllocator<vk::DeviceMemory>>,
 }
@@ -145,6 +147,7 @@ impl Device {
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
+            current_drop_list: Mutex::new(DropList::default()),
             drop_lists,
             allocator: Mutex::new(allocator),
         }))
@@ -237,6 +240,8 @@ impl Device {
             let mut frame1 = self.frames[1].lock().unwrap();
             let frame1 = Arc::get_mut(&mut frame1).unwrap();
             std::mem::swap(frame0, frame1);
+            *self.drop_lists[0].lock().unwrap() =
+                std::mem::take::<DropList>(&mut self.current_drop_list.lock().unwrap());
             std::mem::swap(
                 &mut self.drop_lists[0].lock().unwrap(),
                 &mut self.drop_lists[1].lock().unwrap(),
@@ -310,7 +315,7 @@ impl Device {
     }
 
     pub(crate) fn with_drop_list<F: FnOnce(&mut DropList)>(&self, cb: F) {
-        let mut list = self.drop_lists[0].lock().unwrap();
+        let mut list = self.current_drop_list.lock().unwrap();
         cb(&mut list);
     }
 
