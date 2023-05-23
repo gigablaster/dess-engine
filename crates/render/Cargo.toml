@@ -8,4 +8,5 @@ dess-render-backend = { path = "../render-backend" }
 dess-common = { path = "../common" }
 ash =  "0.37"
 vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
+puffin = "0.15"
 sdl2 = "0.35"

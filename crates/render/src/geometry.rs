@@ -113,9 +113,4 @@ impl GeometryCache {
 
         Err(crate::RenderError::NotEnoughCacheMemory)
     }
-
-    pub fn destroy(&mut self, geometry: StaticGeometry) {
-        self.deallocate(geometry.vertices);
-        self.deallocate(geometry.indices);
-    }
 }

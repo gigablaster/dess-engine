@@ -24,7 +24,7 @@ use sdl2::video::Window;
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
-    geometry::{GeometryCache, Index, StaticGeometry},
+    geometry::{GeometryCache, Index, StaticGeometry, CachedBuffer},
     RenderError, RenderResult, Staging,
 };
 
@@ -90,10 +90,11 @@ pub struct RenderContext<'a> {
     pub cb: &'a CommandBuffer,
     pub image: &'a Image,
     geo_cache: &'a Buffer,
+    device: &'a Device
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn render(&self, pass: &RenderPassRecorder, rops: &[RenderOp]) {
+    pub fn render(&self, pass: &RenderPassRecorder, rops: &[RenderOp], name: Option<&str>) {
         if rops.is_empty() {
             return;
         }
@@ -121,27 +122,32 @@ impl<'a> RenderContext<'a> {
 }
 
 pub(crate) struct DropList {
-    geometry: Vec<StaticGeometry>,
+    buffers: Vec<CachedBuffer>,
 }
 
 impl Default for DropList {
     fn default() -> Self {
         Self {
-            geometry: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
+            buffers: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
         }
     }
 }
 
 impl DropList {
+    pub fn drop_static_buffer(&mut self, buffer: CachedBuffer) {
+        self.buffers.push(buffer);
+    }
+
     pub fn drop_static_geometry(&mut self, geometry: StaticGeometry) {
-        self.geometry.push(geometry);
+        self.drop_static_buffer(geometry.vertices);
+        self.drop_static_buffer(geometry.indices);
     }
 
     pub fn free(&mut self, geo_cache: &mut GeometryCache) {
-        self.geometry
+        self.buffers
             .drain(..)
-            .for_each(|geo| geo_cache.destroy(geo));
-        self.geometry.shrink_to(DROP_LIST_DEFAULT_SIZE);
+            .for_each(|buffer| geo_cache.deallocate(buffer));
+        self.buffers.shrink_to(DROP_LIST_DEFAULT_SIZE);
     }
 }
 
@@ -187,6 +193,7 @@ impl<'a> RenderSystem<'a> {
     }
 
     pub fn update_resources<F: FnOnce(UpdateContext)>(&self, update_cb: F) -> RenderResult<()> {
+        puffin::profile_scope!("update resources");
         let mut staging = self.staging.lock().unwrap();
         let mut drop_list = self.current_drop_list.lock().unwrap();
         let context = UpdateContext {
@@ -200,6 +207,7 @@ impl<'a> RenderSystem<'a> {
     }
 
     pub fn render_frame<F: FnOnce(RenderContext)>(&self, frame_cb: F) -> RenderResult<()> {
+        puffin::profile_scope!("render frame");
         let size = self.window.size();
         let mut swapchain = self.swapchain.lock().unwrap();
         let mut geo_cache = self.geo_cache.lock().unwrap();
@@ -232,19 +240,24 @@ impl<'a> RenderSystem<'a> {
             cb: &frame.main_cb,
             image: &image.image,
             geo_cache: &geo_cache.buffer,
+            device: &self.device
         };
 
-        frame_cb(context);
-
-        self.device.submit_render(
-            &frame.main_cb,
-            &[SubmitWaitDesc {
-                semaphore: image.acquire_semaphore,
-                stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            }],
-            &[frame.render_finished],
-        )?;
-        frame.presentation_cb.record(&self.device.raw, |recorder| {
+        {
+            puffin::profile_scope!("main cb");
+            frame_cb(context);
+            self.device.submit_render(
+                &frame.main_cb,
+                &[SubmitWaitDesc {
+                    semaphore: image.acquire_semaphore,
+                    stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                }],
+                &[frame.render_finished],
+            )?;
+        }
+        {
+            puffin::profile_scope!("present cb");
+            frame.presentation_cb.record(&self.device.raw, |recorder| {
             let barrier = ImageBarrier {
                 previous_accesses: &[AccessType::Nothing],
                 next_accesses: &[AccessType::Present],
@@ -259,15 +272,16 @@ impl<'a> RenderSystem<'a> {
                     .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
             };
             pipeline_barrier(&self.device.raw, *recorder.cb, None, &[], &[barrier]);
-        })?;
-        self.device.submit_render(
-            &frame.presentation_cb,
-            &[SubmitWaitDesc {
-                semaphore: frame.render_finished,
-                stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-            }],
-            &[image.presentation_finished],
-        )?;
+            })?;
+            self.device.submit_render(
+                &frame.presentation_cb,
+                &[SubmitWaitDesc {
+                    semaphore: frame.render_finished,
+                    stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                }],
+                &[image.presentation_finished],
+            )?;
+        }
         self.device.end_frame(frame)?;
         *self.drop_list[0].lock().unwrap() =
             std::mem::take::<DropList>(&mut self.current_drop_list.lock().unwrap());
@@ -275,7 +289,10 @@ impl<'a> RenderSystem<'a> {
             &mut self.drop_list[0].lock().unwrap(),
             &mut self.drop_list[1].lock().unwrap(),
         );
-        swapchain.present_image(image);
+        {
+            puffin::profile_scope!("present");
+            swapchain.present_image(image);
+        }
 
         Ok(())
     }
