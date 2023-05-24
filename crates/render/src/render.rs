@@ -241,15 +241,15 @@ impl<'a> RenderSystem<'a> {
         let mut staging = self.staging.lock().unwrap();
         staging.upload()?;
         staging.wait()?;
-
-        let context = RenderContext {
-            cb: &frame.main_cb,
-            image: &image.image,
-            geo_cache: &geo_cache.buffer,
-        };
-
         {
             puffin::profile_scope!("main cb");
+
+            let context = RenderContext {
+                cb: &frame.main_cb,
+                image: &image.image,
+                geo_cache: &geo_cache.buffer,
+            };
+
             frame_cb(context);
             self.device.submit_render(
                 &frame.main_cb,
