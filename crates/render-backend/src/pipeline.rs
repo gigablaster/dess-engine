@@ -13,7 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, ffi::CString, mem::size_of, slice, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap, HashSet},
+    ffi::CString,
+    mem::size_of,
+    slice,
+    sync::Arc,
+};
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -25,137 +31,92 @@ use super::{BackendError, BackendResult, Device, FreeGpuResource, RenderPass, Sa
 const MAX_SAMPLERS: usize = 16;
 
 type DescriptorSetLayouts = Vec<vk::DescriptorSetLayout>;
-type DescriptorSetIndex = (u32, u32);
-type DescriptorSetMap = HashMap<String, DescriptorSetIndex>;
 
-pub struct ShaderDesc<'a> {
-    pub stage: vk::ShaderStageFlags,
-    pub entry: &'a str,
-    pub code: &'a [u8],
+#[derive(Debug, Default, Clone)]
+struct DescriptorSetInfo {
+    types: HashMap<u32, vk::DescriptorType>,
+    names: HashMap<String, u32>,
+    layout: vk::DescriptorSetLayout,
 }
 
-impl<'a> ShaderDesc<'a> {
-    pub fn vertex(code: &'a [u8]) -> Self {
-        Self {
-            stage: vk::ShaderStageFlags::VERTEX,
-            entry: "main",
-            code,
+impl DescriptorSetInfo {
+    pub fn new(
+        device: &Device,
+        stage: vk::ShaderStageFlags,
+        set: &BTreeMap<u32, DescriptorInfo>,
+    ) -> BackendResult<Self> {
+        let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
+        let mut bindings = HashMap::with_capacity(set.len());
+        let mut names = HashMap::with_capacity(set.len());
+        for (index, binding) in set.iter() {
+            match binding.ty {
+                rspirv_reflect::DescriptorType::UNIFORM_BUFFER
+                | rspirv_reflect::DescriptorType::UNIFORM_TEXEL_BUFFER
+                | rspirv_reflect::DescriptorType::STORAGE_IMAGE
+                | rspirv_reflect::DescriptorType::STORAGE_BUFFER
+                | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
+                    bindings.insert(*index, Self::create_uniform_binding(*index, stage, binding));
+                }
+                rspirv_reflect::DescriptorType::SAMPLED_IMAGE => {
+                    bindings.insert(
+                        *index,
+                        Self::create_sampled_image_binding(*index, stage, binding),
+                    );
+                }
+                rspirv_reflect::DescriptorType::SAMPLER
+                | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                    let sampler_index = samplers.len();
+                    samplers.push(
+                        device
+                            .get_sampler(SamplerDesc {
+                                texel_filter: vk::Filter::LINEAR,
+                                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+                                address_mode: vk::SamplerAddressMode::REPEAT,
+                            })
+                            .unwrap(),
+                    );
+                    bindings.insert(
+                        *index,
+                        Self::create_sampler_binding(
+                            *index,
+                            stage,
+                            binding,
+                            &samplers[sampler_index],
+                        ),
+                    );
+                }
+                _ => unimplemented!("{:?}", binding),
+            };
         }
-    }
 
-    pub fn fragment(code: &'a [u8]) -> Self {
-        Self {
-            stage: vk::ShaderStageFlags::FRAGMENT,
-            entry: "main",
-            code,
-        }
-    }
-
-    pub fn entry(mut self, entry: &'a str) -> Self {
-        self.entry = entry;
-        self
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct Shader {
-    pub raw: vk::ShaderModule,
-    pub stage: vk::ShaderStageFlags,
-    pub layouts: DescriptorSetLayouts,
-    pub names: DescriptorSetMap,
-    pub entry: CString,
-}
-
-impl Shader {
-    pub fn new(device: &Arc<Device>, desc: ShaderDesc, name: Option<&str>) -> BackendResult<Self> {
-        let shader_create_info = vk::ShaderModuleCreateInfo::builder()
-            .code(desc.code.as_slice_of::<u32>().unwrap())
+        let layoyt = bindings
+            .iter()
+            .map(|(_, binding)| binding)
+            .copied()
+            .collect::<Vec<_>>();
+        let mut types = HashMap::with_capacity(set.len());
+        bindings.into_iter().for_each(|(index, binding)| {
+            types.insert(index, binding.descriptor_type);
+        });
+        let layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
+            .bindings(&layoyt)
             .build();
+        let layout = unsafe {
+            device
+                .raw
+                .create_descriptor_set_layout(&layout_create_info, None)
+        }?;
 
-        let shader = unsafe { device.raw.create_shader_module(&shader_create_info, None) }?;
-        if let Some(name) = name {
-            device.set_object_name(shader, name)?;
-        }
-        let (names, layouts) = Self::create_descriptor_set_layouts(device, desc.stage, desc.code)?;
         Ok(Self {
-            stage: desc.stage,
-            raw: shader,
-            layouts,
+            types,
             names,
-            entry: CString::new(desc.entry).unwrap(),
+            layout,
         })
     }
 
-    fn create_descriptor_set_layouts(
-        device: &Device,
-        stage: vk::ShaderStageFlags,
-        code: &[u8],
-    ) -> BackendResult<(DescriptorSetMap, DescriptorSetLayouts)> {
-        let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
-        let sets = info.get_descriptor_sets()?;
-        let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
-        let mut layouts = DescriptorSetLayouts::with_capacity(8);
-        let create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
-        let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
-        let mut names = DescriptorSetMap::with_capacity(8);
-        for set_index in 0..set_count {
-            let set = sets.get(&set_index);
-            if let Some(set) = set {
-                let mut bindings = Vec::with_capacity(set.len());
-                for (index, binding) in set.iter() {
-                    match binding.ty {
-                        rspirv_reflect::DescriptorType::UNIFORM_BUFFER
-                        | rspirv_reflect::DescriptorType::UNIFORM_TEXEL_BUFFER
-                        | rspirv_reflect::DescriptorType::STORAGE_IMAGE
-                        | rspirv_reflect::DescriptorType::STORAGE_BUFFER
-                        | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                            bindings.push(Self::create_uniform_binding(*index, stage, binding))
-                        }
-                        rspirv_reflect::DescriptorType::SAMPLED_IMAGE => bindings
-                            .push(Self::create_sampled_image_binding(*index, stage, binding)),
-                        rspirv_reflect::DescriptorType::SAMPLER
-                        | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                            let sampler_index = samplers.len();
-                            samplers.push(
-                                device
-                                    .get_sampler(SamplerDesc {
-                                        texel_filter: vk::Filter::LINEAR,
-                                        mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-                                        address_mode: vk::SamplerAddressMode::REPEAT,
-                                    })
-                                    .unwrap(),
-                            );
-                            bindings.push(Self::create_sampler_binding(
-                                *index,
-                                stage,
-                                binding,
-                                &samplers[sampler_index],
-                            ));
-                        }
-                        _ => unimplemented!("{:?}", binding),
-                    };
-                    names.insert(binding.name.clone(), (set_index, *index));
-                }
-                let layout_info = vk::DescriptorSetLayoutCreateInfo::builder()
-                    .flags(create_flags)
-                    .bindings(&bindings)
-                    .build();
-                let layout =
-                    unsafe { device.raw.create_descriptor_set_layout(&layout_info, None) }?;
-                layouts.push(layout);
-            } else {
-                let layout = unsafe {
-                    device.raw.create_descriptor_set_layout(
-                        &vk::DescriptorSetLayoutCreateInfo::builder().build(),
-                        None,
-                    )
-                }?;
-                layouts.push(layout);
-            }
-        }
-
-        Ok((names, layouts))
-    }
+    // pub fn merge(&self, other: &DescriptorInfo) -> Self {
+    //     let
+    // }
 
     fn create_uniform_binding(
         index: u32,
@@ -228,10 +189,94 @@ impl Shader {
     }
 }
 
+impl FreeGpuResource for DescriptorSetInfo {
+    fn free(&self, device: &ash::Device) {
+        unsafe { device.destroy_descriptor_set_layout(self.layout, None) };
+    }
+}
+pub struct ShaderDesc<'a> {
+    pub stage: vk::ShaderStageFlags,
+    pub entry: &'a str,
+    pub code: &'a [u8],
+}
+
+impl<'a> ShaderDesc<'a> {
+    pub fn vertex(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::VERTEX,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn fragment(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::FRAGMENT,
+            entry: "main",
+            code,
+        }
+    }
+
+    pub fn entry(mut self, entry: &'a str) -> Self {
+        self.entry = entry;
+        self
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Shader {
+    pub raw: vk::ShaderModule,
+    pub stage: vk::ShaderStageFlags,
+    pub sets: Vec<DescriptorSetInfo>,
+    pub entry: CString,
+}
+
+impl Shader {
+    pub fn new(device: &Arc<Device>, desc: ShaderDesc, name: Option<&str>) -> BackendResult<Self> {
+        let shader_create_info = vk::ShaderModuleCreateInfo::builder()
+            .code(desc.code.as_slice_of::<u32>().unwrap())
+            .build();
+
+        let shader = unsafe { device.raw.create_shader_module(&shader_create_info, None) }?;
+        if let Some(name) = name {
+            device.set_object_name(shader, name)?;
+        }
+        let sets = Self::create_descriptor_set_layouts(device, desc.stage, desc.code)?;
+        Ok(Self {
+            stage: desc.stage,
+            raw: shader,
+            sets,
+            entry: CString::new(desc.entry).unwrap(),
+        })
+    }
+
+    fn create_descriptor_set_layouts(
+        device: &Device,
+        stage: vk::ShaderStageFlags,
+        code: &[u8],
+    ) -> BackendResult<Vec<DescriptorSetInfo>> {
+        let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
+        let sets = info.get_descriptor_sets()?;
+        let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
+        let mut layouts = Vec::with_capacity(4);
+        let create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
+        for set_index in 0..set_count {
+            let set = sets.get(&set_index);
+            if let Some(set) = set {
+                layouts.push(DescriptorSetInfo::new(device, stage, set)?);
+            } else {
+                layouts.push(DescriptorSetInfo::default());
+            }
+        }
+
+        Ok(layouts)
+    }
+}
+
 impl FreeGpuResource for Shader {
     fn free(&self, device: &ash::Device) {
-        self.layouts.iter().for_each(|layout| {
-            unsafe { device.destroy_descriptor_set_layout(*layout, None) };
+        self.sets.iter().for_each(|set| {
+            set.free(device);
         });
         unsafe { device.destroy_shader_module(self.raw, None) }
     }
@@ -244,7 +289,7 @@ pub trait PipelineVertex: Sized {
 pub struct Pipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
-    pub names: DescriptorSetMap,
+    pub sets: Vec<DescriptorSetInfo>,
 }
 
 pub enum PipelineBlend {
@@ -417,14 +462,6 @@ impl Pipeline {
             .logic_op_enable(false)
             .build();
 
-        let descriptor_layouts = Self::combine_layouts(
-            &desc
-                .shaders
-                .iter()
-                .map(|shader| &shader.layouts)
-                .collect::<Vec<_>>(),
-        );
-
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&descriptor_layouts)
             .build();
@@ -451,22 +488,22 @@ impl Pipeline {
         }
         .map_err(|_| BackendError::Other("Shit happened".into()))?[0];
 
-        let mut names = DescriptorSetMap::with_capacity(8);
+        let mut sets = Vec::new();
         desc.shaders.iter().for_each(|shader| {
-            shader.names.iter().for_each(|(name, index)| {
-                names.insert(name.into(), *index);
-            })
+            shader
+                .sets
+                .into_iter()
+                .enumerate()
+                .for_each(|(index, set)| {
+                    sets.insert(index, set);
+                })
         });
 
         Ok(Self {
             pipeline_layout,
             pipeline,
-            names,
+            sets,
         })
-    }
-
-    pub fn descriptor_index(&self, name: &str) -> Option<DescriptorSetIndex> {
-        self.names.get(name).copied()
     }
 
     fn combine_layouts(layouts: &[&DescriptorSetLayouts]) -> DescriptorSetLayouts {
