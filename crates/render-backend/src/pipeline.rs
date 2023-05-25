@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{btree_map::Entry, BTreeMap, HashMap},
     ffi::CString,
     mem::size_of,
     slice,
@@ -31,6 +31,9 @@ use super::{BackendError, BackendResult, Device, FreeGpuResource, RenderPass, Sa
 const MAX_SAMPLERS: usize = 16;
 
 type DescriptorSetLayouts = Vec<vk::DescriptorSetLayout>;
+
+type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
+type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
 
 #[derive(Debug, Default, Clone)]
 struct DescriptorSetInfo {
@@ -113,10 +116,6 @@ impl DescriptorSetInfo {
             layout,
         })
     }
-
-    // pub fn merge(&self, other: &DescriptorInfo) -> Self {
-    //     let
-    // }
 
     fn create_uniform_binding(
         index: u32,
@@ -227,8 +226,8 @@ impl<'a> ShaderDesc<'a> {
 pub struct Shader {
     pub raw: vk::ShaderModule,
     pub stage: vk::ShaderStageFlags,
-    pub sets: Vec<DescriptorSetInfo>,
     pub entry: CString,
+    pub descriptor_sets: StageDescriptorSetLayouts,
 }
 
 impl Shader {
@@ -241,43 +240,18 @@ impl Shader {
         if let Some(name) = name {
             device.set_object_name(shader, name)?;
         }
-        let sets = Self::create_descriptor_set_layouts(device, desc.stage, desc.code)?;
         Ok(Self {
             stage: desc.stage,
             raw: shader,
-            sets,
             entry: CString::new(desc.entry).unwrap(),
+            descriptor_sets: rspirv_reflect::Reflection::new_from_spirv(desc.code)?
+                .get_descriptor_sets()?,
         })
-    }
-
-    fn create_descriptor_set_layouts(
-        device: &Device,
-        stage: vk::ShaderStageFlags,
-        code: &[u8],
-    ) -> BackendResult<Vec<DescriptorSetInfo>> {
-        let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
-        let sets = info.get_descriptor_sets()?;
-        let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
-        let mut layouts = Vec::with_capacity(4);
-        let create_flags = vk::DescriptorSetLayoutCreateFlags::empty();
-        for set_index in 0..set_count {
-            let set = sets.get(&set_index);
-            if let Some(set) = set {
-                layouts.push(DescriptorSetInfo::new(device, stage, set)?);
-            } else {
-                layouts.push(DescriptorSetInfo::default());
-            }
-        }
-
-        Ok(layouts)
     }
 }
 
 impl FreeGpuResource for Shader {
     fn free(&self, device: &ash::Device) {
-        self.sets.iter().for_each(|set| {
-            set.free(device);
-        });
         unsafe { device.destroy_shader_module(self.raw, None) }
     }
 }
@@ -289,7 +263,7 @@ pub trait PipelineVertex: Sized {
 pub struct Pipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
-    pub sets: Vec<DescriptorSetInfo>,
+    sets: Vec<DescriptorSetInfo>,
 }
 
 pub enum PipelineBlend {
@@ -353,7 +327,7 @@ pub fn create_pipeline_cache(device: &ash::Device) -> BackendResult<vk::Pipeline
 
 impl Pipeline {
     pub fn new<V: PipelineVertex>(
-        device: &ash::Device,
+        device: &Device,
         cache: &vk::PipelineCache,
         desc: PipelineDesc,
     ) -> BackendResult<Self> {
@@ -462,11 +436,20 @@ impl Pipeline {
             .logic_op_enable(false)
             .build();
 
+        let sets = Self::create_descriptor_set_layouts(
+            &device,
+            vk::ShaderStageFlags::ALL_GRAPHICS,
+            &desc.shaders,
+        )?;
+
+        let descriptor_layouts = sets.iter().map(|set| set.layout).collect::<Vec<_>>();
+
         let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
             .set_layouts(&descriptor_layouts)
             .build();
 
-        let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_create_info, None) }?;
+        let pipeline_layout =
+            unsafe { device.raw.create_pipeline_layout(&layout_create_info, None) }?;
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
             .render_pass(desc.render_pass.raw)
@@ -484,20 +467,13 @@ impl Pipeline {
             .build();
 
         let pipeline = unsafe {
-            device.create_graphics_pipelines(*cache, slice::from_ref(&pipeline_create_info), None)
+            device.raw.create_graphics_pipelines(
+                *cache,
+                slice::from_ref(&pipeline_create_info),
+                None,
+            )
         }
         .map_err(|_| BackendError::Other("Shit happened".into()))?[0];
-
-        let mut sets = Vec::new();
-        desc.shaders.iter().for_each(|shader| {
-            shader
-                .sets
-                .into_iter()
-                .enumerate()
-                .for_each(|(index, set)| {
-                    sets.insert(index, set);
-                })
-        });
 
         Ok(Self {
             pipeline_layout,
@@ -506,27 +482,88 @@ impl Pipeline {
         })
     }
 
-    fn combine_layouts(layouts: &[&DescriptorSetLayouts]) -> DescriptorSetLayouts {
-        let count = layouts.iter().map(|x| x.len()).max().unwrap_or(0);
-        let mut result = DescriptorSetLayouts::with_capacity(count);
-        result.resize(count, vk::DescriptorSetLayout::null());
-        for layout in layouts {
-            for index in 0..layout.len() {
-                if layout[index] != vk::DescriptorSetLayout::null() {
-                    result[index] = layout[index];
-                }
+    fn create_descriptor_set_layouts(
+        device: &Device,
+        stages: vk::ShaderStageFlags,
+        shaders: &[&Shader],
+    ) -> BackendResult<Vec<DescriptorSetInfo>> {
+        let sets = shaders
+            .into_iter()
+            .map(|shader| shader.descriptor_sets.clone())
+            .collect::<Vec<_>>();
+        let sets = Self::merge_shader_stage_layouts(sets);
+        let set_count = sets.iter().map(|(index, _)| *index + 1).max().unwrap_or(0);
+        let mut layouts = Vec::with_capacity(set_count as _);
+        for set_index in 0..set_count {
+            let set = sets.get(&set_index);
+            if let Some(set) = set {
+                layouts.push(DescriptorSetInfo::new(device, stages, set)?);
+            } else {
+                layouts.push(DescriptorSetInfo::default());
             }
+        }
+
+        Ok(layouts)
+    }
+
+    fn merge_shader_stage_layouts(
+        stages: Vec<StageDescriptorSetLayouts>,
+    ) -> StageDescriptorSetLayouts {
+        let mut stages = stages.into_iter();
+        let mut result = stages.next().unwrap_or_default();
+
+        for stage in stages {
+            Self::merge_shader_stage_layout_pair(stage, &mut result);
         }
 
         result
     }
+
+    fn merge_shader_stage_layout_pair(
+        src: StageDescriptorSetLayouts,
+        dst: &mut StageDescriptorSetLayouts,
+    ) {
+        for (set_idx, set) in src.into_iter() {
+            match dst.entry(set_idx) {
+                Entry::Occupied(mut existing) => {
+                    let existing = existing.get_mut();
+                    for (binding_idx, binding) in set {
+                        match existing.entry(binding_idx) {
+                            Entry::Occupied(existing) => {
+                                let existing = existing.get();
+                                assert_eq!(
+                                    existing.ty, binding.ty,
+                                    "binding idx: {}, name: {:?}",
+                                    binding_idx, binding.name
+                                );
+                                assert_eq!(
+                                    existing.name, binding.name,
+                                    "binding idx: {}, name: {:?}",
+                                    binding_idx, binding.name
+                                );
+                            }
+                            Entry::Vacant(vacant) => {
+                                vacant.insert(binding);
+                            }
+                        }
+                    }
+                }
+                Entry::Vacant(vacant) => {
+                    vacant.insert(set);
+                }
+            }
+        }
+    }
 }
 
 impl FreeGpuResource for Pipeline {
-    fn free(&self, devive: &ash::Device) {
+    fn free(&self, device: &ash::Device) {
+        self.sets
+            .iter()
+            .for_each(|set| unsafe { device.destroy_descriptor_set_layout(set.layout, None) });
         unsafe {
-            devive.destroy_pipeline(self.pipeline, None);
-            devive.destroy_pipeline_layout(self.pipeline_layout, None);
+            device.destroy_pipeline(self.pipeline, None);
+            device.destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }
