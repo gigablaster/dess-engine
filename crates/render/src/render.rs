@@ -24,7 +24,7 @@ use dess_render_backend::{
     PhysicalDeviceList, PipelineVertex, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface,
     Swapchain,
 };
-use sdl2::video::Window;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
@@ -51,10 +51,9 @@ pub enum GpuType {
     PrefereIntegrated,
 }
 
-pub struct RenderSystem<'a> {
-    window: &'a Window,
+pub struct RenderSystem {
     device: Arc<Device>,
-    swapchain: Mutex<Swapchain<'a>>,
+    swapchain: Mutex<Swapchain>,
     staging: Mutex<Staging>,
     geo_cache: Mutex<GeometryCache>,
     current_drop_list: Mutex<DropList>,
@@ -64,13 +63,15 @@ pub struct RenderSystem<'a> {
 pub struct RenderSystemDesc {
     pub debug: bool,
     pub gpu_type: GpuType,
+    pub resolution: [u32; 2],
 }
 
 impl RenderSystemDesc {
-    pub fn new() -> Self {
+    pub fn new(resolution: [u32; 2]) -> Self {
         Self {
             debug: false,
             gpu_type: GpuType::PreferDiscrete,
+            resolution,
         }
     }
 
@@ -155,10 +156,16 @@ impl DropList {
     }
 }
 
-impl<'a> RenderSystem<'a> {
-    pub fn new(window: &'a Window, desc: RenderSystemDesc) -> RenderResult<Self> {
-        let instance = Instance::builder().debug(desc.debug).build(window)?;
-        let surface = Surface::create(&instance, window)?;
+impl RenderSystem {
+    pub fn new(
+        display_handle: RawDisplayHandle,
+        window_handle: RawWindowHandle,
+        desc: RenderSystemDesc,
+    ) -> RenderResult<Self> {
+        let instance = Instance::builder()
+            .debug(desc.debug)
+            .build(display_handle)?;
+        let surface = Surface::create(&instance, display_handle, window_handle)?;
         let allowed_gpus = match desc.gpu_type {
             GpuType::PreferDiscrete => vec![
                 vk::PhysicalDeviceType::DISCRETE_GPU,
@@ -175,13 +182,12 @@ impl<'a> RenderSystem<'a> {
             .find_suitable_device(&surface, &allowed_gpus);
         if let Some(pdevice) = pdevice {
             let device = Device::create(instance, pdevice)?;
-            let swapchain = Swapchain::new(&device, surface)?;
+            let swapchain = Swapchain::new(&device, surface, desc.resolution)?;
             let staging = Staging::new(&device, STAGING_SIZE)?;
             let geo_cache = GeometryCache::new(&device, GEOMETRY_CACHE_SIZE)?;
 
             Ok(Self {
                 device,
-                window,
                 swapchain: Mutex::new(swapchain),
                 staging: Mutex::new(staging),
                 geo_cache: Mutex::new(geo_cache),
@@ -212,15 +218,20 @@ impl<'a> RenderSystem<'a> {
         Ok(())
     }
 
-    pub fn render_frame<F: FnOnce(RenderContext)>(&self, frame_cb: F) -> RenderResult<()> {
+    pub fn render_frame<F: FnOnce(RenderContext)>(
+        &self,
+        current_resolution: [u32; 2],
+        frame_cb: F,
+    ) -> RenderResult<()> {
         puffin::profile_scope!("render frame");
-        let size = self.window.size();
         let mut swapchain = self.swapchain.lock().unwrap();
         let mut geo_cache = self.geo_cache.lock().unwrap();
         let render_area = swapchain.render_area();
-        if size.0 != render_area.extent.width || size.1 != render_area.extent.height {
+        if current_resolution[0] != render_area.extent.width
+            || current_resolution[1] != render_area.extent.height
+        {
             self.device.wait();
-            swapchain.recreate()?;
+            swapchain.recreate(current_resolution)?;
 
             return Err(RenderError::RecreateBuffers);
         }
@@ -230,7 +241,7 @@ impl<'a> RenderSystem<'a> {
         let image = match swapchain.acquire_next_image() {
             Err(BackendError::RecreateSwapchain) => {
                 self.device.wait();
-                swapchain.recreate()?;
+                swapchain.recreate(current_resolution)?;
 
                 return Err(RenderError::RecreateBuffers);
             }

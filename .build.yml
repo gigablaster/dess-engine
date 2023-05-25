@@ -1,8 +1,6 @@
 image: ubuntu/oldlts
 packages:
   - rust-all
-  - cmake
-  - libsdl2-dev
 sources:
   - https://git.sr.ht/~gigablaster/dess-engine
 tasks:

@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+ash-window = "0.12"
+raw-window-handle = "0.5"
 ash =  "0.37"
-sdl2 = "0.35"
 log = "0.4"
 arrayvec = "0.7"
 puffin = "0.15"

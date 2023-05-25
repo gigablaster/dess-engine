@@ -20,7 +20,7 @@ use ash::{
     vk::{self, Bool32, DebugUtilsMessengerEXT},
 };
 use log::{info, log, Level};
-use sdl2::video::Window;
+use raw_window_handle::RawDisplayHandle;
 
 use super::BackendResult;
 
@@ -48,8 +48,8 @@ impl InstanceBuilder {
         self
     }
 
-    pub fn build(self, window: &Window) -> BackendResult<Instance> {
-        Instance::create(&self, window)
+    pub fn build(self, display_handle: RawDisplayHandle) -> BackendResult<Instance> {
+        Instance::create(&self, display_handle)
     }
 }
 
@@ -60,19 +60,18 @@ impl Instance {
 
     fn generate_extension_names(
         builder: &InstanceBuilder,
-        window: &Window,
+        display_handle: RawDisplayHandle,
     ) -> BackendResult<Vec<CString>> {
         let mut names = Vec::new();
         if builder.debug {
             names.push(vk::ExtDebugUtilsFn::name().into());
         }
-        let sdl_extensions = window
-            .vulkan_instance_extensions()?
-            .iter()
-            .map(|x| CString::new(*x).unwrap())
+        let window_extensions = ash_window::enumerate_required_extensions(display_handle)?
+            .into_iter()
+            .map(|x| unsafe { CStr::from_ptr(*x).into() })
             .collect::<Vec<_>>();
 
-        names.extend_from_slice(&sdl_extensions);
+        names.extend_from_slice(&window_extensions);
 
         Ok(names)
     }
@@ -90,7 +89,7 @@ impl Instance {
         vk::make_api_version(0, 1, 1, 0)
     }
 
-    fn create(builder: &InstanceBuilder, window: &Window) -> BackendResult<Self> {
+    fn create(builder: &InstanceBuilder, display_handle: RawDisplayHandle) -> BackendResult<Self> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(builder);
@@ -99,7 +98,7 @@ impl Instance {
             .map(|name| name.as_ptr())
             .collect::<Vec<_>>();
 
-        let extensions = Self::generate_extension_names(builder, window)?;
+        let extensions = Self::generate_extension_names(builder, display_handle)?;
         let extensions = extensions
             .iter()
             .map(|name| name.as_ptr())

@@ -20,33 +20,42 @@ use ash::{
     vk::{self, Handle},
 };
 use log::info;
-use sdl2::video::Window;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{BackendError, ImageDesc, ImageType};
 
 use super::{BackendResult, Device, Image, Instance};
 
-pub struct Surface<'a> {
-    pub(crate) window: &'a Window,
+pub struct Surface {
     pub(crate) raw: vk::SurfaceKHR,
     pub(crate) loader: khr::Surface,
 }
 
-impl<'a> Surface<'a> {
-    pub fn create(instance: &Instance, window: &'a Window) -> BackendResult<Self> {
-        let surface = window.vulkan_create_surface(instance.raw.handle().as_raw() as usize)?;
-        let surface = vk::SurfaceKHR::from_raw(surface);
+impl Surface {
+    pub fn create(
+        instance: &Instance,
+        display_handle: RawDisplayHandle,
+        window_handle: RawWindowHandle,
+    ) -> BackendResult<Self> {
+        let surface = unsafe {
+            ash_window::create_surface(
+                &instance.entry,
+                &instance.raw,
+                display_handle,
+                window_handle,
+                None,
+            )
+        }?;
         let loader = khr::Surface::new(&instance.entry, &instance.raw);
 
         Ok(Self {
-            window,
             raw: surface,
             loader,
         })
     }
 }
 
-impl<'a> Drop for Surface<'a> {
+impl Drop for Surface {
     fn drop(&mut self) {
         unsafe { self.loader.destroy_surface(self.raw, None) };
     }
@@ -63,7 +72,11 @@ struct SwapchainInner {
 }
 
 impl SwapchainInner {
-    pub fn new(device: &Arc<Device>, surface: &Surface) -> BackendResult<Self> {
+    pub fn new(
+        device: &Arc<Device>,
+        surface: &Surface,
+        resolution: [u32; 2],
+    ) -> BackendResult<Self> {
         let surface_capabilities = unsafe {
             surface
                 .loader
@@ -87,11 +100,10 @@ impl SwapchainInner {
 
         info!("Swapchain image count {}", desired_image_count);
 
-        let window_resolution = surface.window.size();
         let surface_resolution = match surface_capabilities.current_extent.width {
             u32::MAX => vk::Extent2D {
-                width: window_resolution.0,
-                height: window_resolution.1,
+                width: resolution[0],
+                height: resolution[1],
             },
             _ => surface_capabilities.current_extent,
         };
@@ -242,9 +254,9 @@ impl SwapchainInner {
     }
 }
 
-pub struct Swapchain<'a> {
+pub struct Swapchain {
     device: Arc<Device>,
-    surface: Surface<'a>,
+    surface: Surface,
     inner: SwapchainInner,
 }
 
@@ -255,11 +267,15 @@ pub struct SwapchainImage {
     pub presentation_finished: vk::Semaphore,
 }
 
-impl<'a> Swapchain<'a> {
-    pub fn new(device: &Arc<Device>, surface: Surface<'a>) -> BackendResult<Self> {
+impl Swapchain {
+    pub fn new(
+        device: &Arc<Device>,
+        surface: Surface,
+        resolution: [u32; 2],
+    ) -> BackendResult<Self> {
         Ok(Self {
             device: device.clone(),
-            inner: SwapchainInner::new(device, &surface)?,
+            inner: SwapchainInner::new(device, &surface, resolution)?,
             surface,
         })
     }
@@ -318,11 +334,11 @@ impl<'a> Swapchain<'a> {
         }
     }
 
-    pub fn recreate(&mut self) -> BackendResult<()> {
+    pub fn recreate(&mut self, resolution: [u32; 2]) -> BackendResult<()> {
         self.device.wait();
         info!("Recreate swapchain");
         self.inner.cleanup(&self.device.raw);
-        self.inner = SwapchainInner::new(&self.device, &self.surface)?;
+        self.inner = SwapchainInner::new(&self.device, &self.surface, resolution)?;
 
         Ok(())
     }
@@ -342,7 +358,7 @@ impl<'a> Swapchain<'a> {
     }
 }
 
-impl<'a> Drop for Swapchain<'a> {
+impl Drop for Swapchain {
     fn drop(&mut self) {
         self.inner.cleanup(&self.device.raw);
     }

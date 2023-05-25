@@ -113,7 +113,7 @@ impl DescriptorSetInfo {
         set.iter().for_each(|(index, info)| {
             names.insert(info.name.clone(), *index);
         });
-        
+
         Ok(Self {
             types,
             names,
