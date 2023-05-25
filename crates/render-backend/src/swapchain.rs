@@ -17,7 +17,7 @@ use std::{slice, sync::Arc};
 
 use ash::{
     extensions::khr,
-    vk::{self, Handle},
+    vk::{self},
 };
 use log::info;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};

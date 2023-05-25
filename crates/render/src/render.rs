@@ -21,7 +21,7 @@ use std::{
 use ash::vk;
 use dess_render_backend::{
     BackendError, Buffer, CommandBuffer, DescriptorAllocator, Device, Image, Instance,
-    PhysicalDeviceList, PipelineVertex, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface,
+    PhysicalDeviceList, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface,
     Swapchain,
 };
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -99,7 +99,7 @@ pub struct RenderContext<'a> {
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn render(&self, pass: &RenderPassRecorder, rops: &[RenderOp], name: Option<&str>) {
+    pub fn render(&self, pass: &RenderPassRecorder, rops: &[RenderOp], _name: Option<&str>) {
         if rops.is_empty() {
             return;
         }
