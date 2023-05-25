@@ -50,7 +50,6 @@ impl DescriptorSetInfo {
     ) -> BackendResult<Self> {
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
         let mut bindings = HashMap::with_capacity(set.len());
-        let mut names = HashMap::with_capacity(set.len());
         for (index, binding) in set.iter() {
             match binding.ty {
                 rspirv_reflect::DescriptorType::UNIFORM_BUFFER
@@ -110,6 +109,11 @@ impl DescriptorSetInfo {
                 .create_descriptor_set_layout(&layout_create_info, None)
         }?;
 
+        let mut names = HashMap::with_capacity(set.len());
+        set.iter().for_each(|(index, info)| {
+            names.insert(info.name.clone(), *index);
+        });
+        
         Ok(Self {
             types,
             names,
