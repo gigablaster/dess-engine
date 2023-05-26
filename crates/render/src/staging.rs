@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem::size_of, ptr::copy_nonoverlapping, slice, sync::Arc};
+use std::{mem::size_of, ptr::{copy_nonoverlapping, NonNull}, slice, sync::Arc};
 
 use ash::vk;
 use dess_common::memory::BumpAllocator;
@@ -49,7 +49,7 @@ pub struct Staging {
     allocator: BumpAllocator,
     upload_buffers: Vec<BufferUploadRequest>,
     upload_images: Vec<BufferUploadRequest>,
-    mapping: Option<*mut u8>,
+    mapping: Option<NonNull<u8>>,
     index: u64,
 }
 
@@ -77,7 +77,7 @@ impl Staging {
         })
     }
 
-    fn map_buffer(&mut self) -> RenderResult<*mut u8> {
+    fn map_buffer(&mut self) -> RenderResult<NonNull<u8>> {
         Ok(self.buffer.map()?)
     }
 
@@ -98,9 +98,9 @@ impl Staging {
             self.mapping = Some(self.map_buffer()?);
         }
         let mapping = self.mapping.unwrap();
-        if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping, size) {
+        if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping.as_ptr(), size) {
             self.upload()?;
-            if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping, size) {
+            if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping.as_ptr(), size) {
                 panic!(
                     "Despite just pushing entire staging buffer we still can't push data in it."
                 );

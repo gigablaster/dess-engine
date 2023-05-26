@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use core::slice;
-use std::sync::Arc;
+use std::{sync::Arc, ptr::NonNull};
 
 use ash::vk::{self, BufferCreateInfo};
 use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
@@ -157,12 +157,13 @@ impl Buffer {
         Self::new(device, desc, device.transfer_queue.family.index, name)
     }
 
-    pub fn map(&mut self) -> BackendResult<*mut u8> {
+    pub fn map(&mut self) -> BackendResult<NonNull<u8>> {
         if let Some(allocation) = &mut self.allocation {
-            Ok(unsafe {
-                allocation.map(AshMemoryDevice::wrap(&self.device.raw), 0, self.desc.size)
-            }?
-            .as_ptr() as *mut u8)
+            let ptr = unsafe { allocation.map(AshMemoryDevice::wrap(&self.device.raw), 0, self.desc.size) }
+            ?
+            .as_ptr() as *mut u8;
+
+            Ok(NonNull::new(ptr).unwrap())
         } else {
             Err(BackendError::MemoryNotAllocated)
         }
