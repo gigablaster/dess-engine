@@ -19,12 +19,14 @@ mod serialization;
 mod time;
 
 pub mod traits;
+mod handle;
 
 use std::marker::PhantomData;
 
 pub use client::*;
 pub use serialization::*;
 pub use time::*;
+pub use handle::*;
 
 pub trait Align<T> {
     fn align(self, align: T) -> Self;
@@ -46,23 +48,6 @@ impl Align<u64> for u64 {
             self
         } else {
             (self & !(align - 1)) + align
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub struct Handle<T> {
-    pub index: u16,
-    pub generation: u16,
-    _phantom: PhantomData<T>,
-}
-
-impl<T> Handle<T> {
-    pub fn new(index: u16, generation: u16) -> Self {
-        Self {
-            index,
-            generation,
-            _phantom: PhantomData::<T>,
         }
     }
 }
