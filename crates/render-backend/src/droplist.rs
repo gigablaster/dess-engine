@@ -7,7 +7,7 @@ use crate::{DescriptorAllocator, DescriptorSet, GpuAllocator, GpuMemory};
 const CAPACITY: usize = 128;
 
 #[derive(Debug)]
-pub(crate) struct DropList {
+pub struct DropList {
     memory_to_free: Vec<GpuMemory>,
     images_to_free: Vec<vk::Image>,
     image_views_to_free: Vec<vk::ImageView>,

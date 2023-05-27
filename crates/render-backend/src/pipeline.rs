@@ -36,10 +36,10 @@ type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
 type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
 
 #[derive(Debug, Default, Clone)]
-struct DescriptorSetInfo {
-    types: HashMap<u32, vk::DescriptorType>,
-    names: HashMap<String, u32>,
-    layout: vk::DescriptorSetLayout,
+pub struct DescriptorSetInfo {
+    pub types: HashMap<u32, vk::DescriptorType>,
+    pub names: HashMap<String, u32>,
+    pub layout: vk::DescriptorSetLayout,
 }
 
 impl DescriptorSetInfo {
@@ -267,7 +267,7 @@ pub trait PipelineVertex: Sized {
 pub struct Pipeline {
     pub pipeline: vk::Pipeline,
     pub pipeline_layout: vk::PipelineLayout,
-    sets: Vec<DescriptorSetInfo>,
+    pub sets: Vec<DescriptorSetInfo>,
 }
 
 pub enum PipelineBlend {

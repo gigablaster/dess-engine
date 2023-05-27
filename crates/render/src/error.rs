@@ -14,9 +14,11 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use dess_render_backend::BackendError;
+use gpu_descriptor::AllocationError;
 
 pub enum RenderError {
     Backend(BackendError),
+    DescriptorAllocation(AllocationError),
     DeviceNotFound,
     RecreateBuffers,
     NotEnoughCacheMemory,
@@ -25,6 +27,12 @@ pub enum RenderError {
 impl From<BackendError> for RenderError {
     fn from(value: BackendError) -> Self {
         RenderError::Backend(value)
+    }
+}
+
+impl From<AllocationError> for RenderError {
+    fn from(value: AllocationError) -> Self {
+        RenderError::DescriptorAllocation(value)
     }
 }
 

@@ -16,6 +16,8 @@ mod error;
 mod geometry;
 mod render;
 mod staging;
+mod descriptors;
+mod uniforms;
 
 pub use error::*;
 pub use render::*;

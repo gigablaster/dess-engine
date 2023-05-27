@@ -35,7 +35,7 @@ pub use device::*;
 pub use error::*;
 pub use frame_context::*;
 pub use instance::*;
-
+pub use droplist::*;
 pub use physical_device::*;
 pub use pipeline::*;
 pub use render_pass::*;
