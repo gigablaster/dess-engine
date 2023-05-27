@@ -213,11 +213,44 @@ impl BumpAllocator {
     }
 }
 
+pub struct BlockAllocator {
+    chunk_size: usize,
+    chunk_count: u32,
+    empty: Vec<u32>,
+}
+
+impl BlockAllocator {
+    pub fn new(chunk_size: usize, chunk_count: u32) -> Self {
+        let empty = (0..chunk_count)
+            .rev()
+            .into_iter()
+            .map(|x| x as u32)
+            .collect::<Vec<_>>();
+
+        Self { chunk_size,  chunk_count, empty }
+    }
+
+    pub fn allocate(&mut self) -> Option<usize> {
+        if let Some(slot) = self.empty.pop() {
+            Some((slot as usize) * self.chunk_size)
+        } else {
+            None
+        }
+    }
+
+    pub fn dealloc(&mut self, offset: usize) {
+        let index = (offset / self.chunk_size) as u32;
+        assert!(index < self.chunk_count && offset % self.chunk_size == 0);
+        assert!(!self.empty.contains(&index));
+        self.empty.push(index);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::memory::RingAllocator;
 
-    use super::{BumpAllocator, DynamicAllocator};
+    use super::{BumpAllocator, DynamicAllocator, BlockAllocator};
 
     #[test]
     fn alloc() {
@@ -290,5 +323,19 @@ mod test {
         assert_eq!(Some(512), allocator.allocate(100));
         assert_eq!(Some(640), allocator.allocate(100));
         assert_eq!(None, allocator.allocate(500));
+    }
+
+    #[test]
+    fn block_allocator() {
+        let mut allocator = BlockAllocator::new(10, 5);
+        assert_eq!(Some(0), allocator.allocate());
+        assert_eq!(Some(10), allocator.allocate());
+        assert_eq!(Some(20), allocator.allocate());
+        assert_eq!(Some(30), allocator.allocate());
+        assert_eq!(Some(40), allocator.allocate());
+        assert_eq!(None, allocator.allocate());
+        allocator.dealloc(20);
+        assert_eq!(Some(20), allocator.allocate());
+        assert_eq!(None, allocator.allocate());
     }
 }
