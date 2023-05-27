@@ -1,12 +1,16 @@
 image: ubuntu/oldlts
 packages:
   - rust-all
+  - pkg-config
 sources:
   - https://git.sr.ht/~gigablaster/dess-engine
 tasks:
   - build: |
       cd dess-engine
-      cargo build
+      cargo build --verbose
   - test: |
       cd dess-engine
-      cargo test
+      cargo test --verbose
+  - clippy: |
+      cd dess-engine
+      cargo clippy --verbose -- -D warnings
