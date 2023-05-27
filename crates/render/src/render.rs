@@ -24,7 +24,7 @@ use arrayvec::ArrayVec;
 use ash::vk;
 use dess_render_backend::{
     BackendError, Buffer, BufferDesc, CommandBuffer, DescriptorSetInfo, Device, Image, Instance,
-    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
+    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain, PipelineVertex,
 };
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
@@ -96,9 +96,9 @@ impl RenderSystemDesc {
 }
 
 pub struct UpdateContext<'a> {
-    pub(crate) device: &'a ash::Device,
     drop_list: &'a mut DropList,
     staging: &'a mut Staging,
+    geo_cache: &'a mut GeometryCache,
     descriptor_cache: &'a mut DescriptorCache,
 }
 
@@ -132,6 +132,17 @@ impl<'a> UpdateContext<'a> {
         self.descriptor_cache
             .set_image(handle, binding, image, aspect, layout)
             .unwrap();
+    }
+
+    pub fn create_buffer<T: Sized>(&mut self, data: &[T]) -> RenderResult<CachedBuffer> {
+        let buffer = self.geo_cache.allocate(data.len() * size_of::<T>())?;
+        self.staging.upload_buffer(&buffer, data)?;
+
+        Ok(buffer)
+    }
+
+    pub fn destroy_buffer(&mut self, buffer: CachedBuffer) {
+        self.drop_list.drop_static_buffer(buffer);
     }
 }
 
@@ -315,11 +326,12 @@ impl RenderSystem {
         let mut drop_list = self.current_drop_list.lock().unwrap();
         let mut descriptors = self.desciptor_allocator.lock().unwrap();
         let mut descriptor_cache = self.descriptor_cache.lock().unwrap();
+        let mut geo_cache = self.geo_cache.lock().unwrap();
         let context = UpdateContext {
-            device: &self.device.raw,
             drop_list: &mut drop_list,
             staging: &mut staging,
             descriptor_cache: &mut descriptor_cache,
+            geo_cache: &mut geo_cache
         };
 
         update_cb(context);
