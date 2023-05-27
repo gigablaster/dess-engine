@@ -35,7 +35,6 @@ pub use device::*;
 pub use error::*;
 pub use frame_context::*;
 pub use instance::*;
-pub use droplist::*;
 pub use physical_device::*;
 pub use pipeline::*;
 pub use render_pass::*;
@@ -47,6 +46,3 @@ pub trait FreeGpuResource {
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
-pub type DescriptorAllocator =
-    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
-pub type DescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;

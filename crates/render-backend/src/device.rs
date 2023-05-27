@@ -30,7 +30,7 @@ use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
-use crate::{BackendError, DescriptorAllocator, GpuAllocator};
+use crate::{BackendError, GpuAllocator};
 
 use super::{
     droplist::DropList, BackendResult, CommandBuffer, FrameContext, FreeGpuResource, Instance,
@@ -67,7 +67,6 @@ pub struct Device {
     current_drop_list: Mutex<DropList>,
     drop_lists: [Mutex<DropList>; 2],
     allocator: Mutex<GpuAllocator>,
-    descriptors: Mutex<DescriptorAllocator>,
 }
 
 impl Device {
@@ -141,7 +140,6 @@ impl Device {
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
         let allocator = GpuAllocator::new(allocator_config, allocator_props);
 
-        let descriptors = DescriptorAllocator::new(DESCRIPTOR_POOL_UPDATE_SIZE);
         Ok(Arc::new(Self {
             instance,
             pdevice,
@@ -153,7 +151,6 @@ impl Device {
             current_drop_list: Mutex::new(DropList::default()),
             drop_lists,
             allocator: Mutex::new(allocator),
-            descriptors: Mutex::new(descriptors),
         }))
     }
 
@@ -222,11 +219,10 @@ impl Device {
                         u64::MAX,
                     )
                 }?;
-                self.drop_lists[0].lock().unwrap().free(
-                    &self.raw,
-                    &mut self.allocator(),
-                    &mut self.descriptors(),
-                );
+                self.drop_lists[0]
+                    .lock()
+                    .unwrap()
+                    .free(&self.raw, &mut self.allocator());
                 frame0.reset(&self.raw)?;
             } else {
                 return Err(BackendError::Other(
@@ -344,20 +340,15 @@ impl Device {
     pub fn allocator(&self) -> MutexGuard<GpuAllocator> {
         self.allocator.lock().unwrap()
     }
-
-    pub fn descriptors(&self) -> MutexGuard<DescriptorAllocator> {
-        self.descriptors.lock().unwrap()
-    }
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle().ok() };
         let mut allocator = self.allocator();
-        let mut descriptors = self.descriptors();
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
-            list.free(&self.raw, &mut allocator, &mut descriptors);
+            list.free(&self.raw, &mut allocator);
         });
         self.frames.iter().for_each(|frame| {
             let mut frame = frame.lock().unwrap();

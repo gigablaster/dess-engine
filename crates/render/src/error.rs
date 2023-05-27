@@ -16,6 +16,7 @@
 use dess_render_backend::BackendError;
 use gpu_descriptor::AllocationError;
 
+#[derive(Debug)]
 pub enum RenderError {
     Backend(BackendError),
     DescriptorAllocation(AllocationError),

@@ -13,7 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem::size_of, ptr::{copy_nonoverlapping, NonNull}, slice, sync::Arc};
+use std::{
+    mem::size_of,
+    ptr::{copy_nonoverlapping, NonNull},
+    slice,
+    sync::Arc,
+};
 
 use ash::vk;
 use dess_common::memory::BumpAllocator;

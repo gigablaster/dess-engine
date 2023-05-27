@@ -1,4 +1,4 @@
-use std::{marker::PhantomData, ptr::replace, hash::Hash};
+use std::{hash::Hash, marker::PhantomData, ptr::replace};
 
 const GENERATOPN_OFFSET: u32 = 20;
 const INDEX_MASK: u32 = (1 << GENERATOPN_OFFSET) - 1;
@@ -29,7 +29,10 @@ impl<T> Copy for Handle<T> {}
 
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
-        Self { id: self.id, _phantom: PhantomData::<T> }
+        Self {
+            id: self.id,
+            _phantom: PhantomData::<T>,
+        }
     }
 }
 
@@ -39,6 +42,13 @@ impl<T> Handle<T> {
         assert!(generation <= GENERATON_MASK >> GENERATOPN_OFFSET);
         Self {
             id: (generation << GENERATOPN_OFFSET) | index,
+            _phantom: PhantomData::<T>,
+        }
+    }
+
+    pub fn invalid() -> Self {
+        Self {
+            id: u32::MAX,
             _phantom: PhantomData::<T>,
         }
     }

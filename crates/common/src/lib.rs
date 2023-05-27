@@ -18,15 +18,15 @@ pub mod memory;
 mod serialization;
 mod time;
 
-pub mod traits;
 mod handle;
+pub mod traits;
 
 use std::marker::PhantomData;
 
 pub use client::*;
+pub use handle::*;
 pub use serialization::*;
 pub use time::*;
-pub use handle::*;
 
 pub trait Align<T> {
     fn align(self, align: T) -> Self;

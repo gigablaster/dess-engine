@@ -12,13 +12,18 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
+mod descriptors;
 mod error;
 mod geometry;
 mod render;
 mod staging;
-mod descriptors;
 mod uniforms;
 
+use ash::vk;
 pub use error::*;
 pub use render::*;
 pub use staging::*;
+
+pub type DescriptorAllocator =
+    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
+pub type DescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;

@@ -14,27 +14,34 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
+    collections::HashMap,
     mem::size_of,
+    slice,
     sync::{Arc, Mutex},
 };
 
+use arrayvec::ArrayVec;
 use ash::vk;
 use dess_render_backend::{
-    BackendError, Buffer, CommandBuffer, DescriptorAllocator, Device, Image, Instance,
-    PhysicalDeviceList, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface,
-    Swapchain,
+    BackendError, Buffer, BufferDesc, CommandBuffer, DescriptorSetInfo, Device, Image, Instance,
+    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
 };
+use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
+use gpu_descriptor_ash::AshDescriptorDevice;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
+    descriptors::{DescriptorCache, DescriptorHandle},
     geometry::{CachedBuffer, GeometryCache, Index, StaticGeometry},
-    RenderError, RenderResult, Staging,
+    uniforms::UniformBuffer,
+    DescriptorAllocator, DescriptorSet, RenderError, RenderResult, Staging,
 };
 
 const STAGING_SIZE: usize = 64 * 1024 * 1024;
 const GEOMETRY_CACHE_SIZE: usize = 64 * 1024 * 1024;
-const DROP_LIST_DEFAULT_SIZE: usize = 32;
+const DROP_LIST_DEFAULT_SIZE: usize = 128;
+const DESCRIPTOR_SET_GROW: u32 = 128;
 
 #[repr(C, align(16))]
 pub struct RenderOp {
@@ -42,7 +49,7 @@ pub struct RenderOp {
     vertex_offset: u32,
     index_offset: u32,
     index_count: u32,
-    descs: [u32; 4],
+    descs: [DescriptorHandle; 4],
 }
 
 pub enum GpuType {
@@ -57,6 +64,8 @@ pub struct RenderSystem {
     staging: Mutex<Staging>,
     geo_cache: Mutex<GeometryCache>,
     current_drop_list: Mutex<DropList>,
+    descriptor_cache: Mutex<DescriptorCache>,
+    desciptor_allocator: Mutex<DescriptorAllocator>,
     drop_list: [Mutex<DropList>; 2],
 }
 
@@ -87,36 +96,114 @@ impl RenderSystemDesc {
 }
 
 pub struct UpdateContext<'a> {
+    pub(crate) device: &'a ash::Device,
     drop_list: &'a mut DropList,
     staging: &'a mut Staging,
     descriptors: &'a mut DescriptorAllocator,
+    descriptor_cache: &'a mut DescriptorCache,
+}
+
+impl<'a> UpdateContext<'a> {
+    pub fn create_uniform(&mut self, set: &DescriptorSetInfo) -> RenderResult<DescriptorHandle> {
+        self.descriptor_cache.create(set)
+    }
+
+    pub fn destroy_uniform(&mut self, handle: DescriptorHandle) {
+        self.descriptor_cache.remove(handle);
+    }
+
+    pub fn set_uniform_buffer(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: u32,
+        buffer: UniformBuffer,
+    ) {
+        self.descriptor_cache
+            .set_buffer(&mut self.drop_list, handle, binding, buffer);
+    }
+
+    pub fn set_uniform_image(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: u32,
+        image: &Image,
+        layout: vk::ImageLayout,
+        aspect: vk::ImageAspectFlags,
+    ) {
+        self.descriptor_cache
+            .set_image(handle, binding, image, aspect, layout)
+            .unwrap();
+    }
 }
 
 pub struct RenderContext<'a> {
     pub cb: &'a CommandBuffer,
-    pub image: &'a Image,
+    pub backbuffer: &'a Image,
+    pub device: &'a ash::Device,
     geo_cache: &'a Buffer,
+    descriptor_cache: &'a DescriptorCache,
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn render(&self, pass: &RenderPassRecorder, rops: &[RenderOp], _name: Option<&str>) {
+    pub fn render(
+        &self,
+        pipelines: &HashMap<u32, Pipeline>,
+        pass: &RenderPassRecorder,
+        rops: &[RenderOp],
+        _name: Option<&str>,
+    ) {
         if rops.is_empty() {
             return;
         }
-        // TODO:: create some sort of Handle with not-valid state. For now we assume than 0 is no-state
-        let mut current_descs = [0u32; 4];
-        let mut current_pso = 0;
+        let mut current_descs = [DescriptorHandle::invalid(); 4];
+        let mut current_pso_index = 0;
+        let mut current_pso = None;
         pass.bind_vertex_buffer(self.geo_cache);
         pass.bind_index_buffer(self.geo_cache);
         rops.iter().for_each(|rop| {
-            if current_pso != rop.pso {
-                // TODO:: get and bind PSO
-                current_pso = rop.pso;
+            if current_pso_index != rop.pso {
+                if let Some(pipeline) = pipelines.get(&rop.pso) {
+                    current_pso_index = rop.pso;
+                    current_pso = Some(pipeline);
+                    unsafe {
+                        self.device.cmd_bind_pipeline(
+                            self.cb.raw,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            pipeline.pipeline,
+                        )
+                    }
+                } else {
+                    return;
+                }
             }
+            let pipeline = current_pso.unwrap();
             rop.descs.iter().enumerate().for_each(|(index, desc)| {
                 if current_descs[index] != *desc {
-                    // TODO:: bind desc
-                    current_descs[index] = *desc;
+                    if let Some(value) = self.descriptor_cache.get(*desc) {
+                        if let Some(descriptor) = &value.descriptor {
+                            current_descs[index] = *desc;
+                            let offsets = value
+                                .buffers
+                                .iter()
+                                .map(|x| x.data.unwrap().offset)
+                                .collect::<ArrayVec<_, 64>>();
+
+                            unsafe {
+                                self.device.cmd_bind_descriptor_sets(
+                                    self.cb.raw,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    pipeline.pipeline_layout,
+                                    index as _,
+                                    slice::from_ref(descriptor.raw()),
+                                    &offsets,
+                                )
+                            }
+                        } else {
+                            return;
+                        }
+                    } else {
+                        return;
+                    }
                 }
             });
             assert_eq!(0, rop.index_offset % size_of::<Index>() as u32);
@@ -128,12 +215,16 @@ impl<'a> RenderContext<'a> {
 
 pub(crate) struct DropList {
     buffers: Vec<CachedBuffer>,
+    descriptors: Vec<DescriptorSet>,
+    uniforms: Vec<UniformBuffer>,
 }
 
 impl Default for DropList {
     fn default() -> Self {
         Self {
             buffers: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
+            descriptors: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
+            uniforms: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
         }
     }
 }
@@ -141,6 +232,14 @@ impl Default for DropList {
 impl DropList {
     pub fn drop_static_buffer(&mut self, buffer: CachedBuffer) {
         self.buffers.push(buffer);
+    }
+
+    pub fn drop_descriptor_set(&mut self, descriptor: DescriptorSet) {
+        self.descriptors.push(descriptor);
+    }
+
+    pub fn drop_uniform_buffer(&mut self, buffer: UniformBuffer) {
+        self.uniforms.push(buffer);
     }
 
     pub fn drop_static_geometry(&mut self, geometry: StaticGeometry) {
@@ -185,13 +284,22 @@ impl RenderSystem {
             let swapchain = Swapchain::new(&device, surface, desc.resolution)?;
             let staging = Staging::new(&device, STAGING_SIZE)?;
             let geo_cache = GeometryCache::new(&device, GEOMETRY_CACHE_SIZE)?;
+            let buffer = Arc::new(Buffer::graphics(
+                &device,
+                BufferDesc::upload(4 * 1024 * 1023, vk::BufferUsageFlags::UNIFORM_BUFFER),
+                Some("uniforms"),
+            )?);
+            let descriptor_cache = DescriptorCache::new(&device, &buffer);
+            let descriptor_allocator = DescriptorAllocator::new(DESCRIPTOR_SET_GROW);
 
             Ok(Self {
                 device,
                 swapchain: Mutex::new(swapchain),
                 staging: Mutex::new(staging),
                 geo_cache: Mutex::new(geo_cache),
+                descriptor_cache: Mutex::new(descriptor_cache),
                 current_drop_list: Mutex::new(DropList::default()),
+                desciptor_allocator: Mutex::new(descriptor_allocator),
                 drop_list: [
                     Mutex::new(DropList::default()),
                     Mutex::new(DropList::default()),
@@ -206,14 +314,19 @@ impl RenderSystem {
         puffin::profile_scope!("update resources");
         let mut staging = self.staging.lock().unwrap();
         let mut drop_list = self.current_drop_list.lock().unwrap();
-        let mut descriptors = self.device.descriptors();
+        let mut descriptors = self.desciptor_allocator.lock().unwrap();
+        let mut descriptor_cache = self.descriptor_cache.lock().unwrap();
         let context = UpdateContext {
+            device: &self.device.raw,
             drop_list: &mut drop_list,
             staging: &mut staging,
             descriptors: &mut descriptors,
+            descriptor_cache: &mut descriptor_cache,
         };
 
         update_cb(context);
+
+        descriptor_cache.update_descriptors(&mut descriptors, &mut drop_list)?;
 
         Ok(())
     }
@@ -257,8 +370,10 @@ impl RenderSystem {
 
             let context = RenderContext {
                 cb: &frame.main_cb,
-                image: &image.image,
+                backbuffer: &image.image,
                 geo_cache: &geo_cache.buffer,
+                device: &self.device.raw,
+                descriptor_cache: &self.descriptor_cache.lock().unwrap(),
             };
 
             frame_cb(context);
