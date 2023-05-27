@@ -99,7 +99,6 @@ pub struct UpdateContext<'a> {
     pub(crate) device: &'a ash::Device,
     drop_list: &'a mut DropList,
     staging: &'a mut Staging,
-    descriptors: &'a mut DescriptorAllocator,
     descriptor_cache: &'a mut DescriptorCache,
 }
 
@@ -320,7 +319,6 @@ impl RenderSystem {
             device: &self.device.raw,
             drop_list: &mut drop_list,
             staging: &mut staging,
-            descriptors: &mut descriptors,
             descriptor_cache: &mut descriptor_cache,
         };
 
