@@ -14,15 +14,17 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 mod descriptors;
 mod error;
-mod geometry;
+mod megabuffer;
 mod render;
 mod staging;
-mod uniforms;
 
 use ash::vk;
 pub use error::*;
+pub use megabuffer::AllocatedBuffer;
 pub use render::*;
 pub use staging::*;
+
+pub type Index = u16;
 
 pub type DescriptorAllocator =
     gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;

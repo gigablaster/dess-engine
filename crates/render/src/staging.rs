@@ -197,11 +197,13 @@ impl Staging {
                 previous_accesses: &[
                     AccessType::TransferWrite,
                     AccessType::VertexBuffer,
+                    AccessType::AnyShaderReadUniformBuffer,
                     AccessType::IndexBuffer,
                 ],
                 next_accesses: &[
                     AccessType::TransferWrite,
                     AccessType::VertexBuffer,
+                    AccessType::AnyShaderReadUniformBuffer,
                     AccessType::IndexBuffer,
                 ],
                 src_queue_family_index: from,

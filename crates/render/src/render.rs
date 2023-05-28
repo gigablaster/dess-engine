@@ -23,8 +23,9 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use dess_render_backend::{
-    BackendError, Buffer, BufferDesc, CommandBuffer, DescriptorSetInfo, Device, Image, Instance,
-    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
+    BackendError, Buffer, BufferDesc, BufferView, CommandBuffer, DescriptorSetInfo, Device, Image,
+    Instance, PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface,
+    Swapchain,
 };
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -32,9 +33,8 @@ use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
     descriptors::{DescriptorCache, DescriptorHandle},
-    geometry::{CachedBuffer, GeometryCache, Index, StaticGeometry},
-    uniforms::UniformBuffer,
-    DescriptorAllocator, DescriptorSet, RenderError, RenderResult, Staging,
+    megabuffer::{self, MegaBuffer},
+    AllocatedBuffer, DescriptorAllocator, DescriptorSet, Index, RenderError, RenderResult, Staging,
 };
 
 const STAGING_SIZE: usize = 64 * 1024 * 1024;
@@ -61,7 +61,7 @@ pub struct RenderSystem {
     device: Arc<Device>,
     swapchain: Mutex<Swapchain>,
     staging: Mutex<Staging>,
-    geo_cache: Mutex<GeometryCache>,
+    megabuffer: Mutex<MegaBuffer>,
     current_drop_list: Mutex<DropList>,
     descriptor_cache: Mutex<DescriptorCache>,
     desciptor_allocator: Mutex<DescriptorAllocator>,
@@ -97,7 +97,7 @@ impl RenderSystemDesc {
 pub struct UpdateContext<'a> {
     drop_list: &'a mut DropList,
     staging: &'a mut Staging,
-    geo_cache: &'a mut GeometryCache,
+    megabuffer: &'a mut MegaBuffer,
     descriptor_cache: &'a mut DescriptorCache,
 }
 
@@ -110,14 +110,18 @@ impl<'a> UpdateContext<'a> {
         self.descriptor_cache.remove(handle);
     }
 
-    pub fn set_uniform_buffer(
+    pub fn set_uniform_buffer<T: Sized>(
         &mut self,
         handle: DescriptorHandle,
         binding: u32,
-        buffer: UniformBuffer,
-    ) {
+        data: &T,
+    ) -> RenderResult<()> {
+        let buffer = self.megabuffer.allocate(size_of::<T>())?;
+        self.staging.upload_buffer(&buffer, slice::from_ref(data))?;
         self.descriptor_cache
-            .set_buffer(&mut self.drop_list, handle, binding, buffer);
+            .set_buffer(self.drop_list, handle, binding, buffer);
+
+        Ok(())
     }
 
     pub fn set_uniform_image(
@@ -127,21 +131,22 @@ impl<'a> UpdateContext<'a> {
         image: &Image,
         layout: vk::ImageLayout,
         aspect: vk::ImageAspectFlags,
-    ) {
+    ) -> RenderResult<()> {
         self.descriptor_cache
-            .set_image(handle, binding, image, aspect, layout)
-            .unwrap();
+            .set_image(handle, binding, image, aspect, layout)?;
+
+        Ok(())
     }
 
-    pub fn create_buffer<T: Sized>(&mut self, data: &[T]) -> RenderResult<CachedBuffer> {
-        let buffer = self.geo_cache.allocate(data.len() * size_of::<T>())?;
+    pub fn create_buffer<T: Sized>(&mut self, data: &[T]) -> RenderResult<AllocatedBuffer> {
+        let buffer = self.megabuffer.allocate(data.len() * size_of::<T>())?;
         self.staging.upload_buffer(&buffer, data)?;
 
         Ok(buffer)
     }
 
-    pub fn destroy_buffer(&mut self, buffer: CachedBuffer) {
-        self.drop_list.drop_static_buffer(buffer);
+    pub fn destroy_buffer(&mut self, buffer: AllocatedBuffer) {
+        self.drop_list.drop_buffer(buffer);
     }
 }
 
@@ -149,7 +154,7 @@ pub struct RenderContext<'a> {
     pub cb: &'a CommandBuffer,
     pub backbuffer: &'a Image,
     pub device: &'a ash::Device,
-    geo_cache: &'a Buffer,
+    megabuffer: &'a Buffer,
     descriptor_cache: &'a DescriptorCache,
 }
 
@@ -167,8 +172,8 @@ impl<'a> RenderContext<'a> {
         let mut current_descs = [DescriptorHandle::invalid(); 4];
         let mut current_pso_index = 0;
         let mut current_pso = None;
-        pass.bind_vertex_buffer(self.geo_cache);
-        pass.bind_index_buffer(self.geo_cache);
+        pass.bind_vertex_buffer(self.megabuffer);
+        pass.bind_index_buffer(self.megabuffer);
         rops.iter().for_each(|rop| {
             if current_pso_index != rop.pso {
                 if let Some(pipeline) = pipelines.get(&rop.pso) {
@@ -194,7 +199,7 @@ impl<'a> RenderContext<'a> {
                             let offsets = value
                                 .buffers
                                 .iter()
-                                .map(|x| x.data.unwrap().offset)
+                                .map(|x| x.data.unwrap().offset() as u32)
                                 .collect::<ArrayVec<_, 64>>();
 
                             unsafe {
@@ -207,11 +212,7 @@ impl<'a> RenderContext<'a> {
                                     &offsets,
                                 )
                             }
-                        } else {
-                            return;
                         }
-                    } else {
-                        return;
                     }
                 }
             });
@@ -223,9 +224,8 @@ impl<'a> RenderContext<'a> {
 }
 
 pub(crate) struct DropList {
-    buffers: Vec<CachedBuffer>,
+    buffers: Vec<AllocatedBuffer>,
     descriptors: Vec<DescriptorSet>,
-    uniforms: Vec<UniformBuffer>,
 }
 
 impl Default for DropList {
@@ -233,13 +233,12 @@ impl Default for DropList {
         Self {
             buffers: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
             descriptors: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
-            uniforms: Vec::with_capacity(DROP_LIST_DEFAULT_SIZE),
         }
     }
 }
 
 impl DropList {
-    pub fn drop_static_buffer(&mut self, buffer: CachedBuffer) {
+    pub fn drop_buffer(&mut self, buffer: AllocatedBuffer) {
         self.buffers.push(buffer);
     }
 
@@ -247,16 +246,7 @@ impl DropList {
         self.descriptors.push(descriptor);
     }
 
-    pub fn drop_uniform_buffer(&mut self, buffer: UniformBuffer) {
-        self.uniforms.push(buffer);
-    }
-
-    pub fn drop_static_geometry(&mut self, geometry: StaticGeometry) {
-        self.drop_static_buffer(geometry.vertices);
-        self.drop_static_buffer(geometry.indices);
-    }
-
-    pub fn free(&mut self, geo_cache: &mut GeometryCache) {
+    pub fn free(&mut self, geo_cache: &mut MegaBuffer) {
         self.buffers
             .drain(..)
             .for_each(|buffer| geo_cache.deallocate(buffer));
@@ -292,20 +282,15 @@ impl RenderSystem {
             let device = Device::create(instance, pdevice)?;
             let swapchain = Swapchain::new(&device, surface, desc.resolution)?;
             let staging = Staging::new(&device, STAGING_SIZE)?;
-            let geo_cache = GeometryCache::new(&device, GEOMETRY_CACHE_SIZE)?;
-            let buffer = Arc::new(Buffer::graphics(
-                &device,
-                BufferDesc::upload(4 * 1024 * 1023, vk::BufferUsageFlags::UNIFORM_BUFFER),
-                Some("uniforms"),
-            )?);
-            let descriptor_cache = DescriptorCache::new(&device, &buffer);
+            let megabuffer = MegaBuffer::new(&device)?;
+            let descriptor_cache = DescriptorCache::new(&device);
             let descriptor_allocator = DescriptorAllocator::new(DESCRIPTOR_SET_GROW);
 
             Ok(Self {
                 device,
                 swapchain: Mutex::new(swapchain),
                 staging: Mutex::new(staging),
-                geo_cache: Mutex::new(geo_cache),
+                megabuffer: Mutex::new(megabuffer),
                 descriptor_cache: Mutex::new(descriptor_cache),
                 current_drop_list: Mutex::new(DropList::default()),
                 desciptor_allocator: Mutex::new(descriptor_allocator),
@@ -325,12 +310,12 @@ impl RenderSystem {
         let mut drop_list = self.current_drop_list.lock().unwrap();
         let mut descriptors = self.desciptor_allocator.lock().unwrap();
         let mut descriptor_cache = self.descriptor_cache.lock().unwrap();
-        let mut geo_cache = self.geo_cache.lock().unwrap();
+        let mut geo_cache = self.megabuffer.lock().unwrap();
         let context = UpdateContext {
             drop_list: &mut drop_list,
             staging: &mut staging,
             descriptor_cache: &mut descriptor_cache,
-            geo_cache: &mut geo_cache,
+            megabuffer: &mut geo_cache,
         };
 
         update_cb(context);
@@ -347,7 +332,7 @@ impl RenderSystem {
     ) -> RenderResult<()> {
         puffin::profile_scope!("render frame");
         let mut swapchain = self.swapchain.lock().unwrap();
-        let mut geo_cache = self.geo_cache.lock().unwrap();
+        let mut megabuffer = self.megabuffer.lock().unwrap();
         let render_area = swapchain.render_area();
         if current_resolution[0] != render_area.extent.width
             || current_resolution[1] != render_area.extent.height
@@ -359,7 +344,7 @@ impl RenderSystem {
         }
 
         let frame = self.device.begin_frame()?;
-        self.drop_list[0].lock().unwrap().free(&mut geo_cache);
+        self.drop_list[0].lock().unwrap().free(&mut megabuffer);
         let image = match swapchain.acquire_next_image() {
             Err(BackendError::RecreateSwapchain) => {
                 self.device.wait();
@@ -380,7 +365,7 @@ impl RenderSystem {
             let context = RenderContext {
                 cb: &frame.main_cb,
                 backbuffer: &image.image,
-                geo_cache: &geo_cache.buffer,
+                megabuffer: &megabuffer.buffer,
                 device: &self.device.raw,
                 descriptor_cache: &self.descriptor_cache.lock().unwrap(),
             };

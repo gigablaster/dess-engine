@@ -337,6 +337,7 @@ dependencies = [
  "dess-render-backend",
  "gpu-descriptor",
  "gpu-descriptor-ash",
+ "log",
  "puffin",
  "raw-window-handle",
  "rayon",

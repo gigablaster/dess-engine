@@ -22,7 +22,8 @@ pub enum RenderError {
     DescriptorAllocation(AllocationError),
     DeviceNotFound,
     RecreateBuffers,
-    NotEnoughCacheMemory,
+    OutOfMemory,
+    WrongBufferSize,
 }
 
 impl From<BackendError> for RenderError {

@@ -14,3 +14,4 @@ arrayvec = "0.7"
 gpu-descriptor = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
 gpu-descriptor-ash = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
 rayon = "1.7"
+log = "0.4"

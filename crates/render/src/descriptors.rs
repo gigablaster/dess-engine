@@ -3,12 +3,14 @@ use std::{collections::HashSet, slice, sync::Arc};
 use arrayvec::ArrayVec;
 use ash::vk;
 use dess_common::{Handle, HandleContainer};
-use dess_render_backend::{Buffer, DescriptorSetInfo, Device, Image, ImageViewDesc};
+use dess_render_backend::{BufferView, DescriptorSetInfo, Device, Image, ImageViewDesc};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::{uniforms::UniformBuffer, DescriptorAllocator, DescriptorSet, DropList, RenderResult};
+use crate::{
+    megabuffer::AllocatedBuffer, DescriptorAllocator, DescriptorSet, DropList, RenderResult,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BindedImage {
@@ -25,7 +27,7 @@ pub struct BindingPoint<T> {
 #[derive(Debug)]
 pub struct Descriptor {
     pub descriptor: Option<DescriptorSet>,
-    pub buffers: Vec<BindingPoint<UniformBuffer>>,
+    pub buffers: Vec<BindingPoint<AllocatedBuffer>>,
     pub images: Vec<BindingPoint<BindedImage>>,
     pub count: DescriptorTotalCount,
     pub layout: vk::DescriptorSetLayout,
@@ -42,18 +44,16 @@ pub type DescriptorHandle = Handle<Descriptor>;
 
 pub struct DescriptorCache {
     device: Arc<Device>,
-    uniform_buffer: Arc<Buffer>,
     container: HandleContainer<Descriptor>,
     dirty: HashSet<DescriptorHandle>,
     retired_descriptors: Vec<Descriptor>,
-    retired_uniforms: Vec<UniformBuffer>,
+    retired_uniforms: Vec<AllocatedBuffer>,
 }
 
 impl DescriptorCache {
-    pub fn new(device: &Arc<Device>, buffer: &Arc<Buffer>) -> Self {
+    pub fn new(device: &Arc<Device>) -> Self {
         Self {
             device: device.clone(),
-            uniform_buffer: buffer.clone(),
             container: HandleContainer::new(),
             dirty: HashSet::new(),
             retired_descriptors: Vec::new(),
@@ -67,7 +67,7 @@ impl DescriptorCache {
             .iter()
             .filter_map(|(index, ty)| {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
-                    Some(BindingPoint::<UniformBuffer> {
+                    Some(BindingPoint::<AllocatedBuffer> {
                         binding: *index,
                         data: None,
                     })
@@ -108,15 +108,9 @@ impl DescriptorCache {
     }
 
     pub fn get(&self, handle: DescriptorHandle) -> Option<&Descriptor> {
-        if let Some(value) = self.container.get(handle) {
-            if value.descriptor.is_some() && value.is_valid() {
-                Some(value)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
+        self.container
+            .get(handle)
+            .filter(|&value| value.descriptor.is_some() && value.is_valid())
     }
 
     pub fn remove(&mut self, handle: DescriptorHandle) {
@@ -158,7 +152,7 @@ impl DescriptorCache {
         drop_list: &mut DropList,
         handle: DescriptorHandle,
         binding: u32,
-        value: UniformBuffer,
+        value: AllocatedBuffer,
     ) {
         if let Some(desc) = self.container.get_mut(handle) {
             let buffer = desc
@@ -167,7 +161,7 @@ impl DescriptorCache {
                 .find(|point| point.binding == binding);
             if let Some(buffer) = buffer {
                 if let Some(old) = buffer.data.replace(value) {
-                    drop_list.drop_uniform_buffer(old);
+                    drop_list.drop_buffer(old);
                 }
             }
         }
@@ -205,7 +199,7 @@ impl DescriptorCache {
         self.dirty.retain(|x| !Self::is_valid(&self.container, *x));
         self.retired_uniforms
             .drain(..)
-            .for_each(|x| drop_list.drop_uniform_buffer(x));
+            .for_each(|x| drop_list.drop_buffer(x));
         self.retired_descriptors
             .drain(..)
             .filter_map(|x| x.descriptor)
@@ -243,9 +237,9 @@ impl DescriptorCache {
                     .map(|binding| {
                         let buffer = binding.data.unwrap();
                         let buffer = vk::DescriptorBufferInfo::builder()
-                            .buffer(self.uniform_buffer.raw)
-                            .offset(buffer.offset as _)
-                            .range(buffer.size as _);
+                            .buffer(buffer.buffer())
+                            .offset(buffer.offset())
+                            .range(buffer.size());
 
                         vk::WriteDescriptorSet::builder()
                             .buffer_info(slice::from_ref(&buffer))

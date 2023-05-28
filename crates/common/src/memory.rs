@@ -264,13 +264,13 @@ impl BumpAllocator {
 
 #[derive(Debug)]
 pub struct BlockAllocator {
-    chunk_size: usize,
+    chunk_size: u64,
     chunk_count: u32,
     empty: Vec<u32>,
 }
 
 impl BlockAllocator {
-    pub fn new(chunk_size: usize, chunk_count: u32) -> Self {
+    pub fn new(chunk_size: u64, chunk_count: u32) -> Self {
         let empty = (0..chunk_count).rev().collect::<Vec<_>>();
 
         Self {
@@ -280,15 +280,15 @@ impl BlockAllocator {
         }
     }
 
-    pub fn allocate(&mut self) -> Option<usize> {
+    pub fn allocate(&mut self) -> Option<u64> {
         if let Some(slot) = self.empty.pop() {
-            Some((slot as usize) * self.chunk_size)
+            Some((slot as u64) * self.chunk_size)
         } else {
             None
         }
     }
 
-    pub fn dealloc(&mut self, offset: usize) {
+    pub fn dealloc(&mut self, offset: u64) {
         let index = (offset / self.chunk_size) as u32;
         assert!(index < self.chunk_count && offset % self.chunk_size == 0);
         assert!(!self.empty.contains(&index));
