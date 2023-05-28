@@ -23,9 +23,8 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use dess_render_backend::{
-    BackendError, Buffer, BufferDesc, BufferView, CommandBuffer, DescriptorSetInfo, Device, Image,
-    Instance, PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface,
-    Swapchain,
+    BackendError, Buffer, BufferView, CommandBuffer, DescriptorSetInfo, Device, Image, Instance,
+    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
 };
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -33,12 +32,11 @@ use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
     descriptors::{DescriptorCache, DescriptorHandle},
-    megabuffer::{self, MegaBuffer},
+    megabuffer::MegaBuffer,
     AllocatedBuffer, DescriptorAllocator, DescriptorSet, Index, RenderError, RenderResult, Staging,
 };
 
 const STAGING_SIZE: usize = 64 * 1024 * 1024;
-const GEOMETRY_CACHE_SIZE: usize = 64 * 1024 * 1024;
 const DROP_LIST_DEFAULT_SIZE: usize = 128;
 const DESCRIPTOR_SET_GROW: u32 = 128;
 
