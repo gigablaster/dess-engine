@@ -79,7 +79,7 @@ impl GeometryCache {
     }
 
     pub fn allocate(&mut self, size: usize) -> RenderResult<CachedBuffer> {
-        if let Some(offset) = self.allocator.alloc(size as _) {
+        if let Some(offset) = self.allocator.allocate(size as _) {
             Ok(CachedBuffer {
                 buffer: self.buffer.clone(),
                 offset: offset as _,
@@ -91,7 +91,7 @@ impl GeometryCache {
     }
 
     pub fn deallocate(&mut self, buffer: CachedBuffer) {
-        self.allocator.free(buffer.offset as _);
+        self.allocator.deallocate(buffer.offset as _);
     }
 
     pub fn create<T: PipelineVertex>(

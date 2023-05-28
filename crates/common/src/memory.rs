@@ -52,15 +52,23 @@ impl DynamicAllocator {
         }
     }
 
-    pub fn alloc(&mut self, size: u64) -> Option<u64> {
-        if let Some(index) = self.find_free_block(size) {
+    pub fn allocate(&mut self, size: u64) -> Option<u64> {
+        if let Some(index) = self.find_first_free_block(size) {
             self.split_and_insert_block(index, size)
         } else {
             None
         }
     }
 
-    pub fn free(&mut self, offset: u64) {
+    pub fn allocate_back(&mut self, size: u64) -> Option<u64> {
+        if let Some(index) = self.find_last_free_block(size) {
+            self.split_and_insert_block_end(index, size)
+        } else {
+            None
+        }
+    }
+
+    pub fn deallocate(&mut self, offset: u64) {
         if let Some(index) = self.find_used_block(offset) {
             if let Block::Used(block) = self.blocks[index] {
                 self.blocks[index] = Block::Free(block);
@@ -83,7 +91,25 @@ impl DynamicAllocator {
         })
     }
 
-    fn find_free_block(&self, size: u64) -> Option<usize> {
+    fn find_last_free_block(&self, size: u64) -> Option<usize> {
+        self.blocks
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, block)| {
+                if let Block::Free(block) = block {
+                    if block.1 >= size {
+                        Some(index)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            })
+    }
+
+    fn find_first_free_block(&self, size: u64) -> Option<usize> {
         self.blocks.iter().enumerate().find_map(|(index, block)| {
             if let Block::Free(block) = block {
                 if block.1 >= size {
@@ -143,6 +169,25 @@ impl DynamicAllocator {
                         .insert(index + 1, Block::Free(BlockData(block.0 + size, new_size)));
                 }
                 return Some(block.0);
+            }
+        }
+
+        None
+    }
+
+    fn split_and_insert_block_end(&mut self, index: usize, size: u64) -> Option<u64> {
+        let size = align(size, self.granularity);
+        if let Some(block) = self.blocks.get(index) {
+            let block = *block;
+            if let Block::Free(block) = block {
+                assert!(size <= block.1);
+                let split = block.1 - size;
+                self.blocks[index] = Block::Used(BlockData(block.0 + split, size));
+                if split > 0 {
+                    self.blocks
+                        .insert(index, Block::Free(BlockData(block.0, split)));
+                }
+                return Some(block.0 + split);
             }
         }
 
@@ -260,8 +305,8 @@ mod test {
     #[test]
     fn alloc() {
         let mut allocator = DynamicAllocator::new(1024, 64);
-        let block1 = allocator.alloc(100).unwrap();
-        let block2 = allocator.alloc(200).unwrap();
+        let block1 = allocator.allocate(100).unwrap();
+        let block2 = allocator.allocate(200).unwrap();
         assert_eq!(0, block1);
         assert_eq!(128, block2);
     }
@@ -269,33 +314,33 @@ mod test {
     #[test]
     fn free() {
         let mut allocator = DynamicAllocator::new(1024, 64);
-        let block1 = allocator.alloc(100).unwrap();
-        let block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1);
-        allocator.free(block2);
-        let block = allocator.alloc(300).unwrap();
+        let block1 = allocator.allocate(100).unwrap();
+        let block2 = allocator.allocate(200).unwrap();
+        allocator.deallocate(block1);
+        allocator.deallocate(block2);
+        let block = allocator.allocate(300).unwrap();
         assert_eq!(0, block);
     }
 
     #[test]
     fn allocate_suitable_block() {
         let mut allocator = DynamicAllocator::new(1024, 64);
-        let block1 = allocator.alloc(100).unwrap();
-        let _block2 = allocator.alloc(200).unwrap();
-        allocator.free(block1);
-        let block = allocator.alloc(300).unwrap();
+        let block1 = allocator.allocate(100).unwrap();
+        let _block2 = allocator.allocate(200).unwrap();
+        allocator.deallocate(block1);
+        let block = allocator.allocate(300).unwrap();
         assert_eq!(384, block);
     }
 
     #[test]
     fn allocate_small_blocks_in_hole_after_big() {
         let mut allocator = DynamicAllocator::new(1024, 64);
-        allocator.alloc(100).unwrap();
-        let block = allocator.alloc(200).unwrap();
-        allocator.alloc(100).unwrap();
-        allocator.free(block);
-        let block1 = allocator.alloc(50).unwrap();
-        let block2 = allocator.alloc(50).unwrap();
+        allocator.allocate(100).unwrap();
+        let block = allocator.allocate(200).unwrap();
+        allocator.allocate(100).unwrap();
+        allocator.deallocate(block);
+        let block1 = allocator.allocate(50).unwrap();
+        let block2 = allocator.allocate(50).unwrap();
         assert_eq!(128, block1);
         assert_eq!(192, block2);
     }
@@ -303,9 +348,32 @@ mod test {
     #[test]
     fn not_anough_memory() {
         let mut allocator = DynamicAllocator::new(1024, 64);
-        allocator.alloc(500).unwrap();
-        allocator.alloc(200).unwrap();
-        assert!(allocator.alloc(500).is_none());
+        allocator.allocate(500).unwrap();
+        allocator.allocate(200).unwrap();
+        assert!(allocator.allocate(500).is_none());
+    }
+
+    #[test]
+    fn alloc_back() {
+        let mut allocator = DynamicAllocator::new(1024, 64);
+        assert_eq!(Some(512), allocator.allocate_back(500));
+        assert_eq!(Some(256), allocator.allocate_back(250));
+        assert_eq!(Some(0), allocator.allocate(100));
+        allocator.deallocate(256);
+        assert_eq!(Some(256), allocator.allocate_back(250));
+        assert_eq!(None, allocator.allocate_back(250));
+    }
+
+    #[test]
+    fn alloc_back_hole() {
+        let mut allocator = DynamicAllocator::new(1024, 64);
+        allocator.allocate_back(256).unwrap();
+        let block = allocator.allocate_back(256).unwrap();
+        allocator.allocate_back(256).unwrap();
+        allocator.allocate_back(256).unwrap();
+        allocator.deallocate(block);
+        assert_eq!(Some(1024 - 256 - 128), allocator.allocate_back(128));
+        assert_eq!(Some(512), allocator.allocate(128));
     }
 
     #[test]
