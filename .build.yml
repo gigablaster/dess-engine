@@ -7,10 +7,10 @@ sources:
 tasks:
   - build: |
       cd dess-engine
-      cargo build --verbose
+      cargo build
   - test: |
       cd dess-engine
-      cargo test --verbose
+      cargo test
   - clippy: |
       cd dess-engine
-      cargo clippy --verbose -- -D warnings
+      cargo clippy -- -D warnings
