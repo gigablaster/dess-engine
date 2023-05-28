@@ -53,10 +53,9 @@ impl PhysicalDevice {
             .filter(|x| x.is_supported(flags))
             .copied()
             .next()
-            .ok_or(BackendError::Other(format!(
-                "Can't find queue with {:?} support",
-                flags
-            )))
+            .ok_or_else(|| {
+                BackendError::Other(format!("Can't find queue with {:?} support", flags))
+            })
     }
 }
 
