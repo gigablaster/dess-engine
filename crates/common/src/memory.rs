@@ -30,7 +30,6 @@ enum Block {
 /// It's simple free-list allocator
 #[derive(Debug)]
 pub struct DynamicAllocator {
-    size: u64,
     granularity: u64,
     blocks: Vec<Block>,
 }
@@ -49,7 +48,6 @@ impl DynamicAllocator {
         blocks.push(Block::Free(BlockData(0, size)));
         Self {
             blocks,
-            size,
             granularity,
         }
     }
@@ -104,9 +102,12 @@ impl DynamicAllocator {
         loop {
             if index > 0 {
                 if let Some(block) = self.blocks.get(index - 1) {
-                    if let Block::Free(_) = block {
-                        index = index - 1;
-                        continue;
+                    match block {
+                        Block::Free(_) => {
+                            index -= 1;
+                            continue;
+                        }
+                        Block::Used(_) => {}
                     }
                 }
             }
@@ -115,10 +116,13 @@ impl DynamicAllocator {
         loop {
             if let Block::Free(block) = self.blocks[index] {
                 if let Some(next) = self.blocks.get(index + 1) {
-                    if let Block::Free(next) = next {
-                        self.blocks[index] = Block::Free(BlockData(block.0, block.1 + next.1));
-                        self.blocks.remove(index + 1);
-                        continue;
+                    match next {
+                        Block::Free(next) => {
+                            self.blocks[index] = Block::Free(BlockData(block.0, block.1 + next.1));
+                            self.blocks.remove(index + 1);
+                            continue;
+                        }
+                        Block::Used(_) => {}
                     }
                 }
             }
@@ -213,6 +217,7 @@ impl BumpAllocator {
     }
 }
 
+#[derive(Debug)]
 pub struct BlockAllocator {
     chunk_size: usize,
     chunk_count: u32,
@@ -221,13 +226,13 @@ pub struct BlockAllocator {
 
 impl BlockAllocator {
     pub fn new(chunk_size: usize, chunk_count: u32) -> Self {
-        let empty = (0..chunk_count)
-            .rev()
-            .into_iter()
-            .map(|x| x as u32)
-            .collect::<Vec<_>>();
+        let empty = (0..chunk_count).rev().collect::<Vec<_>>();
 
-        Self { chunk_size,  chunk_count, empty }
+        Self {
+            chunk_size,
+            chunk_count,
+            empty,
+        }
     }
 
     pub fn allocate(&mut self) -> Option<usize> {
@@ -250,7 +255,7 @@ impl BlockAllocator {
 mod test {
     use crate::memory::RingAllocator;
 
-    use super::{BumpAllocator, DynamicAllocator, BlockAllocator};
+    use super::{BlockAllocator, BumpAllocator, DynamicAllocator};
 
     #[test]
     fn alloc() {

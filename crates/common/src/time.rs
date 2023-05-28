@@ -55,9 +55,9 @@ impl TimeFilter {
         let mut sorted = self.raw;
         sorted.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let mut average = 0.0;
-        for index in 0..COUNT {
+        (0..COUNT).for_each(|index| {
             average += sorted[index];
-        }
+        });
         let average = average / COUNT as f64;
 
         GameTime {
@@ -66,5 +66,11 @@ impl TimeFilter {
             frame_number: self.count,
             total_time: self.total as f32,
         }
+    }
+}
+
+impl Default for TimeFilter {
+    fn default() -> Self {
+        Self::new()
     }
 }

@@ -30,8 +30,6 @@ use super::{BackendError, BackendResult, Device, FreeGpuResource, RenderPass, Sa
 
 const MAX_SAMPLERS: usize = 16;
 
-type DescriptorSetLayouts = Vec<vk::DescriptorSetLayout>;
-
 type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
 type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
 
@@ -91,11 +89,7 @@ impl DescriptorSetInfo {
             };
         }
 
-        let layoyt = bindings
-            .iter()
-            .map(|(_, binding)| binding)
-            .copied()
-            .collect::<Vec<_>>();
+        let layoyt = bindings.values().copied().collect::<Vec<_>>();
         let mut types = HashMap::with_capacity(set.len());
         bindings.into_iter().for_each(|(index, binding)| {
             types.insert(index, binding.descriptor_type);
@@ -441,7 +435,7 @@ impl Pipeline {
             .build();
 
         let sets = Self::create_descriptor_set_layouts(
-            &device,
+            device,
             vk::ShaderStageFlags::ALL_GRAPHICS,
             &desc.shaders,
         )?;
@@ -492,18 +486,21 @@ impl Pipeline {
         shaders: &[&Shader],
     ) -> BackendResult<Vec<DescriptorSetInfo>> {
         let sets = shaders
-            .into_iter()
+            .iter()
             .map(|shader| shader.descriptor_sets.clone())
             .collect::<Vec<_>>();
         let sets = Self::merge_shader_stage_layouts(sets);
-        let set_count = sets.iter().map(|(index, _)| *index + 1).max().unwrap_or(0);
+        let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
         let mut layouts = Vec::with_capacity(set_count as _);
         for set_index in 0..set_count {
             let set = sets.get(&set_index);
-            if let Some(set) = set {
-                layouts.push(DescriptorSetInfo::new(device, stages, set)?);
-            } else {
-                layouts.push(DescriptorSetInfo::default());
+            match set {
+                Some(set) => {
+                    layouts.push(DescriptorSetInfo::new(device, stages, set)?);
+                }
+                None => {
+                    layouts.push(DescriptorSetInfo::default());
+                }
             }
         }
 

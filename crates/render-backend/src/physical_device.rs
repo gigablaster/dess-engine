@@ -125,11 +125,10 @@ impl Instance {
                 self.raw
                     .get_physical_device_format_properties(pdevice.raw, *format)
             };
-            if tiling == vk::ImageTiling::LINEAR && props.linear_tiling_features.contains(features)
-            {
-                Some(*format)
-            } else if tiling == vk::ImageTiling::OPTIMAL
-                && props.optimal_tiling_features.contains(features)
+            if (tiling == vk::ImageTiling::LINEAR
+                && props.linear_tiling_features.contains(features))
+                || (tiling == vk::ImageTiling::OPTIMAL
+                    && props.optimal_tiling_features.contains(features))
             {
                 Some(*format)
             } else {
@@ -151,7 +150,7 @@ pub trait PhysicalDeviceList {
 
 impl PhysicalDeviceList for Vec<PhysicalDevice> {
     fn with_support(&self, surface: &Surface, flags: vk::QueueFlags) -> Vec<PhysicalDevice> {
-        self.into_iter()
+        self.iter()
             .filter_map(|pdevice| {
                 let support_flags =
                     pdevice
@@ -182,7 +181,7 @@ impl PhysicalDeviceList for Vec<PhysicalDevice> {
     }
 
     fn with_device_type(&self, device_type: vk::PhysicalDeviceType) -> Vec<PhysicalDevice> {
-        self.into_iter()
+        self.iter()
             .filter(|pdevice| pdevice.properties.device_type == device_type)
             .cloned()
             .collect()

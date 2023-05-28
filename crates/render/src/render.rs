@@ -24,10 +24,9 @@ use arrayvec::ArrayVec;
 use ash::vk;
 use dess_render_backend::{
     BackendError, Buffer, BufferDesc, CommandBuffer, DescriptorSetInfo, Device, Image, Instance,
-    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain, PipelineVertex,
+    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
 };
-use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
-use gpu_descriptor_ash::AshDescriptorDevice;
+
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
@@ -331,7 +330,7 @@ impl RenderSystem {
             drop_list: &mut drop_list,
             staging: &mut staging,
             descriptor_cache: &mut descriptor_cache,
-            geo_cache: &mut geo_cache
+            geo_cache: &mut geo_cache,
         };
 
         update_cb(context);

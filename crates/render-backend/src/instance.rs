@@ -67,7 +67,7 @@ impl Instance {
             names.push(vk::ExtDebugUtilsFn::name().into());
         }
         let window_extensions = ash_window::enumerate_required_extensions(display_handle)?
-            .into_iter()
+            .iter()
             .map(|x| unsafe { CStr::from_ptr(*x).into() })
             .collect::<Vec<_>>();
 

@@ -1,4 +1,4 @@
-use std::{collections::HashSet, mem::replace, slice, sync::Arc};
+use std::{collections::HashSet, slice, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -8,10 +8,7 @@ use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
-use crate::{
-    uniforms::UniformBuffer, DescriptorAllocator, DescriptorSet, DropList, RenderResult,
-    UpdateContext,
-};
+use crate::{uniforms::UniformBuffer, DescriptorAllocator, DescriptorSet, DropList, RenderResult};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BindedImage {

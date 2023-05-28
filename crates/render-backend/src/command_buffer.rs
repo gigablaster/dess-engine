@@ -65,7 +65,7 @@ impl CommandBuffer {
         device: &ash::Device,
         cb: F,
     ) -> BackendResult<()> {
-        let recorder = CommandBufferRecorder::new(&device, &self.raw)?;
+        let recorder = CommandBufferRecorder::new(device, &self.raw)?;
         cb(recorder);
 
         Ok(())

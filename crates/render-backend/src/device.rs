@@ -37,8 +37,6 @@ use super::{
     PhysicalDevice, QueueFamily,
 };
 
-const DESCRIPTOR_POOL_UPDATE_SIZE: u32 = 256;
-
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
     pub texel_filter: vk::Filter,

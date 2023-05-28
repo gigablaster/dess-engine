@@ -21,8 +21,6 @@ mod time;
 mod handle;
 pub mod traits;
 
-use std::marker::PhantomData;
-
 pub use client::*;
 pub use handle::*;
 pub use serialization::*;
@@ -44,6 +42,16 @@ impl Align<u32> for u32 {
 
 impl Align<u64> for u64 {
     fn align(self, align: u64) -> Self {
+        if self == 0 || self % align == 0 {
+            self
+        } else {
+            (self & !(align - 1)) + align
+        }
+    }
+}
+
+impl Align<usize> for usize {
+    fn align(self, align: usize) -> Self {
         if self == 0 || self % align == 0 {
             self
         } else {

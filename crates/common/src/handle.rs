@@ -95,11 +95,9 @@ impl<T> HandleContainer<T> {
 
     pub fn get(&self, handle: Handle<T>) -> Option<&T> {
         let index = handle.index() as usize;
-        if index < self.generations.len() {
-            if self.generations[index] == handle.generation() {
-                if let Some(value) = &self.data[index] {
-                    return Some(value);
-                }
+        if index < self.generations.len() && self.generations[index] == handle.generation() {
+            if let Some(value) = &self.data[index] {
+                return Some(value);
             }
         }
 
@@ -108,11 +106,9 @@ impl<T> HandleContainer<T> {
 
     pub fn get_mut(&mut self, handle: Handle<T>) -> Option<&mut T> {
         let index = handle.index() as usize;
-        if index < self.generations.len() {
-            if self.generations[index] == handle.generation() {
-                if let Some(value) = &mut self.data[index] {
-                    return Some(value);
-                }
+        if index < self.generations.len() && self.generations[index] == handle.generation() {
+            if let Some(value) = &mut self.data[index] {
+                return Some(value);
             }
         }
 
@@ -121,17 +117,21 @@ impl<T> HandleContainer<T> {
 
     pub fn remove(&mut self, handle: Handle<T>) -> Option<T> {
         let index = handle.index() as usize;
-        if index < self.generations.len() {
-            if self.generations[index] == handle.generation() {
-                self.generations[index] = self.generations[index].wrapping_add(1);
-                self.empty.push(index as _);
-                if let Some(value) = unsafe { replace(&mut self.data[index], None) } {
-                    return Some(value);
-                }
+        if index < self.generations.len() && self.generations[index] == handle.generation() {
+            self.generations[index] = self.generations[index].wrapping_add(1);
+            self.empty.push(index as _);
+            if let Some(value) = unsafe { replace(&mut self.data[index], None) } {
+                return Some(value);
             }
         }
 
         None
+    }
+}
+
+impl<T> Default for HandleContainer<T> {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
