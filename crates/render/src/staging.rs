@@ -23,11 +23,16 @@ use std::{
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 use dess_render_backend::{
-    Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device,
+    Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device, Image, SubImage,
 };
-use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier};
+use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::RenderResult;
+
+pub struct ImageSubresourceData<'a> {
+    pub data: &'a [u8],
+    pub row_pitch: usize,
+}
 
 #[derive(Debug, Copy, Clone)]
 struct BufferUploadRequest {
@@ -39,11 +44,9 @@ struct BufferUploadRequest {
 
 #[derive(Debug, Copy, Clone)]
 struct ImageUploadRequest {
-    pub src_offset: u64,
-    pub dst_offset: vk::Offset3D,
-    pub dst_subresource: vk::ImageSubresourceLayers,
+    pub op: vk::BufferImageCopy,
+    pub subresource: vk::ImageSubresourceRange,
     pub dst: vk::Image,
-    pub dst_layout: vk::ImageLayout,
 }
 
 pub struct Staging {
@@ -53,7 +56,7 @@ pub struct Staging {
     size: u64,
     allocator: BumpAllocator,
     upload_buffers: Vec<BufferUploadRequest>,
-    upload_images: Vec<BufferUploadRequest>,
+    upload_images: Vec<ImageUploadRequest>,
     mapping: Option<NonNull<u8>>,
     index: u64,
 }
@@ -115,6 +118,66 @@ impl Staging {
         Ok(self.index)
     }
 
+    pub fn upload_image(
+        &mut self,
+        image: &Image,
+        data: &[&ImageSubresourceData],
+    ) -> RenderResult<u64> {
+        for (mip, data) in data.iter().enumerate() {
+            self.tranfser_cb.wait(&self.device.raw)?;
+            if self.mapping.is_none() {
+                self.mapping = Some(self.map_buffer()?);
+            }
+
+            let mapping = self.mapping.unwrap();
+            if !self.try_push_image_mip(image, mip as _, data, mapping.as_ptr()) {
+                self.upload()?;
+                if !self.try_push_image_mip(image, mip as _, data, mapping.as_ptr()) {
+                    panic!(
+                        "Despite just pushing entire staging buffer we still can't push data in it."
+                    );
+                }
+            }
+        }
+
+        Ok(self.index)
+    }
+
+    fn try_push_image_mip(
+        &mut self,
+        image: &Image,
+        mip: u32,
+        data: &ImageSubresourceData,
+        mapping: *mut u8,
+    ) -> bool {
+        if let Some(offset) = self.allocator.allocate(data.data.len() as _) {
+            unsafe { copy_nonoverlapping(data.data.as_ptr(), mapping, data.data.len()) }
+            let op = vk::BufferImageCopy::builder()
+                .buffer_image_height(image.desc.extent[0])
+                .buffer_row_length(data.row_pitch as _)
+                .image_extent(vk::Extent3D {
+                    width: image.desc.extent[0],
+                    height: image.desc.extent[1],
+                    depth: 1,
+                })
+                .buffer_offset(offset)
+                .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
+                .image_subresource(image.subresource_layer(0, mip, vk::ImageAspectFlags::COLOR))
+                .build();
+
+            let request = ImageUploadRequest {
+                op,
+                dst: image.raw,
+                subresource: image
+                    .subresource_range(SubImage::LayerAndMip(0, mip), vk::ImageAspectFlags::COLOR),
+            };
+            self.upload_images.push(request);
+            return true;
+        }
+
+        false
+    }
+
     fn try_push_buffer(
         &mut self,
         buffer: &impl BufferView,
@@ -160,17 +223,19 @@ impl Staging {
         }
 
         self.tranfser_cb.record(&self.device.raw, |recorder| {
-            // Record buffer uploads
-            self.move_requests_to_queue(
+            self.barrier_pre(
                 &recorder,
                 &self.upload_buffers,
+                &self.upload_images,
                 self.device.graphics_queue.family.index,
                 self.device.transfer_queue.family.index,
             );
             self.copy_buffers(&recorder, &self.upload_buffers);
-            self.move_requests_to_queue(
+            self.copy_images(&recorder, &self.upload_images);
+            self.barrier_after(
                 &recorder,
                 &self.upload_buffers,
+                &self.upload_images,
                 self.device.transfer_queue.family.index,
                 self.device.graphics_queue.family.index,
             );
@@ -184,27 +249,67 @@ impl Staging {
         Ok(())
     }
 
-    fn move_requests_to_queue(
+    fn barrier_pre(
         &self,
         recorder: &CommandBufferRecorder,
-        requests: &[BufferUploadRequest],
+        buffers: &[BufferUploadRequest],
+        images: &[ImageUploadRequest],
         from: u32,
         to: u32,
     ) {
-        let barriers = requests
+        let buffer_barriers = buffers
             .iter()
             .map(|request| BufferBarrier {
-                previous_accesses: &[
-                    AccessType::TransferWrite,
-                    AccessType::VertexBuffer,
-                    AccessType::AnyShaderReadUniformBuffer,
-                    AccessType::IndexBuffer,
-                ],
+                previous_accesses: &[AccessType::Nothing],
+                next_accesses: &[AccessType::TransferWrite],
+                src_queue_family_index: from,
+                dst_queue_family_index: to,
+                buffer: request.dst,
+                offset: request.dst_offset as _,
+                size: request.size as _,
+            })
+            .collect::<Vec<_>>();
+
+        let image_barriers = images
+            .iter()
+            .map(|request| ImageBarrier {
+                previous_accesses: &[AccessType::Nothing],
+                next_accesses: &[AccessType::TransferWrite],
+                src_queue_family_index: from,
+                dst_queue_family_index: to,
+                previous_layout: vk_sync::ImageLayout::Optimal,
+                next_layout: vk_sync::ImageLayout::Optimal,
+                discard_contents: true,
+                image: request.dst,
+                range: request.subresource,
+            })
+            .collect::<Vec<_>>();
+
+        pipeline_barrier(
+            recorder.device,
+            *recorder.cb,
+            None,
+            &buffer_barriers,
+            &image_barriers,
+        );
+    }
+
+    fn barrier_after(
+        &self,
+        recorder: &CommandBufferRecorder,
+        buffers: &[BufferUploadRequest],
+        images: &[ImageUploadRequest],
+        from: u32,
+        to: u32,
+    ) {
+        let buffer_barriers = buffers
+            .iter()
+            .map(|request| BufferBarrier {
+                previous_accesses: &[AccessType::TransferWrite],
                 next_accesses: &[
-                    AccessType::TransferWrite,
                     AccessType::VertexBuffer,
-                    AccessType::AnyShaderReadUniformBuffer,
                     AccessType::IndexBuffer,
+                    AccessType::AnyShaderReadUniformBuffer,
                 ],
                 src_queue_family_index: from,
                 dst_queue_family_index: to,
@@ -213,7 +318,29 @@ impl Staging {
                 size: request.size as _,
             })
             .collect::<Vec<_>>();
-        pipeline_barrier(recorder.device, *recorder.cb, None, &barriers, &[]);
+
+        let image_barriers = images
+            .iter()
+            .map(|request| ImageBarrier {
+                previous_accesses: &[AccessType::TransferWrite],
+                next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
+                src_queue_family_index: from,
+                dst_queue_family_index: to,
+                previous_layout: vk_sync::ImageLayout::Optimal,
+                next_layout: vk_sync::ImageLayout::Optimal,
+                discard_contents: true,
+                image: request.dst,
+                range: request.subresource,
+            })
+            .collect::<Vec<_>>();
+
+        pipeline_barrier(
+            recorder.device,
+            *recorder.cb,
+            None,
+            &buffer_barriers,
+            &image_barriers,
+        );
     }
 
     fn copy_buffers(&self, recorder: &CommandBufferRecorder, requests: &[BufferUploadRequest]) {
@@ -231,6 +358,18 @@ impl Staging {
                     slice::from_ref(&region),
                 )
             };
+        });
+    }
+
+    fn copy_images(&self, recorder: &CommandBufferRecorder, requests: &[ImageUploadRequest]) {
+        requests.iter().for_each(|requests| unsafe {
+            recorder.device.cmd_copy_buffer_to_image(
+                *recorder.cb,
+                self.buffer.raw,
+                requests.dst,
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                slice::from_ref(&requests.op),
+            )
         });
     }
 }

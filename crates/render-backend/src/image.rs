@@ -196,7 +196,21 @@ impl Image {
         })
     }
 
-    pub fn subresource(
+    pub fn subresource_layer(
+        &self,
+        layer: u32,
+        mip: u32,
+        aspect: vk::ImageAspectFlags,
+    ) -> vk::ImageSubresourceLayers {
+        vk::ImageSubresourceLayers::builder()
+            .aspect_mask(aspect)
+            .mip_level(mip)
+            .base_array_layer(layer)
+            .layer_count(1)
+            .build()
+    }
+
+    pub fn subresource_range(
         &self,
         subimage: SubImage,
         aspect: vk::ImageAspectFlags,

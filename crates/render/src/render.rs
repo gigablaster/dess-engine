@@ -390,9 +390,10 @@ impl RenderSystem {
                     dst_queue_family_index: self.device.graphics_queue.family.index,
                     discard_contents: false,
                     image: image.image.raw,
-                    range: image
-                        .image
-                        .subresource(SubImage::LayerAndMip(0, 0), vk::ImageAspectFlags::COLOR),
+                    range: image.image.subresource_range(
+                        SubImage::LayerAndMip(0, 0),
+                        vk::ImageAspectFlags::COLOR,
+                    ),
                 };
                 pipeline_barrier(&self.device.raw, *recorder.cb, None, &[], &[barrier]);
             })?;
