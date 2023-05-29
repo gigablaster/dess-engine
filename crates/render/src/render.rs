@@ -23,8 +23,10 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use dess_render_backend::{
-    BackendError, Buffer, BufferView, CommandBuffer, DescriptorSetInfo, Device, Image, Instance,
-    PhysicalDeviceList, Pipeline, RenderPassRecorder, SubImage, SubmitWaitDesc, Surface, Swapchain,
+    create_pipeline_cache, BackendError, Buffer, BufferView, CommandBuffer, DescriptorSetInfo,
+    Device, FreeGpuResource, Image, Instance, PhysicalDeviceList, Pipeline, PipelineDesc,
+    PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder, Shader, ShaderDesc, SubImage,
+    SubmitWaitDesc, Surface, Swapchain,
 };
 
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
@@ -64,6 +66,7 @@ pub struct RenderSystem {
     descriptor_cache: Mutex<DescriptorCache>,
     desciptor_allocator: Mutex<DescriptorAllocator>,
     drop_list: [Mutex<DropList>; 2],
+    pipeline_cache: vk::PipelineCache,
 }
 
 pub struct RenderSystemDesc {
@@ -285,6 +288,7 @@ impl RenderSystem {
             let descriptor_allocator = DescriptorAllocator::new(DESCRIPTOR_SET_GROW);
 
             Ok(Self {
+                pipeline_cache: create_pipeline_cache(&device.raw)?,
                 device,
                 swapchain: Mutex::new(swapchain),
                 staging: Mutex::new(staging),
@@ -302,11 +306,13 @@ impl RenderSystem {
         }
     }
 
-    pub fn update_resources<F: FnOnce(UpdateContext)>(&self, update_cb: F) -> RenderResult<()> {
+    pub fn update_resources<U, F: FnOnce(UpdateContext) -> U>(
+        &self,
+        update_cb: F,
+    ) -> RenderResult<U> {
         puffin::profile_scope!("update resources");
         let mut staging = self.staging.lock().unwrap();
         let mut drop_list = self.current_drop_list.lock().unwrap();
-        let mut descriptors = self.desciptor_allocator.lock().unwrap();
         let mut descriptor_cache = self.descriptor_cache.lock().unwrap();
         let mut geo_cache = self.megabuffer.lock().unwrap();
         let context = UpdateContext {
@@ -316,11 +322,7 @@ impl RenderSystem {
             megabuffer: &mut geo_cache,
         };
 
-        update_cb(context);
-
-        descriptor_cache.update_descriptors(&mut descriptors, &mut drop_list)?;
-
-        Ok(())
+        Ok(update_cb(context))
     }
 
     pub fn render_frame<F: FnOnce(RenderContext)>(
@@ -331,6 +333,7 @@ impl RenderSystem {
         puffin::profile_scope!("render frame");
         let mut swapchain = self.swapchain.lock().unwrap();
         let mut megabuffer = self.megabuffer.lock().unwrap();
+
         let render_area = swapchain.render_area();
         if current_resolution[0] != render_area.extent.width
             || current_resolution[1] != render_area.extent.height
@@ -355,6 +358,12 @@ impl RenderSystem {
         };
 
         let mut staging = self.staging.lock().unwrap();
+        let mut descriptor_cache = self.descriptor_cache.lock().unwrap();
+        let mut descriptors = self.desciptor_allocator.lock().unwrap();
+        let mut drop_list = self.current_drop_list.lock().unwrap();
+
+        descriptor_cache.update_descriptors(&mut descriptors, &mut drop_list)?;
+
         staging.upload()?;
         staging.wait()?;
         {
@@ -365,7 +374,7 @@ impl RenderSystem {
                 backbuffer: &image.image,
                 megabuffer: &megabuffer.buffer,
                 device: &self.device.raw,
-                descriptor_cache: &self.descriptor_cache.lock().unwrap(),
+                descriptor_cache: &descriptor_cache,
             };
 
             frame_cb(context);
@@ -407,8 +416,7 @@ impl RenderSystem {
             )?;
         }
         self.device.end_frame(frame)?;
-        *self.drop_list[0].lock().unwrap() =
-            std::mem::take::<DropList>(&mut self.current_drop_list.lock().unwrap());
+        *self.drop_list[0].lock().unwrap() = std::mem::take::<DropList>(&mut drop_list);
         std::mem::swap(
             &mut self.drop_list[0].lock().unwrap(),
             &mut self.drop_list[1].lock().unwrap(),
@@ -419,5 +427,41 @@ impl RenderSystem {
         }
 
         Ok(())
+    }
+
+    pub fn create_shader(&self, desc: ShaderDesc, name: Option<&str>) -> RenderResult<Shader> {
+        Ok(Shader::new(&self.device, desc, name)?)
+    }
+
+    pub fn destriy_shader(&self, shader: Shader) {
+        shader.free(&self.device.raw);
+    }
+
+    pub fn create_pipeline<T: PipelineVertex>(&self, desc: PipelineDesc) -> RenderResult<Pipeline> {
+        Ok(Pipeline::new::<T>(
+            &self.device,
+            &self.pipeline_cache,
+            desc,
+        )?)
+    }
+
+    pub fn destroy_pipeline(&self, pipeline: Pipeline) {
+        pipeline.free(&self.device.raw);
+    }
+
+    pub fn create_render_pass(&self, layout: RenderPassLayout) -> RenderResult<RenderPass> {
+        Ok(RenderPass::new(&self.device.raw, layout)?)
+    }
+
+    pub fn destroy_render_pass(&self, render_pass: RenderPass) {
+        render_pass.free(&self.device.raw);
+    }
+
+    pub fn back_buffer_format(&self) -> vk::Format {
+        self.swapchain.lock().unwrap().backbuffer_format()
+    }
+
+    pub fn clear_fbos(&self, render_pass: &RenderPass) {
+        render_pass.clear_fbos(&self.device.raw);
     }
 }

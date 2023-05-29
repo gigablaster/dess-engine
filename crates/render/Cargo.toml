@@ -15,3 +15,12 @@ gpu-descriptor = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
 gpu-descriptor-ash = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
 rayon = "1.7"
 log = "0.4"
+
+[dev-dependencies]
+winit = "0.28"
+simple_logger = "4.1"
+dess-vfs = { path = "../vfs" }
+glam = "0.24"
+
+[[examples]]
+name = "render-triangle"

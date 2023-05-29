@@ -215,6 +215,9 @@ impl Staging {
     }
 
     pub fn upload(&mut self) -> RenderResult<()> {
+        if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
+            return Ok(());
+        }
         self.tranfser_cb.wait(&self.device.raw)?;
         self.tranfser_cb.reset(&self.device.raw)?;
         if self.mapping.is_some() {
