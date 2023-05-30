@@ -116,8 +116,18 @@ impl Device {
         info!("Created a Vulkan device");
 
         let frames = [
-            Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
-            Mutex::new(Arc::new(FrameContext::new(&device, &graphics_queue)?)),
+            Mutex::new(Arc::new(FrameContext::new(
+                &instance,
+                &device,
+                &graphics_queue,
+                "frame 1",
+            )?)),
+            Mutex::new(Arc::new(FrameContext::new(
+                &instance,
+                &device,
+                &graphics_queue,
+                "frame 2",
+            )?)),
         ];
 
         let drop_lists = [
@@ -138,11 +148,14 @@ impl Device {
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
         let allocator = GpuAllocator::new(allocator_config, allocator_props);
 
+        let graphics_queue = Self::create_queue(&device, graphics_queue);
+        let transfer_queue = Self::create_queue(&device, transfer_queue);
+
         Ok(Arc::new(Self {
             instance,
             pdevice,
-            graphics_queue: Self::create_queue(&device, graphics_queue),
-            transfer_queue: Self::create_queue(&device, transfer_queue),
+            graphics_queue,
+            transfer_queue,
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
@@ -322,16 +335,26 @@ impl Device {
         self.samplers.get(&desc).copied()
     }
 
-    pub(crate) fn set_object_name<T: Handle>(&self, object: T, name: &str) -> BackendResult<()> {
-        if let Some(debug_utils) = self.instance.get_debug_utils() {
+    pub fn set_object_name<T: Handle>(&self, object: T, name: &str) -> BackendResult<()> {
+        Self::set_object_name_impl(&self.instance, &self.raw, object, name)
+    }
+
+    pub(crate) fn set_object_name_impl<T: Handle>(
+        instance: &Instance,
+        devcie: &ash::Device,
+        object: T,
+        name: &str,
+    ) -> BackendResult<()> {
+        if let Some(debug_utils) = instance.get_debug_utils() {
             let name = CString::new(name).unwrap();
             let name_info = vk::DebugUtilsObjectNameInfoEXT::builder()
                 .object_type(T::TYPE)
                 .object_handle(object.as_raw())
                 .object_name(&name)
                 .build();
-            unsafe { debug_utils.set_debug_utils_object_name(self.raw.handle(), &name_info) }?;
+            unsafe { debug_utils.set_debug_utils_object_name(devcie.handle(), &name_info) }?;
         }
+
         Ok(())
     }
 

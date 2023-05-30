@@ -23,7 +23,8 @@ use std::{
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 use dess_render_backend::{
-    Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device, Image, SubImage,
+    Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device, FreeGpuResource,
+    Image, SubImage,
 };
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
@@ -69,6 +70,7 @@ impl Staging {
             Some("staging"),
         )?;
         let tranfser_cb = CommandBuffer::new(&device.raw, device.transfer_queue.family.index)?;
+        device.set_object_name(tranfser_cb.raw, "staging - transfer cb")?;
         Ok(Self {
             device: device.clone(),
             buffer,
@@ -374,5 +376,11 @@ impl Staging {
                 slice::from_ref(&requests.op),
             )
         });
+    }
+}
+
+impl Drop for Staging {
+    fn drop(&mut self) {
+        self.tranfser_cb.free(&self.device.raw);
     }
 }

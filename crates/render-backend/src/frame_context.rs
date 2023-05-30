@@ -15,6 +15,8 @@
 
 use ash::vk;
 
+use crate::{Device, Instance};
+
 use super::{BackendResult, CommandBuffer, FreeGpuResource, QueueFamily};
 
 pub struct FrameContext {
@@ -24,16 +26,32 @@ pub struct FrameContext {
 }
 
 impl FrameContext {
-    pub(crate) fn new(device: &ash::Device, queue_family: &QueueFamily) -> BackendResult<Self> {
+    pub(crate) fn new(
+        instance: &Instance,
+        device: &ash::Device,
+        queue_family: &QueueFamily,
+        name: &str,
+    ) -> BackendResult<Self> {
         let semaphore_info = vk::SemaphoreCreateInfo::builder()
             .flags(vk::SemaphoreCreateFlags::default())
             .build();
 
         let render_finished = unsafe { device.create_semaphore(&semaphore_info, None) }?;
+        let presentation_cb = CommandBuffer::new(device, queue_family.index)?;
+        let main_cb = CommandBuffer::new(device, queue_family.index)?;
+
+        Device::set_object_name_impl(
+            instance,
+            device,
+            presentation_cb.raw,
+            &format!("{} - present", name),
+        )?;
+
+        Device::set_object_name_impl(instance, device, main_cb.raw, &format!("{} - main", name))?;
 
         Ok(Self {
-            presentation_cb: CommandBuffer::new(device, queue_family.index)?,
-            main_cb: CommandBuffer::new(device, queue_family.index)?,
+            presentation_cb,
+            main_cb,
             render_finished,
         })
     }

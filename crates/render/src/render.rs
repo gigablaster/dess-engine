@@ -29,6 +29,7 @@ use dess_render_backend::{
     SubmitWaitDesc, Surface, Swapchain,
 };
 
+use gpu_descriptor_ash::AshDescriptorDevice;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
 
@@ -463,5 +464,20 @@ impl RenderSystem {
 
     pub fn clear_fbos(&self, render_pass: &RenderPass) {
         render_pass.clear_fbos(&self.device.raw);
+    }
+}
+
+impl Drop for RenderSystem {
+    fn drop(&mut self) {
+        self.device.wait();
+        let mut current_drop_list = self.current_drop_list.lock().unwrap();
+        let mut descriptors = self.desciptor_allocator.lock().unwrap();
+        let mut megabuffer = self.megabuffer.lock().unwrap();
+        current_drop_list.free(&mut megabuffer);
+        for drop_list in &self.drop_list {
+            let mut drop_list = drop_list.lock().unwrap();
+            drop_list.free(&mut megabuffer);
+        }
+        unsafe { descriptors.cleanup(AshDescriptorDevice::wrap(&self.device.raw)) };
     }
 }
