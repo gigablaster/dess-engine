@@ -62,6 +62,12 @@ impl<T> Handle<T> {
     }
 }
 
+impl<T> Default for Handle<T> {
+    fn default() -> Self {
+        Self::invalid()
+    }
+}
+
 pub struct HandleContainer<T> {
     data: Vec<Option<T>>,
     generations: Vec<u32>,

@@ -26,6 +26,7 @@ use dess_render_backend::{
     Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device, FreeGpuResource,
     Image, SubImage,
 };
+
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::RenderResult;
@@ -78,7 +79,7 @@ impl Staging {
             size: size as _,
             allocator: BumpAllocator::new(
                 size as _,
-                device.pdevice.properties.limits.buffer_image_granularity,
+                64.max(device.pdevice.properties.limits.buffer_image_granularity),
             ),
             upload_buffers: Vec::with_capacity(128),
             upload_images: Vec::with_capacity(32),
@@ -103,6 +104,16 @@ impl Staging {
         let size = data.len() * size_of::<T>();
         assert!(size as u64 <= self.size);
         assert_eq!(buffer.size(), size as u64);
+        assert_eq!(
+            0,
+            buffer.offset()
+                % self
+                    .device
+                    .pdevice
+                    .properties
+                    .limits
+                    .min_uniform_buffer_offset_alignment
+        );
         self.tranfser_cb.wait(&self.device.raw)?;
         if self.mapping.is_none() {
             self.mapping = Some(self.map_buffer()?);
@@ -228,6 +239,11 @@ impl Staging {
         }
 
         self.tranfser_cb.record(&self.device.raw, |recorder| {
+            self.device.cmd_begin_label(
+                self.tranfser_cb.raw,
+                &format!("Sending staging queue #{}", self.index),
+            );
+
             self.barrier_pre(
                 &recorder,
                 &self.upload_buffers,
@@ -244,10 +260,15 @@ impl Staging {
                 self.device.transfer_queue.family.index,
                 self.device.graphics_queue.family.index,
             );
+
+            self.device.cmd_end_label(self.tranfser_cb.raw);
         })?;
+
+        self.device.submit_transfer(&self.tranfser_cb, &[], &[])?;
 
         self.allocator.reset();
         self.upload_buffers.clear();
+        self.upload_images.clear();
 
         self.index += 1;
 
@@ -273,6 +294,18 @@ impl Staging {
                 offset: request.dst_offset as _,
                 size: request.size as _,
             })
+            .chain(
+                [BufferBarrier {
+                    previous_accesses: &[AccessType::Nothing],
+                    next_accesses: &[AccessType::TransferRead],
+                    src_queue_family_index: self.device.transfer_queue.family.index,
+                    dst_queue_family_index: self.device.transfer_queue.family.index,
+                    buffer: self.buffer.raw,
+                    offset: 0,
+                    size: self.buffer.desc.size,
+                }]
+                .into_iter(),
+            )
             .collect::<Vec<_>>();
 
         let image_barriers = images

@@ -399,6 +399,13 @@ mod test {
     }
 
     #[test]
+    fn bump_allocator_align() {
+        let mut allocator = BumpAllocator::new(1024, 128);
+        assert_eq!(Some(0), allocator.allocate(10));
+        assert_eq!(Some(128), allocator.allocate(10));
+    }
+
+    #[test]
     fn block_allocator() {
         let mut allocator = BlockAllocator::new(10, 5);
         assert_eq!(Some(0), allocator.allocate());

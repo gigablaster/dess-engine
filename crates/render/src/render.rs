@@ -23,20 +23,20 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use dess_render_backend::{
-    create_pipeline_cache, BackendError, Buffer, BufferView, CommandBuffer, DescriptorSetInfo,
-    Device, FreeGpuResource, Image, Instance, PhysicalDeviceList, Pipeline, PipelineDesc,
-    PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder, Shader, ShaderDesc, SubImage,
-    SubmitWaitDesc, Surface, Swapchain,
+    create_pipeline_cache, BackendError, Buffer, BufferView, CommandBuffer, CommandBufferRecorder,
+    DescriptorSetInfo, Device, FreeGpuResource, Image, Instance, PhysicalDeviceList, Pipeline,
+    PipelineDesc, PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder, Shader,
+    ShaderDesc, SubImage, SubmitWaitDesc, Surface, Swapchain,
 };
 
 use gpu_descriptor_ash::AshDescriptorDevice;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
-use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier, ImageLayout};
+use vk_sync::{AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
     descriptors::{DescriptorCache, DescriptorHandle},
     megabuffer::MegaBuffer,
-    AllocatedBuffer, DescriptorAllocator, DescriptorSet, Index, RenderError, RenderResult, Staging,
+    AllocatedBuffer, DescriptorAllocator, DescriptorSet, RenderError, RenderResult, Staging,
 };
 
 const STAGING_SIZE: usize = 64 * 1024 * 1024;
@@ -45,11 +45,11 @@ const DESCRIPTOR_SET_GROW: u32 = 128;
 
 #[repr(C, align(16))]
 pub struct RenderOp {
-    pso: u32,
-    vertex_offset: u32,
-    index_offset: u32,
-    index_count: u32,
-    descs: [DescriptorHandle; 4],
+    pub pso: u32,
+    pub vertex_offset: u32,
+    pub index_offset: u32,
+    pub index_count: u32,
+    pub descs: [DescriptorHandle; 4],
 }
 
 pub enum GpuType {
@@ -153,9 +153,12 @@ impl<'a> UpdateContext<'a> {
 }
 
 pub struct RenderContext<'a> {
-    pub cb: &'a CommandBuffer,
     pub backbuffer: &'a Image,
-    pub device: &'a ash::Device,
+    pub resolution: [u32; 2],
+    pub graphics_queue: u32,
+    pub transfer_queue: u32,
+    cb: &'a CommandBuffer,
+    device: &'a Device,
     megabuffer: &'a Buffer,
     descriptor_cache: &'a DescriptorCache,
 }
@@ -166,7 +169,7 @@ impl<'a> RenderContext<'a> {
         pipelines: &HashMap<u32, Pipeline>,
         pass: &RenderPassRecorder,
         rops: &[RenderOp],
-        _name: Option<&str>,
+        name: Option<&str>,
     ) {
         if rops.is_empty() {
             return;
@@ -174,15 +177,17 @@ impl<'a> RenderContext<'a> {
         let mut current_descs = [DescriptorHandle::invalid(); 4];
         let mut current_pso_index = 0;
         let mut current_pso = None;
+
+        let _label = name.map(|name| self.device.scoped_label(self.cb.raw, name));
         pass.bind_vertex_buffer(self.megabuffer);
-        pass.bind_index_buffer(self.megabuffer);
+
         rops.iter().for_each(|rop| {
             if current_pso_index != rop.pso {
                 if let Some(pipeline) = pipelines.get(&rop.pso) {
                     current_pso_index = rop.pso;
                     current_pso = Some(pipeline);
                     unsafe {
-                        self.device.cmd_bind_pipeline(
+                        self.device.raw.cmd_bind_pipeline(
                             self.cb.raw,
                             vk::PipelineBindPoint::GRAPHICS,
                             pipeline.pipeline,
@@ -205,7 +210,7 @@ impl<'a> RenderContext<'a> {
                                 .collect::<ArrayVec<_, 64>>();
 
                             unsafe {
-                                self.device.cmd_bind_descriptor_sets(
+                                self.device.raw.cmd_bind_descriptor_sets(
                                     self.cb.raw,
                                     vk::PipelineBindPoint::GRAPHICS,
                                     pipeline.pipeline_layout,
@@ -218,10 +223,16 @@ impl<'a> RenderContext<'a> {
                     }
                 }
             });
-            assert_eq!(0, rop.index_offset % size_of::<Index>() as u32);
-            let first_index = rop.index_offset / size_of::<Index>() as u32;
-            pass.draw(rop.index_count, 0, first_index, rop.vertex_offset as _);
+            pass.bind_index_buffer(self.megabuffer, rop.index_offset as _);
+
+            pass.draw(rop.index_count, 1, 0, rop.vertex_offset as _);
         });
+    }
+
+    pub fn record<F: FnOnce(CommandBufferRecorder)>(&self, cb: F) -> RenderResult<()> {
+        self.cb.record(&self.device.raw, cb)?;
+
+        Ok(())
     }
 }
 
@@ -374,8 +385,11 @@ impl RenderSystem {
                 cb: &frame.main_cb,
                 backbuffer: &image.image,
                 megabuffer: &megabuffer.buffer,
-                device: &self.device.raw,
+                device: &self.device,
                 descriptor_cache: &descriptor_cache,
+                resolution: current_resolution,
+                graphics_queue: self.device.graphics_queue.family.index,
+                transfer_queue: self.device.transfer_queue.family.index,
             };
 
             frame_cb(context);
@@ -391,8 +405,11 @@ impl RenderSystem {
         {
             puffin::profile_scope!("present cb");
             frame.presentation_cb.record(&self.device.raw, |recorder| {
+                let _label = self
+                    .device
+                    .scoped_label(frame.presentation_cb.raw, "Present");
                 let barrier = ImageBarrier {
-                    previous_accesses: &[AccessType::Nothing],
+                    previous_accesses: &[AccessType::ColorAttachmentWrite],
                     next_accesses: &[AccessType::Present],
                     previous_layout: ImageLayout::Optimal,
                     next_layout: ImageLayout::Optimal,
@@ -405,7 +422,7 @@ impl RenderSystem {
                         vk::ImageAspectFlags::COLOR,
                     ),
                 };
-                pipeline_barrier(&self.device.raw, *recorder.cb, None, &[], &[barrier]);
+                recorder.barrier(None, &[], &[barrier]);
             })?;
             self.device.submit_render(
                 &frame.presentation_cb,

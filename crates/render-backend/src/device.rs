@@ -358,6 +358,34 @@ impl Device {
         Ok(())
     }
 
+    pub fn scoped_label(&self, cb: vk::CommandBuffer, label: &str) -> ScopedCommandBufferLabel {
+        self.cmd_begin_label(cb, label);
+        ScopedCommandBufferLabel { device: self, cb }
+    }
+
+    pub fn cmd_begin_label(&self, cb: vk::CommandBuffer, label: &str) {
+        if let Some(debug_utils) = self.instance.get_debug_utils() {
+            let label = CString::new(label).unwrap();
+            let label = vk::DebugUtilsLabelEXT::builder().label_name(&label).build();
+            unsafe { debug_utils.cmd_begin_debug_utils_label(cb, &label) }
+        }
+    }
+
+    pub fn cmd_end_label(&self, cb: vk::CommandBuffer) {
+        if let Some(debug_utils) = self.instance.get_debug_utils() {
+            unsafe { debug_utils.cmd_end_debug_utils_label(cb) }
+        }
+    }
+
+    pub fn marker(&self, cb: vk::CommandBuffer, label: &str) {
+        if let Some(debug_utils) = self.instance.get_debug_utils() {
+            let label = CString::new(label).unwrap();
+            let label = vk::DebugUtilsLabelEXT::builder().label_name(&label).build();
+
+            unsafe { debug_utils.cmd_insert_debug_utils_label(cb, &label) }
+        }
+    }
+
     pub fn allocator(&self) -> MutexGuard<GpuAllocator> {
         self.allocator.lock().unwrap()
     }
@@ -387,5 +415,16 @@ impl Drop for Device {
 impl Debug for Device {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("Vulkan Device")
+    }
+}
+
+pub struct ScopedCommandBufferLabel<'a> {
+    device: &'a Device,
+    cb: vk::CommandBuffer,
+}
+
+impl<'a> Drop for ScopedCommandBufferLabel<'a> {
+    fn drop(&mut self) {
+        self.device.cmd_end_label(self.cb);
     }
 }

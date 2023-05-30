@@ -19,6 +19,7 @@ mod render;
 mod staging;
 
 use ash::vk;
+pub use descriptors::DescriptorHandle;
 pub use error::*;
 pub use megabuffer::AllocatedBuffer;
 pub use render::*;

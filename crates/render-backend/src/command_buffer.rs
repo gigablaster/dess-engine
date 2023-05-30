@@ -17,6 +17,7 @@ use std::slice;
 
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
+use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier};
 
 use crate::BufferView;
 
@@ -119,7 +120,6 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn render_pass<F: FnOnce(RenderPassRecorder)>(
         &self,
-        device: &ash::Device,
         render_pass: &RenderPass,
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<RenderPassAttachment>,
@@ -145,7 +145,10 @@ impl<'a> CommandBufferRecorder<'a> {
             .map(|image| image.desc.extent)
             .next();
         if let Some(dims) = dims {
-            let framebuffer = render_pass.fbo_cache.get_or_create(device, key).unwrap();
+            let framebuffer = render_pass
+                .fbo_cache
+                .get_or_create(self.device, key)
+                .unwrap();
 
             let begin_pass_info = vk::RenderPassBeginInfo::builder()
                 .render_pass(render_pass.raw)
@@ -177,33 +180,13 @@ impl<'a> CommandBufferRecorder<'a> {
         }
     }
 
-    pub fn copy_buffers_range(
+    pub fn barrier(
         &self,
-        from: &impl BufferView,
-        to: &impl BufferView,
-        source: usize,
-        destination: usize,
-        size: usize,
+        global: Option<GlobalBarrier>,
+        buffers: &[BufferBarrier],
+        images: &[ImageBarrier],
     ) {
-        assert!(source + size <= from.size() as _);
-        assert!(destination + size <= to.size() as _);
-        let region = vk::BufferCopy::builder()
-            .src_offset(from.offset() + source as u64)
-            .dst_offset(to.offset() + destination as u64)
-            .size(size as _)
-            .build();
-        unsafe {
-            self.device.cmd_copy_buffer(
-                *self.cb,
-                from.buffer(),
-                to.buffer(),
-                slice::from_ref(&region),
-            )
-        };
-    }
-
-    pub fn copy_buffers(&self, from: &impl BufferView, to: &impl BufferView) {
-        self.copy_buffers_range(from, to, 0, 0, from.size() as _);
+        pipeline_barrier(self.device, *self.cb, global, buffers, images)
     }
 }
 
@@ -243,12 +226,12 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_index_buffer(&self, buffer: &impl BufferView) {
+    pub fn bind_index_buffer(&self, buffer: &impl BufferView, offset: u64) {
         unsafe {
             self.device.cmd_bind_index_buffer(
                 *self.cb,
                 buffer.buffer(),
-                buffer.offset(),
+                buffer.offset() + offset,
                 vk::IndexType::UINT16,
             )
         };

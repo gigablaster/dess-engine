@@ -18,7 +18,7 @@ use std::sync::Arc;
 use ash::vk;
 use dess_common::memory::{BlockAllocator, DynamicAllocator};
 use dess_render_backend::{Buffer, BufferDesc, BufferView, Device};
-use log::debug;
+
 
 use crate::{RenderError, RenderResult};
 
@@ -42,9 +42,9 @@ struct Block {
 
 #[derive(Debug, Clone, Copy)]
 pub struct AllocatedBuffer {
-    buffer: vk::Buffer,
-    offset: u64,
-    size: u64,
+    pub buffer: vk::Buffer,
+    pub offset: u64,
+    pub size: u64,
     allocation: Allocation,
 }
 
@@ -136,7 +136,6 @@ impl MegaBuffer {
             return Err(RenderError::WrongBufferSize);
         }
         if size > self.min_dynamic_size {
-            debug!("Dynamically allocate {} bytes", size);
             if let Some(offset) = self.allocator.allocate(size) {
                 return Ok(AllocatedBuffer {
                     buffer: self.buffer.raw,
@@ -153,10 +152,7 @@ impl MegaBuffer {
             .blocks
             .iter_mut()
             .enumerate()
-            .find_map(|(index, block)| {
-                debug!("Allocate {} bytes from block {}", size, index);
-                block.allocate(size).map(|offset| (offset, index))
-            });
+            .find_map(|(index, block)| block.allocate(size).map(|offset| (offset, index)));
         if let Some((offset, index)) = allocation {
             Ok(AllocatedBuffer {
                 buffer: self.buffer.raw,
@@ -168,17 +164,9 @@ impl MegaBuffer {
             let (min, max) = self
                 .find_block_size(size)
                 .expect("We supposed to filter this variant before");
-            if let Some(block_memory) = self.allocator.allocate_back(BLOCK_CHUNK_SIZE) {
-                debug!(
-                    "Allocated new block {} bytes, sizes from {} to {}",
-                    BLOCK_CHUNK_SIZE, min, max
-                );
+            if let Some(block_memory) = self.allocator.allocate(BLOCK_CHUNK_SIZE) {
                 let index = self.blocks.len();
                 let mut block = Block::new(block_memory, BLOCK_CHUNK_SIZE, min, max);
-                debug!(
-                    "Allocated {} bytes from newly allocated block {}",
-                    size, index
-                );
                 let offset = block
                     .allocate(size)
                     .expect("Fresly allocated BlockAllocator must allocate something");

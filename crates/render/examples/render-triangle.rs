@@ -13,13 +13,19 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
 use ash::vk;
-use dess_render::{RenderError, RenderSystem, RenderSystemDesc};
+use dess_render::{
+    DescriptorHandle, GpuType, RenderError, RenderOp, RenderSystem, RenderSystemDesc,
+};
 use dess_render_backend::{
-    PipelineDesc, PipelineVertex, RenderPassAttachmentDesc, RenderPassLayout, ShaderDesc,
+    PipelineDesc, PipelineVertex, RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout,
+    ShaderDesc, SubImage,
 };
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
+use vk_sync::{AccessType, ImageBarrier};
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -27,7 +33,7 @@ use winit::{
     window::WindowBuilder,
 };
 
-#[repr(C)]
+#[repr(C, packed)]
 struct Vertex {
     pub pos: glam::Vec3,
     pub color: glam::Vec4,
@@ -68,7 +74,9 @@ fn main() {
     let render = RenderSystem::new(
         window.raw_display_handle(),
         window.raw_window_handle(),
-        RenderSystemDesc::new([size.width, size.height]).debug(true),
+        RenderSystemDesc::new([size.width, size.height])
+            .debug(true)
+            .gpu_type(GpuType::PrefereIntegrated),
     )
     .unwrap();
     let vertex_shader = render
@@ -83,7 +91,7 @@ fn main() {
             Some("fragment"),
         )
         .unwrap();
-    let backbuffer = RenderPassAttachmentDesc::new(render.back_buffer_format());
+    let backbuffer = RenderPassAttachmentDesc::new(render.back_buffer_format()).clear_input();
     let render_pass_layout = RenderPassLayout {
         color_attachments: &[backbuffer],
         depth_attachment: None,
@@ -95,8 +103,34 @@ fn main() {
         .face_cull(false)
         .subpass(0);
     let pipeline = render.create_pipeline::<Vertex>(pipeline_desc).unwrap();
+    let mut pipeline_cache = HashMap::new();
+    pipeline_cache.insert(1u32, pipeline);
+    let (vertex_buffer, index_buffer) = render
+        .update_resources(|context| {
+            let mut context = context;
+            let vertex_buffer = context
+                .create_buffer(&[
+                    Vertex {
+                        pos: glam::Vec3::new(0.0, -0.5, 0.0),
+                        color: glam::Vec4::new(1.0, 0.0, 0.0, 1.0),
+                    },
+                    Vertex {
+                        pos: glam::Vec3::new(0.5, 0.5, 0.0),
+                        color: glam::Vec4::new(0.0, 1.0, 0.0, 1.0),
+                    },
+                    Vertex {
+                        pos: glam::Vec3::new(-0.5, 0.5, 0.0),
+                        color: glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
+                    },
+                ])
+                .unwrap();
+            let index_buffer = context.create_buffer(&[0u16, 1u16, 2u16]).unwrap();
+
+            (vertex_buffer, index_buffer)
+        })
+        .unwrap();
     event_loop.run(move |event, _, control_flow| {
-        control_flow.set_poll();
+        control_flow.set_wait();
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,
@@ -106,15 +140,77 @@ fn main() {
             }
             Event::RedrawRequested(_) => {
                 let size = window.inner_size();
-                match render.render_frame([size.width, size.height], |context| {}) {
+                match render.render_frame([size.width, size.height], |context| {
+                    let rop = RenderOp {
+                        pso: 1,
+                        vertex_offset: vertex_buffer.offset as _,
+                        index_offset: index_buffer.offset as _,
+                        index_count: 3,
+                        descs: [
+                            DescriptorHandle::default(),
+                            DescriptorHandle::default(),
+                            DescriptorHandle::default(),
+                            DescriptorHandle::default(),
+                        ],
+                    };
+                    context
+                        .record(|recorder| {
+                            let color_attachment = RenderPassAttachment::new(
+                                context.backbuffer,
+                                vk::ClearValue {
+                                    color: vk::ClearColorValue {
+                                        float32: [0.2, 0.2, 0.25, 1.0],
+                                    },
+                                },
+                            );
+                            let image_barrier = ImageBarrier {
+                                previous_accesses: &[AccessType::Nothing],
+                                next_accesses: &[AccessType::ColorAttachmentWrite],
+                                previous_layout: vk_sync::ImageLayout::Optimal,
+                                next_layout: vk_sync::ImageLayout::Optimal,
+                                discard_contents: true,
+                                src_queue_family_index: context.graphics_queue,
+                                dst_queue_family_index: context.graphics_queue,
+                                image: context.backbuffer.raw,
+                                range: context.backbuffer.subresource_range(
+                                    SubImage::LayerAndMip(0, 0),
+                                    vk::ImageAspectFlags::COLOR,
+                                ),
+                            };
+                            recorder.barrier(None, &[], &[image_barrier]);
+                            recorder.render_pass(&render_pass, &[color_attachment], None, |pass| {
+                                pass.set_viewport(
+                                    vk::Viewport::builder()
+                                        .width(context.resolution[0] as _)
+                                        .height(context.resolution[1] as _)
+                                        .min_depth(0.0)
+                                        .max_depth(1.0)
+                                        .x(0.0)
+                                        .y(0.0)
+                                        .build(),
+                                );
+                                pass.set_scissor(vk::Rect2D {
+                                    offset: vk::Offset2D { x: 0, y: 0 },
+                                    extent: vk::Extent2D {
+                                        width: context.resolution[0],
+                                        height: context.resolution[1],
+                                    },
+                                });
+                                context.render(&pipeline_cache, &pass, &[rop], Some("Triangle"))
+                            })
+                        })
+                        .unwrap();
+                }) {
                     Err(RenderError::RecreateBuffers) => {
                         render.clear_fbos(&render_pass);
+                        window.request_redraw();
                         Ok(())
                     }
                     Err(other) => Err(other),
                     Ok(_) => Ok(()),
                 }
                 .unwrap();
+                window.request_redraw();
             }
             _ => {}
         }
