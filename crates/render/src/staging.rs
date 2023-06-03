@@ -24,8 +24,8 @@ use ash::vk;
 use buffer_allocator::{BufferCache, BufferHandle, BufferType};
 use dess_common::memory::BumpAllocator;
 use dess_render_backend::{
-    Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device, FreeGpuResource,
-    Image, SubImage,
+    Buffer, BufferDesc, CommandBuffer, CommandBufferRecorder, Device, FreeGpuResource, Image,
+    SubImage,
 };
 
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};

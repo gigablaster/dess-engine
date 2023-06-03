@@ -187,23 +187,3 @@ impl Drop for Buffer {
         })
     }
 }
-
-pub trait BufferView {
-    fn buffer(&self) -> vk::Buffer;
-    fn offset(&self) -> u64;
-    fn size(&self) -> u64;
-}
-
-impl BufferView for Buffer {
-    fn buffer(&self) -> vk::Buffer {
-        self.raw
-    }
-
-    fn offset(&self) -> u64 {
-        0
-    }
-
-    fn size(&self) -> u64 {
-        self.desc.size as _
-    }
-}

@@ -15,14 +15,12 @@
 
 use std::{collections::HashSet, slice, sync::Arc};
 
-use arrayvec::ArrayVec;
 use ash::vk;
 use buffer_allocator::{UniformBufferCache, UniformBufferHandle};
 use dess_common::{Handle, HandleContainer, TempList};
 use dess_render_backend::{DescriptorSetInfo, Device, Image, ImageViewDesc};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
-use rayon::prelude::{IntoParallelRefIterator, ParallelIterator};
 
 use crate::{DescriptorAllocator, DescriptorSet, DropList, RenderResult};
 
@@ -222,14 +220,7 @@ impl DescriptorCache {
         let mut images = TempList::new();
         let mut writes = Vec::with_capacity(1024);
         self.dirty.iter().for_each(|desc| {
-            self.update_descriptor(
-                &mut writes,
-                &mut images,
-                &mut buffers,
-                uniforms,
-                device,
-                *desc,
-            )
+            self.update_descriptor(&mut writes, &mut images, &mut buffers, uniforms, *desc)
         });
         unsafe { device.update_descriptor_sets(&writes, &[]) };
         self.dirty.retain(|x| !Self::is_valid(&self.container, *x));
@@ -250,7 +241,6 @@ impl DescriptorCache {
         images: &mut TempList<vk::DescriptorImageInfo>,
         buffers: &mut TempList<vk::DescriptorBufferInfo>,
         uniforms: &UniformBufferCache,
-        device: &ash::Device,
         handle: DescriptorHandle,
     ) {
         if let Some(desc) = self.container.get(handle) {
@@ -294,8 +284,6 @@ impl DescriptorCache {
                             .build()
                     })
                     .for_each(|x| writes.push(x));
-
-                unsafe { device.update_descriptor_sets(&writes, &[]) };
             }
         }
     }

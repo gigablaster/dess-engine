@@ -19,8 +19,6 @@ use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier};
 
-use crate::BufferView;
-
 use super::{
     BackendResult, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass, MAX_ATTACHMENTS,
     MAX_COLOR_ATTACHMENTS,

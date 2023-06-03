@@ -27,10 +27,10 @@ use buffer_allocator::{
     UniformBufferHandle,
 };
 use dess_render_backend::{
-    create_pipeline_cache, BackendError, Buffer, BufferView, CommandBuffer, CommandBufferRecorder,
-    DescriptorSetInfo, Device, FreeGpuResource, GpuAllocator, Image, Instance, PhysicalDeviceList,
-    Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder,
-    Shader, ShaderDesc, SubImage, SubmitWaitDesc, Surface, Swapchain,
+    create_pipeline_cache, BackendError, CommandBuffer, CommandBufferRecorder, DescriptorSetInfo,
+    Device, FreeGpuResource, GpuAllocator, Image, Instance, PhysicalDeviceList, Pipeline,
+    PipelineDesc, PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder, Shader,
+    ShaderDesc, SubImage, SubmitWaitDesc, Surface, Swapchain,
 };
 
 use gpu_descriptor_ash::AshDescriptorDevice;
@@ -130,7 +130,7 @@ impl<'a> UpdateContext<'a> {
             .allocate(self.device, self.allocator, size_of::<T>() as _)
             .unwrap();
         self.staging
-            .upload_cached_buffer(buffer, &self.uniforms, slice::from_ref(data))?;
+            .upload_cached_buffer(buffer, self.uniforms, slice::from_ref(data))?;
         self.descriptor_cache
             .set_buffer(self.drop_list, handle, binding, buffer, size_of::<T>());
 
