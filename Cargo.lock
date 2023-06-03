@@ -195,6 +195,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "buffer-allocator"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "gpu-alloc",
+ "gpu-alloc-ash",
+ "puffin",
+ "vk-sync",
+]
+
+[[package]]
 name = "bumpalo"
 version = "3.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -440,6 +451,7 @@ dependencies = [
 name = "dess-common"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "byteorder",
  "four-cc",
  "log",
@@ -453,6 +465,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ash",
+ "buffer-allocator",
  "dess-common",
  "dess-render-backend",
  "dess-vfs",

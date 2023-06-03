@@ -156,14 +156,14 @@ impl BufferAllocator for BlockBufferAllocator {
     fn allocate(&mut self, size: u32) -> Option<u32> {
         assert!(size <= self.chunk_size);
         if let Some(slot) = self.empty.pop() {
-            Some((slot as u32) * self.chunk_size)
+            Some(slot * self.chunk_size)
         } else {
             None
         }
     }
 
     fn deallocate(&mut self, offset: u32) {
-        let index = (offset / self.chunk_size) as u32;
+        let index = offset / self.chunk_size;
         assert!(index < self.chunk_count && offset % self.chunk_size == 0);
         assert!(!self.empty.contains(&index));
         self.empty.push(index);

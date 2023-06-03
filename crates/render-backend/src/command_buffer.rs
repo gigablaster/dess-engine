@@ -226,25 +226,17 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
-    pub fn bind_index_buffer(&self, buffer: &impl BufferView, offset: u64) {
+    pub fn bind_index_buffer(&self, buffer: vk::Buffer, offset: u64) {
         unsafe {
-            self.device.cmd_bind_index_buffer(
-                *self.cb,
-                buffer.buffer(),
-                buffer.offset() + offset,
-                vk::IndexType::UINT16,
-            )
+            self.device
+                .cmd_bind_index_buffer(*self.cb, buffer, offset, vk::IndexType::UINT16)
         };
     }
 
-    pub fn bind_vertex_buffer(&self, buffer: &impl BufferView) {
+    pub fn bind_vertex_buffer(&self, buffer: vk::Buffer, offset: u64) {
         unsafe {
-            self.device.cmd_bind_vertex_buffers(
-                *self.cb,
-                0,
-                slice::from_ref(&buffer.buffer()),
-                &[buffer.offset()],
-            )
+            self.device
+                .cmd_bind_vertex_buffers(*self.cb, 0, slice::from_ref(&buffer), &[offset])
         };
     }
 

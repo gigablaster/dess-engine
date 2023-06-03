@@ -143,8 +143,8 @@ fn main() {
                 match render.render_frame([size.width, size.height], |context| {
                     let rop = RenderOp {
                         pso: 1,
-                        vertex_offset: vertex_buffer.offset as _,
-                        index_offset: index_buffer.offset as _,
+                        vertex_buffer,
+                        index_buffer,
                         index_count: 3,
                         descs: [
                             DescriptorHandle::default(),

@@ -22,6 +22,7 @@ pub trait BufferAllocator {
     fn deallocate(&mut self, offset: u32);
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct BufferHandle<T: BufferType> {
     value: u32,
     _phantom: PhantomData<T>,
@@ -53,6 +54,7 @@ pub trait BufferType {
     fn usage() -> vk::BufferUsageFlags;
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct GeometryBufferType {}
 
 impl BufferType for GeometryBufferType {
@@ -66,13 +68,24 @@ impl BufferType for GeometryBufferType {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub struct UniformBufferType {}
 
 impl BufferType for UniformBufferType {
     const ACCESS: &'static [AccessType] = &[AccessType::AnyShaderReadUniformBuffer];
-    const MEMORY_TYPE: UsageFlags = UsageFlags::UPLOAD;
+    const MEMORY_TYPE: UsageFlags = UsageFlags::FAST_DEVICE_ACCESS;
 
     fn usage() -> vk::BufferUsageFlags {
-        vk::BufferUsageFlags::UNIFORM_BUFFER
+        vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST
     }
 }
+
+#[derive(Debug)]
+pub struct Buffer<T: BufferType> {
+    pub buffer: vk::Buffer,
+    pub offset: u32,
+    _phantom: PhantomData<T>,
+}
+
+pub type GeometryBuffer = Buffer<GeometryBufferType>;
+pub type UniformBuffer = Buffer<UniformBufferType>;

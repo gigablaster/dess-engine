@@ -7,7 +7,8 @@ use gpu_alloc_ash::AshMemoryDevice;
 use crate::{
     error::BufferAllocationError,
     memory::{BlockBufferAllocator, DynamicBufferAllocator},
-    BufferAllocator, BufferHandle, BufferType, GeometryBufferType, UniformBufferType, MAX_BUFFERS,
+    Buffer, BufferAllocator, BufferHandle, BufferType, GeometryBufferType, UniformBufferType,
+    MAX_BUFFERS,
 };
 
 #[derive(Debug)]
@@ -28,12 +29,13 @@ impl<T: BufferAllocator, U: BufferType> ChunkData<T, U> {
     ) -> Result<Self, BufferAllocationError> {
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .queue_family_indices(&[family_index])
+            .size(size as _)
             .usage(U::usage())
             .build();
         let buffer = unsafe { device.create_buffer(&buffer_create_info, None) }?;
         let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
         let request = Request {
-            size: size as _,
+            size: requirements.size,
             align_mask: requirements.alignment,
             usage: U::MEMORY_TYPE,
             memory_types: requirements.memory_type_bits,
@@ -292,13 +294,17 @@ impl<T: BufferType> BufferCache<T> {
         self.chunks[index].deallocate(offset as _);
     }
 
-    pub fn resolve(&self, handle: &BufferHandle<T>) -> (vk::Buffer, u32) {
+    pub fn resolve(&self, handle: BufferHandle<T>) -> Buffer<T> {
         let index = handle.index();
         let offset = handle.offset();
         if index >= self.chunks.len() {
             panic!("Trying to resolve buffer with indes out of range");
         }
-        (self.chunks[index].buffer(), offset as u32)
+        Buffer {
+            buffer: self.chunks[index].buffer(),
+            offset: offset as u32,
+            _phantom: PhantomData,
+        }
     }
 
     pub fn dispose(

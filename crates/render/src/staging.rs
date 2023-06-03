@@ -21,6 +21,7 @@ use std::{
 };
 
 use ash::vk;
+use buffer_allocator::{BufferCache, BufferHandle, BufferType};
 use dess_common::memory::BumpAllocator;
 use dess_render_backend::{
     Buffer, BufferDesc, BufferView, CommandBuffer, CommandBufferRecorder, Device, FreeGpuResource,
@@ -42,6 +43,7 @@ struct BufferUploadRequest {
     pub dst_offset: u64,
     pub size: u64,
     pub dst: vk::Buffer,
+    pub access: &'static [AccessType],
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -79,7 +81,7 @@ impl Staging {
             size: size as _,
             allocator: BumpAllocator::new(
                 size as _,
-                64.max(device.pdevice.properties.limits.buffer_image_granularity),
+                64.max(device.pdevice.properties.limits.buffer_image_granularity as u32),
             ),
             upload_buffers: Vec::with_capacity(128),
             upload_images: Vec::with_capacity(32),
@@ -96,32 +98,47 @@ impl Staging {
         self.buffer.unmap();
     }
 
+    pub fn upload_cached_buffer<T: Sized, U: BufferType>(
+        &mut self,
+        buffer: BufferHandle<U>,
+        cache: &BufferCache<U>,
+        data: &[T],
+    ) -> RenderResult<u64> {
+        let buffer = cache.resolve(buffer);
+        self.upload_buffer(buffer.buffer, buffer.offset as _, data, U::ACCESS)
+    }
+
     pub fn upload_buffer<T: Sized>(
         &mut self,
-        buffer: &impl BufferView,
+        buffer: vk::Buffer,
+        offset: u64,
         data: &[T],
+        access: &'static [AccessType],
     ) -> RenderResult<u64> {
         let size = data.len() * size_of::<T>();
         assert!(size as u64 <= self.size);
-        assert_eq!(buffer.size(), size as u64);
-        assert_eq!(
-            0,
-            buffer.offset()
-                % self
-                    .device
-                    .pdevice
-                    .properties
-                    .limits
-                    .min_uniform_buffer_offset_alignment
-        );
         self.tranfser_cb.wait(&self.device.raw)?;
         if self.mapping.is_none() {
             self.mapping = Some(self.map_buffer()?);
         }
         let mapping = self.mapping.unwrap();
-        if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping.as_ptr(), size) {
+        if !self.try_push_buffer(
+            buffer,
+            offset,
+            size,
+            data.as_ptr() as *const u8,
+            mapping.as_ptr(),
+            access,
+        ) {
             self.upload()?;
-            if !self.try_push_buffer(buffer, data.as_ptr() as *const u8, mapping.as_ptr(), size) {
+            if !self.try_push_buffer(
+                buffer,
+                offset,
+                size,
+                data.as_ptr() as *const u8,
+                mapping.as_ptr(),
+                access,
+            ) {
                 panic!(
                     "Despite just pushing entire staging buffer we still can't push data in it."
                 );
@@ -173,7 +190,7 @@ impl Staging {
                     height: image.desc.extent[1],
                     depth: 1,
                 })
-                .buffer_offset(offset)
+                .buffer_offset(offset as _)
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_subresource(image.subresource_layer(0, mip, vk::ImageAspectFlags::COLOR))
                 .build();
@@ -193,18 +210,21 @@ impl Staging {
 
     fn try_push_buffer(
         &mut self,
-        buffer: &impl BufferView,
+        buffer: vk::Buffer,
+        offset: u64,
+        size: usize,
         data: *const u8,
         mapping: *mut u8,
-        size: usize,
+        access: &'static [AccessType],
     ) -> bool {
-        if let Some(offset) = self.allocator.allocate(size as _) {
-            unsafe { copy_nonoverlapping(data, mapping.add(offset as _), size) }
+        if let Some(staging_offset) = self.allocator.allocate(size as _) {
+            unsafe { copy_nonoverlapping(data, mapping.add(staging_offset as _), size) }
             let request = BufferUploadRequest {
-                dst: buffer.buffer(),
-                src_offset: offset,
-                dst_offset: buffer.offset(),
-                size: buffer.size(),
+                dst: buffer,
+                src_offset: staging_offset as u64,
+                dst_offset: offset,
+                size: size as u64,
+                access,
             };
             self.upload_buffers.push(request);
             true
@@ -344,11 +364,7 @@ impl Staging {
             .iter()
             .map(|request| BufferBarrier {
                 previous_accesses: &[AccessType::TransferWrite],
-                next_accesses: &[
-                    AccessType::VertexBuffer,
-                    AccessType::IndexBuffer,
-                    AccessType::AnyShaderReadUniformBuffer,
-                ],
+                next_accesses: request.access,
                 src_queue_family_index: from,
                 dst_queue_family_index: to,
                 buffer: request.dst,

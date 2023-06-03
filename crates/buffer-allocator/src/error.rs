@@ -1,6 +1,7 @@
 use ash::vk;
 use gpu_alloc::AllocationError;
 
+#[derive(Debug)]
 pub enum BufferAllocationError {
     OutOfDeviceMemory,
     OutOfHostMemory,
