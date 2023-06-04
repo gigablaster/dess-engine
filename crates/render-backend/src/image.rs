@@ -280,8 +280,8 @@ impl Drop for Image {
                 .unwrap()
                 .drain()
                 .for_each(|(_, view)| droplist.drop_image_view(view));
-            droplist.drop_image(self.raw);
             if let Some(memory) = self.allocation.take() {
+                droplist.drop_image(self.raw);
                 droplist.free_memory(memory);
             }
         })

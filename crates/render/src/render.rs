@@ -419,6 +419,9 @@ impl RenderSystem {
         current_resolution: [u32; 2],
         frame_cb: F,
     ) -> RenderResult<()> {
+        if current_resolution[0] == 0 || current_resolution[1] == 0 {
+            return Ok(());
+        }
         puffin::profile_scope!("render frame");
         let mut swapchain = self.swapchain.lock().unwrap();
         let mut geometry_cache = self.geometry_cache.lock().unwrap();

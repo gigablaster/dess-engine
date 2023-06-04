@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, thread, time};
 
 use ash::vk;
 use dess_render::{
@@ -139,8 +139,8 @@ fn main() {
                 control_flow.set_exit();
             }
             Event::RedrawRequested(_) => {
-                let size = window.inner_size();
-                match render.render_frame([size.width, size.height], |context| {
+                let inner_size = window.inner_size();
+                match render.render_frame([inner_size.width, inner_size.height], |context| {
                     let rop = RenderOp {
                         pso: 1,
                         vertex_buffer,
@@ -203,15 +203,14 @@ fn main() {
                 }) {
                     Err(RenderError::RecreateBuffers) => {
                         render.clear_fbos(&render_pass);
-                        window.request_redraw();
                         Ok(())
                     }
                     Err(other) => Err(other),
                     Ok(_) => Ok(()),
                 }
                 .unwrap();
-                window.request_redraw();
             }
+            Event::RedrawEventsCleared => window.request_redraw(),
             _ => {}
         }
     });
