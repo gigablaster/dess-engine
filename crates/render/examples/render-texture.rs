@@ -13,16 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, io::Cursor};
 
 use ash::vk;
 use dess_render::{
-    DescriptorHandle, GpuType, RenderError, RenderOp, RenderSystem, RenderSystemDesc,
+    DescriptorHandle, GpuType, ImageSubresourceData, RenderError, RenderOp, RenderSystem,
+    RenderSystemDesc,
 };
 use dess_render_backend::{
-    PipelineDesc, PipelineVertex, RenderPassAttachment, RenderPassAttachmentDesc, RenderPassLayout,
-    ShaderDesc, SubImage,
+    ImageDesc, ImageType, PipelineDesc, PipelineVertex, RenderPassAttachment,
+    RenderPassAttachmentDesc, RenderPassLayout, ShaderDesc, SubImage,
 };
+use image::io::Reader;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
 use vk_sync::{AccessType, ImageBarrier};
@@ -36,7 +38,7 @@ use winit::{
 #[repr(C, packed)]
 struct Vertex {
     pub pos: glam::Vec3,
-    pub color: glam::Vec4,
+    pub uv: glam::Vec2,
 }
 
 static DESC: [vk::VertexInputAttributeDescription; 2] = [
@@ -49,7 +51,7 @@ static DESC: [vk::VertexInputAttributeDescription; 2] = [
     vk::VertexInputAttributeDescription {
         location: 1,
         binding: 0,
-        format: vk::Format::R32G32B32A32_SFLOAT,
+        format: vk::Format::R32G32_SFLOAT,
         offset: 12,
     },
 ];
@@ -102,6 +104,21 @@ fn main() {
         .add_shader(&fragment_shader)
         .face_cull(false)
         .subpass(0);
+    let loaded_image = Reader::new(Cursor::new(
+        dess_vfs::get("images/test.png").unwrap().data(),
+    ))
+    .with_guessed_format()
+    .unwrap()
+    .decode()
+    .unwrap()
+    .to_rgba8();
+    let image_desc = ImageDesc::new(
+        vk::Format::R8G8B8A8_UNORM,
+        ImageType::Tex2D,
+        [loaded_image.width(), loaded_image.height()],
+    )
+    .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST);
+    let image = render.create_image(image_desc, None).unwrap();
     let pipeline = render.create_pipeline::<Vertex>(pipeline_desc).unwrap();
     let mut pipeline_cache = HashMap::new();
     pipeline_cache.insert(1u32, pipeline);
@@ -111,26 +128,46 @@ fn main() {
             let vertex_buffer = context
                 .create_buffer(&[
                     Vertex {
-                        pos: glam::Vec3::new(0.0, -0.5, 0.0),
-                        color: glam::Vec4::new(1.0, 0.0, 0.0, 1.0),
+                        pos: glam::Vec3::new(-0.5, 0.5, 0.0),
+                        uv: glam::Vec2::new(0.0, 1.0),
                     },
                     Vertex {
                         pos: glam::Vec3::new(0.5, 0.5, 0.0),
-                        color: glam::Vec4::new(0.0, 1.0, 0.0, 1.0),
+                        uv: glam::Vec2::new(1.0, 1.0),
                     },
                     Vertex {
-                        pos: glam::Vec3::new(-0.5, 0.5, 0.0),
-                        color: glam::Vec4::new(0.0, 0.0, 1.0, 1.0),
+                        pos: glam::Vec3::new(0.5, -0.5, 0.0),
+                        uv: glam::Vec2::new(1.0, 0.0),
+                    },
+                    Vertex {
+                        pos: glam::Vec3::new(-0.5, -0.5, 0.0),
+                        uv: glam::Vec2::new(0.0, 0.0),
                     },
                 ])
                 .unwrap();
-            let index_buffer = context.create_buffer(&[0u16, 1u16, 2u16]).unwrap();
+            let index_buffer = context
+                .create_buffer(&[0u16, 1u16, 2u16, 0u16, 3u16, 2u16])
+                .unwrap();
+
+            let pixels = loaded_image.as_flat_samples();
+            context
+                .upload_image(
+                    &image,
+                    &[&ImageSubresourceData {
+                        data: pixels.samples,
+                        row_pitch: loaded_image.width() as usize,
+                    }],
+                )
+                .unwrap();
 
             (vertex_buffer, index_buffer)
         })
         .unwrap();
+
+    drop(loaded_image);
+
     event_loop.run(move |event, _, control_flow| {
-        control_flow.set_wait();
+        control_flow.set_poll();
         match event {
             Event::WindowEvent {
                 event: WindowEvent::CloseRequested,

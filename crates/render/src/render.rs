@@ -28,9 +28,9 @@ use buffer_allocator::{
 };
 use dess_render_backend::{
     create_pipeline_cache, BackendError, CommandBuffer, CommandBufferRecorder, DescriptorSetInfo,
-    Device, FreeGpuResource, GpuAllocator, Image, Instance, PhysicalDeviceList, Pipeline,
-    PipelineDesc, PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder, Shader,
-    ShaderDesc, SubImage, SubmitWaitDesc, Surface, Swapchain,
+    Device, FreeGpuResource, GpuAllocator, Image, ImageDesc, Instance, PhysicalDeviceList,
+    Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder,
+    Shader, ShaderDesc, SubImage, SubmitWaitDesc, Surface, Swapchain,
 };
 
 use gpu_descriptor_ash::AshDescriptorDevice;
@@ -39,7 +39,7 @@ use vk_sync::{AccessType, ImageBarrier, ImageLayout};
 
 use crate::{
     descriptors::{DescriptorCache, DescriptorHandle},
-    DescriptorAllocator, DescriptorSet, RenderError, RenderResult, Staging,
+    DescriptorAllocator, DescriptorSet, ImageSubresourceData, RenderError, RenderResult, Staging,
 };
 
 const STAGING_SIZE: usize = 64 * 1024 * 1024;
@@ -168,6 +168,16 @@ impl<'a> UpdateContext<'a> {
 
     pub fn destroy_buffer(&mut self, buffer: GeometryBufferHandle) {
         self.drop_list.drop_geometry_buffer(buffer);
+    }
+
+    pub fn upload_image(
+        &mut self,
+        image: &Image,
+        data: &[&ImageSubresourceData],
+    ) -> RenderResult<()> {
+        self.staging.upload_image(image, data)?;
+
+        Ok(())
     }
 }
 
@@ -572,6 +582,12 @@ impl RenderSystem {
 
     pub fn clear_fbos(&self, render_pass: &RenderPass) {
         render_pass.clear_fbos(&self.device.raw);
+    }
+
+    pub fn create_image(&self, desc: ImageDesc, name: Option<&str>) -> RenderResult<Arc<Image>> {
+        let image = Image::texture(&self.device, desc, name)?;
+
+        Ok(Arc::new(image))
     }
 }
 
