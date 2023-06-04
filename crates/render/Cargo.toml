@@ -22,6 +22,4 @@ winit = "0.28"
 simple_logger = "4.1"
 dess-vfs = { path = "../vfs" }
 glam = "0.24"
-
-[[examples]]
-name = "render-triangle"
+image = "0.24"
