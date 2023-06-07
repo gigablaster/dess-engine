@@ -125,7 +125,7 @@ impl<T: BufferType> Chunk<T> {
     pub fn allocate(&mut self, size: u32) -> Option<(vk::Buffer, u32)> {
         match self {
             Self::Block(min, max, data) => {
-                if size >= *min && size < *max {
+                if size >= *min && size <= *max {
                     data.allocate(size)
                 } else {
                     None
@@ -321,7 +321,7 @@ impl<T: BufferType> BufferCache<T> {
         let mut start = 0;
         let mut end = self.desc.align;
         while end <= self.desc.max_block_size {
-            if size >= start && size < end {
+            if size >= start && size <= end {
                 return Some((start, end));
             }
             let new_end = end << 1;

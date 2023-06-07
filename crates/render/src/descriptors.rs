@@ -84,7 +84,7 @@ impl DescriptorCache {
             .types
             .iter()
             .filter_map(|(index, ty)| {
-                if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
+                if *ty == vk::DescriptorType::UNIFORM_BUFFER {
                     Some(BindingPoint::<BindedBuffer> {
                         binding: *index,
                         data: None,
@@ -110,7 +110,7 @@ impl DescriptorCache {
             .collect::<Vec<_>>();
         let count = DescriptorTotalCount {
             combined_image_sampler: images.len() as _,
-            uniform_buffer_dynamic: buffers.len() as _,
+            uniform_buffer: buffers.len() as _,
             ..Default::default()
         };
         let handle = self.container.push(Descriptor {
@@ -185,6 +185,7 @@ impl DescriptorCache {
                 }) {
                     drop_list.drop_uniform_buffer(old.handle);
                 }
+                self.dirty.insert(handle);
             }
         }
     }
@@ -272,7 +273,7 @@ impl DescriptorCache {
                         let data = uniforms.resolve(buffer.handle);
                         let buffer = vk::DescriptorBufferInfo::builder()
                             .buffer(data.buffer)
-                            .offset(data.offset as _)
+                            .offset(0)
                             .range(buffer.size as _)
                             .build();
 
@@ -280,7 +281,7 @@ impl DescriptorCache {
                             .buffer_info(slice::from_ref(buffers.add(buffer)))
                             .dst_binding(binding.binding)
                             .dst_set(*descriptor.raw())
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                             .build()
                     })
                     .for_each(|x| writes.push(x));

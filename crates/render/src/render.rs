@@ -58,7 +58,7 @@ pub struct RenderOp {
 pub enum GpuType {
     DiscreteOnly,
     PreferDiscrete,
-    PrefereIntegrated,
+    PreferIntegrated,
 }
 
 pub struct RenderSystem {
@@ -111,11 +111,14 @@ pub struct UpdateContext<'a> {
 }
 
 impl<'a> UpdateContext<'a> {
-    pub fn create_uniform(&mut self, set: &DescriptorSetInfo) -> RenderResult<DescriptorHandle> {
+    pub fn create_descriptor_set(
+        &mut self,
+        set: &DescriptorSetInfo,
+    ) -> RenderResult<DescriptorHandle> {
         self.descriptor_cache.create(set)
     }
 
-    pub fn destroy_uniform(&mut self, handle: DescriptorHandle) {
+    pub fn destroy_descriptor_set(&mut self, handle: DescriptorHandle) {
         self.descriptor_cache.remove(handle);
     }
 
@@ -234,12 +237,6 @@ impl<'a> RenderContext<'a> {
                     if let Some(value) = self.descriptor_cache.get(*desc) {
                         if let Some(descriptor) = &value.descriptor {
                             current_descs[index] = *desc;
-                            let offsets = value
-                                .buffers
-                                .iter()
-                                .map(|x| self.uniform_cache.resolve(x.data.unwrap().handle).offset)
-                                .collect::<ArrayVec<_, 64>>();
-
                             unsafe {
                                 self.device.raw.cmd_bind_descriptor_sets(
                                     self.cb.raw,
@@ -247,7 +244,7 @@ impl<'a> RenderContext<'a> {
                                     pipeline.pipeline_layout,
                                     index as _,
                                     slice::from_ref(descriptor.raw()),
-                                    &offsets,
+                                    &[],
                                 )
                             }
                         }
@@ -351,7 +348,7 @@ impl RenderSystem {
                 vk::PhysicalDeviceType::INTEGRATED_GPU,
             ],
             GpuType::DiscreteOnly => vec![vk::PhysicalDeviceType::DISCRETE_GPU],
-            GpuType::PrefereIntegrated => vec![
+            GpuType::PreferIntegrated => vec![
                 vk::PhysicalDeviceType::INTEGRATED_GPU,
                 vk::PhysicalDeviceType::DISCRETE_GPU,
             ],

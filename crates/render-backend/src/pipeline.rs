@@ -121,8 +121,8 @@ impl DescriptorSetInfo {
         binding: &DescriptorInfo,
     ) -> vk::DescriptorSetLayoutBinding {
         let descriptor_type = match binding.ty {
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER
-            | rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER => vk::DescriptorType::UNIFORM_BUFFER,
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
                 vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
             rspirv_reflect::DescriptorType::UNIFORM_TEXEL_BUFFER => {

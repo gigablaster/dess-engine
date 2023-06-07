@@ -76,7 +76,7 @@ fn main() {
         window.raw_window_handle(),
         RenderSystemDesc::new([size.width, size.height])
             .debug(true)
-            .gpu_type(GpuType::PrefereIntegrated),
+            .gpu_type(GpuType::PreferIntegrated),
     )
     .unwrap();
     let vertex_shader = render

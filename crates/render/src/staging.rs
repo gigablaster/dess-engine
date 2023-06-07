@@ -180,8 +180,14 @@ impl Staging {
         data: &ImageSubresourceData,
         mapping: *mut u8,
     ) -> bool {
-        if let Some(offset) = self.allocator.allocate(data.data.len() as _) {
-            unsafe { copy_nonoverlapping(data.data.as_ptr(), mapping, data.data.len()) }
+        if let Some(staging_offset) = self.allocator.allocate(data.data.len() as _) {
+            unsafe {
+                copy_nonoverlapping(
+                    data.data.as_ptr(),
+                    mapping.add(staging_offset as _),
+                    data.data.len(),
+                )
+            }
             let op = vk::BufferImageCopy::builder()
                 .buffer_image_height(image.desc.extent[0])
                 .buffer_row_length(data.row_pitch as _)
@@ -190,7 +196,7 @@ impl Staging {
                     height: image.desc.extent[1],
                     depth: 1,
                 })
-                .buffer_offset(offset as _)
+                .buffer_offset(staging_offset as _)
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_subresource(image.subresource_layer(0, mip, vk::ImageAspectFlags::COLOR))
                 .build();
@@ -382,7 +388,7 @@ impl Staging {
                 dst_queue_family_index: to,
                 previous_layout: vk_sync::ImageLayout::Optimal,
                 next_layout: vk_sync::ImageLayout::Optimal,
-                discard_contents: true,
+                discard_contents: false,
                 image: request.dst,
                 range: request.subresource,
             })

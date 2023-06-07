@@ -62,6 +62,17 @@ impl PipelineVertex for Vertex {
     }
 }
 
+#[repr(C, packed)]
+struct CameraData {
+    pub view: glam::Mat4,
+    pub projection: glam::Mat4,
+}
+
+#[repr(C, packed)]
+struct InstanceData {
+    pub model: glam::Mat4,
+}
+
 fn main() {
     SimpleLogger::new().init().unwrap();
     dess_vfs::scan(".").unwrap();
@@ -78,7 +89,7 @@ fn main() {
         window.raw_window_handle(),
         RenderSystemDesc::new([size.width, size.height])
             .debug(true)
-            .gpu_type(GpuType::PrefereIntegrated),
+            .gpu_type(GpuType::PreferIntegrated),
     )
     .unwrap();
     let vertex_shader = render
@@ -121,7 +132,6 @@ fn main() {
     let image = render.create_image(image_desc, None).unwrap();
     let pipeline = render.create_pipeline::<Vertex>(pipeline_desc).unwrap();
     let mut pipeline_cache = HashMap::new();
-    pipeline_cache.insert(1u32, pipeline);
     let (vertex_buffer, index_buffer) = render
         .update_resources(|context| {
             let mut context = context;
@@ -166,6 +176,38 @@ fn main() {
 
     drop(loaded_image);
 
+    let (camera_set, instance_set) = render
+        .update_resources(|context| {
+            let mut context = context;
+            let camera_set = context.create_descriptor_set(&pipeline.sets[0]).unwrap();
+            let instance_set = context.create_descriptor_set(&pipeline.sets[1]).unwrap();
+
+            (camera_set, instance_set)
+        })
+        .unwrap();
+
+    pipeline_cache.insert(1u32, pipeline);
+
+    render
+        .update_resources(|context| {
+            let mut context = context;
+            let camera = CameraData {
+                view: glam::Mat4::IDENTITY,
+                projection: glam::Mat4::IDENTITY,
+            };
+            context.set_uniform_buffer(camera_set, 0, &camera).unwrap();
+            context
+                .set_uniform_image(
+                    instance_set,
+                    1,
+                    &image,
+                    vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    vk::ImageAspectFlags::COLOR,
+                )
+                .unwrap();
+        })
+        .unwrap();
+
     event_loop.run(move |event, _, control_flow| {
         control_flow.set_poll();
         match event {
@@ -177,15 +219,26 @@ fn main() {
             }
             Event::RedrawRequested(_) => {
                 let inner_size = window.inner_size();
+                render
+                    .update_resources(|context| {
+                        let mut context = context;
+                        let instance_data = InstanceData {
+                            model: glam::Mat4::IDENTITY,
+                        };
+                        context
+                            .set_uniform_buffer(instance_set, 0, &instance_data)
+                            .unwrap();
+                    })
+                    .unwrap();
                 match render.render_frame([inner_size.width, inner_size.height], |context| {
                     let rop = RenderOp {
                         pso: 1,
                         vertex_buffer,
                         index_buffer,
-                        index_count: 3,
+                        index_count: 6,
                         descs: [
-                            DescriptorHandle::default(),
-                            DescriptorHandle::default(),
+                            camera_set,
+                            instance_set,
                             DescriptorHandle::default(),
                             DescriptorHandle::default(),
                         ],
@@ -233,7 +286,7 @@ fn main() {
                                         height: context.resolution[1],
                                     },
                                 });
-                                //context.render(&pipeline_cache, &pass, &[rop], Some("Triangle"))
+                                context.render(&pipeline_cache, &pass, &[rop], Some("Quad"))
                             })
                         })
                         .unwrap();
