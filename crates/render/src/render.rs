@@ -15,12 +15,11 @@
 
 use std::{
     collections::HashMap,
-    mem::size_of,
+    mem::{size_of, size_of_val},
     slice,
     sync::{Arc, Mutex},
 };
 
-use arrayvec::ArrayVec;
 use ash::vk;
 use buffer_allocator::{
     BufferCacheDesc, GeometryBufferCache, GeometryBufferHandle, UniformBufferCache,
@@ -157,11 +156,7 @@ impl<'a> UpdateContext<'a> {
     pub fn create_buffer<T: Sized>(&mut self, data: &[T]) -> RenderResult<GeometryBufferHandle> {
         let buffer = self
             .geometry
-            .allocate(
-                self.device,
-                self.allocator,
-                (data.len() * size_of::<T>()) as _,
-            )
+            .allocate(self.device, self.allocator, size_of_val(data) as _)
             .unwrap();
         self.staging
             .upload_cached_buffer(buffer, self.geometry, data)?;
@@ -192,7 +187,6 @@ pub struct RenderContext<'a> {
     cb: &'a CommandBuffer,
     device: &'a Device,
     descriptor_cache: &'a DescriptorCache,
-    uniform_cache: &'a UniformBufferCache,
     geometry_cache: &'a GeometryBufferCache,
 }
 
@@ -487,7 +481,6 @@ impl RenderSystem {
                 graphics_queue: self.device.graphics_queue.family.index,
                 transfer_queue: self.device.transfer_queue.family.index,
                 geometry_cache: &geometry_cache,
-                uniform_cache: &uniform_cache,
             };
 
             frame_cb(context);

@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    mem::size_of,
+    mem::size_of_val,
     ptr::{copy_nonoverlapping, NonNull},
     slice,
     sync::Arc,
@@ -115,7 +115,7 @@ impl Staging {
         data: &[T],
         access: &'static [AccessType],
     ) -> RenderResult<u64> {
-        let size = data.len() * size_of::<T>();
+        let size = size_of_val(data);
         assert!(size as u64 <= self.size);
         self.tranfser_cb.wait(&self.device.raw)?;
         if self.mapping.is_none() {
