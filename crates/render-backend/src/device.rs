@@ -49,6 +49,7 @@ pub struct Queue {
     pub family: QueueFamily,
 }
 
+#[derive(Debug)]
 pub struct SubmitWaitDesc {
     pub semaphore: vk::Semaphore,
     pub stage: vk::PipelineStageFlags,
@@ -150,6 +151,9 @@ impl Device {
 
         let graphics_queue = Self::create_queue(&device, graphics_queue);
         let transfer_queue = Self::create_queue(&device, transfer_queue);
+
+        Self::set_object_name_impl(&instance, &device, graphics_queue.raw, "Render queue")?;
+        Self::set_object_name_impl(&instance, &device, transfer_queue.raw, "Transfer queue")?;
 
         Ok(Arc::new(Self {
             instance,
@@ -273,10 +277,10 @@ impl Device {
         trigger: &[vk::Semaphore],
     ) -> BackendResult<()> {
         let masks = wait.iter().map(|x| x.stage).collect::<ArrayVec<_, 8>>();
-        let semaphors = wait.iter().map(|x| x.semaphore).collect::<ArrayVec<_, 8>>();
+        let semaphores = wait.iter().map(|x| x.semaphore).collect::<ArrayVec<_, 8>>();
         let submit_info = vk::SubmitInfo::builder()
             .wait_dst_stage_mask(&masks)
-            .wait_semaphores(&semaphors)
+            .wait_semaphores(&semaphores)
             .signal_semaphores(trigger)
             .command_buffers(slice::from_ref(&cb.raw))
             .build();

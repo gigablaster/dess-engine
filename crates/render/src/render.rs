@@ -467,8 +467,7 @@ impl RenderSystem {
             &uniform_cache,
         )?;
 
-        staging.upload()?;
-        staging.wait()?;
+        let upload = staging.upload()?;
         {
             puffin::profile_scope!("main cb");
 
@@ -484,14 +483,32 @@ impl RenderSystem {
             };
 
             frame_cb(context);
-            self.device.submit_render(
-                &frame.main_cb,
-                &[SubmitWaitDesc {
-                    semaphore: image.acquire_semaphore,
-                    stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                }],
-                &[frame.render_finished],
-            )?;
+
+            if let Some(upload) = upload {
+                self.device.submit_render(
+                    &frame.main_cb,
+                    &[
+                        SubmitWaitDesc {
+                            semaphore: image.acquire_semaphore,
+                            stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                        },
+                        SubmitWaitDesc {
+                            semaphore: upload,
+                            stage: vk::PipelineStageFlags::TRANSFER,
+                        },
+                    ],
+                    &[frame.render_finished],
+                )?;
+            } else {
+                self.device.submit_render(
+                    &frame.main_cb,
+                    &[SubmitWaitDesc {
+                        semaphore: image.acquire_semaphore,
+                        stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                    }],
+                    &[frame.render_finished],
+                )?;
+            }
         }
         {
             puffin::profile_scope!("present cb");
