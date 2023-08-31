@@ -30,7 +30,7 @@ use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
-use crate::{BackendError, GpuAllocator};
+use crate::{BackendError, GpuAllocator, Semaphore};
 
 use super::{
     droplist::DropList, BackendResult, CommandBuffer, FrameContext, FreeGpuResource, Instance,
@@ -50,9 +50,25 @@ pub struct Queue {
 }
 
 #[derive(Debug)]
-pub struct SubmitWaitDesc {
-    pub semaphore: vk::Semaphore,
-    pub stage: vk::PipelineStageFlags,
+pub enum SubmitWait<'a> {
+    Transfer(&'a Semaphore),
+    ColorAttachmentOutput(&'a Semaphore),
+}
+
+impl<'a> SubmitWait<'a> {
+    pub fn get_stage_flags(&self) -> vk::PipelineStageFlags {
+        match self {
+            SubmitWait::ColorAttachmentOutput(_) => vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            SubmitWait::Transfer(_) => vk::PipelineStageFlags::TRANSFER,
+        }
+    }
+
+    pub fn get_semahore(&self) -> vk::Semaphore {
+        match self {
+            SubmitWait::ColorAttachmentOutput(semaphore) => semaphore.raw,
+            SubmitWait::Transfer(semaphore) => semaphore.raw,
+        }
+    }
 }
 
 pub struct Device {
@@ -273,15 +289,22 @@ impl Device {
     pub fn submit_transfer(
         &self,
         cb: &CommandBuffer,
-        wait: &[SubmitWaitDesc],
-        trigger: &[vk::Semaphore],
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
     ) -> BackendResult<()> {
-        let masks = wait.iter().map(|x| x.stage).collect::<ArrayVec<_, 8>>();
-        let semaphores = wait.iter().map(|x| x.semaphore).collect::<ArrayVec<_, 8>>();
+        let masks = wait
+            .iter()
+            .map(|x| x.get_stage_flags())
+            .collect::<ArrayVec<_, 8>>();
+        let wait = wait
+            .iter()
+            .map(|x| x.get_semahore())
+            .collect::<ArrayVec<_, 8>>();
+        let trigger = trigger.iter().map(|x| x.raw).collect::<ArrayVec<_, 8>>();
         let submit_info = vk::SubmitInfo::builder()
             .wait_dst_stage_mask(&masks)
-            .wait_semaphores(&semaphores)
-            .signal_semaphores(trigger)
+            .wait_semaphores(&wait)
+            .signal_semaphores(&trigger)
             .command_buffers(slice::from_ref(&cb.raw))
             .build();
         unsafe {
@@ -299,15 +322,22 @@ impl Device {
     pub fn submit_render(
         &self,
         cb: &CommandBuffer,
-        wait: &[SubmitWaitDesc],
-        trigger: &[vk::Semaphore],
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
     ) -> BackendResult<()> {
-        let masks = wait.iter().map(|x| x.stage).collect::<ArrayVec<_, 8>>();
-        let semaphors = wait.iter().map(|x| x.semaphore).collect::<ArrayVec<_, 8>>();
+        let masks = wait
+            .iter()
+            .map(|x| x.get_stage_flags())
+            .collect::<ArrayVec<_, 8>>();
+        let wait = wait
+            .iter()
+            .map(|x| x.get_semahore())
+            .collect::<ArrayVec<_, 8>>();
+        let trigger = trigger.iter().map(|x| x.raw).collect::<ArrayVec<_, 8>>();
         let submit_info = vk::SubmitInfo::builder()
             .wait_dst_stage_mask(&masks)
-            .wait_semaphores(&semaphors)
-            .signal_semaphores(trigger)
+            .wait_semaphores(&wait)
+            .signal_semaphores(&trigger)
             .command_buffers(slice::from_ref(&cb.raw))
             .build();
         unsafe {

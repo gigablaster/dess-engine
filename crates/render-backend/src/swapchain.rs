@@ -22,7 +22,7 @@ use ash::{
 use log::info;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::{BackendError, ImageDesc, ImageType};
+use crate::{BackendError, FreeGpuResource, ImageDesc, ImageType, Semaphore};
 
 use super::{BackendResult, Device, Image, Instance};
 
@@ -64,8 +64,8 @@ struct SwapchainInner {
     pub raw: vk::SwapchainKHR,
     pub images: Vec<Arc<Image>>,
     pub loader: khr::Swapchain,
-    pub acquire_semaphore: Vec<vk::Semaphore>,
-    pub rendering_finished_semaphore: Vec<vk::Semaphore>,
+    pub acquire_semaphore: Vec<Semaphore>,
+    pub rendering_finished_semaphore: Vec<Semaphore>,
     pub next_semaphore: usize,
     pub dims: [u32; 2],
     pub format: vk::Format,
@@ -185,21 +185,11 @@ impl SwapchainInner {
         });
 
         let acquire_semaphore = (0..images.len())
-            .map(|_| unsafe {
-                device
-                    .raw
-                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                    .unwrap()
-            })
+            .map(|_| Semaphore::new(&device.raw).unwrap())
             .collect();
 
         let rendering_finished_semaphore = (0..images.len())
-            .map(|_| unsafe {
-                device
-                    .raw
-                    .create_semaphore(&vk::SemaphoreCreateInfo::default(), None)
-                    .unwrap()
-            })
+            .map(|_| Semaphore::new(&device.raw).unwrap())
             .collect();
 
         Ok(Self {
@@ -243,10 +233,10 @@ impl SwapchainInner {
     pub fn cleanup(&mut self, device: &ash::Device) {
         unsafe { self.loader.destroy_swapchain(self.raw, None) };
         for semaphore in &self.acquire_semaphore {
-            unsafe { device.destroy_semaphore(*semaphore, None) };
+            semaphore.free(device)
         }
         for semaphore in &self.rendering_finished_semaphore {
-            unsafe { device.destroy_semaphore(*semaphore, None) };
+            semaphore.free(device)
         }
         for image in self.images.iter() {
             image.destroy_all_views();
@@ -263,8 +253,8 @@ pub struct Swapchain {
 pub struct SwapchainImage {
     pub image: Arc<Image>,
     pub image_index: u32,
-    pub acquire_semaphore: vk::Semaphore,
-    pub presentation_finished: vk::Semaphore,
+    pub acquire_semaphore: Semaphore,
+    pub presentation_finished: Semaphore,
 }
 
 impl Swapchain {
@@ -290,7 +280,7 @@ impl Swapchain {
             self.inner.loader.acquire_next_image(
                 self.inner.raw,
                 u64::MAX,
-                acquire_semaphore,
+                acquire_semaphore.raw,
                 vk::Fence::null(),
             )
         };
@@ -318,7 +308,7 @@ impl Swapchain {
     pub fn present_image(&self, image: SwapchainImage) {
         puffin::profile_scope!("present");
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(slice::from_ref(&image.presentation_finished))
+            .wait_semaphores(slice::from_ref(&image.presentation_finished.raw))
             .swapchains(slice::from_ref(&self.inner.raw))
             .image_indices(slice::from_ref(&image.image_index))
             .build();

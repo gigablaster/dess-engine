@@ -29,7 +29,7 @@ use dess_render_backend::{
     create_pipeline_cache, BackendError, CommandBuffer, CommandBufferRecorder, DescriptorSetInfo,
     Device, FreeGpuResource, GpuAllocator, Image, ImageDesc, Instance, PhysicalDeviceList,
     Pipeline, PipelineDesc, PipelineVertex, RenderPass, RenderPassLayout, RenderPassRecorder,
-    Shader, ShaderDesc, SubImage, SubmitWaitDesc, Surface, Swapchain,
+    Shader, ShaderDesc, SubImage, SubmitWait, Surface, Swapchain,
 };
 
 use gpu_descriptor_ash::AshDescriptorDevice;
@@ -488,24 +488,15 @@ impl RenderSystem {
                 self.device.submit_render(
                     &frame.main_cb,
                     &[
-                        SubmitWaitDesc {
-                            semaphore: image.acquire_semaphore,
-                            stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                        },
-                        SubmitWaitDesc {
-                            semaphore: upload,
-                            stage: vk::PipelineStageFlags::TRANSFER,
-                        },
+                        SubmitWait::ColorAttachmentOutput(&image.acquire_semaphore),
+                        SubmitWait::Transfer(&upload),
                     ],
                     &[frame.render_finished],
                 )?;
             } else {
                 self.device.submit_render(
                     &frame.main_cb,
-                    &[SubmitWaitDesc {
-                        semaphore: image.acquire_semaphore,
-                        stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                    }],
+                    &[SubmitWait::ColorAttachmentOutput(&image.acquire_semaphore)],
                     &[frame.render_finished],
                 )?;
             }
@@ -534,10 +525,7 @@ impl RenderSystem {
             })?;
             self.device.submit_render(
                 &frame.presentation_cb,
-                &[SubmitWaitDesc {
-                    semaphore: frame.render_finished,
-                    stage: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
-                }],
+                &[SubmitWait::ColorAttachmentOutput(&frame.render_finished)],
                 &[image.presentation_finished],
             )?;
         }

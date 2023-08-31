@@ -263,3 +263,23 @@ impl<'a> Drop for RenderPassRecorder<'a> {
         unsafe { self.device.cmd_end_render_pass(*self.cb) };
     }
 }
+
+#[derive(Debug, Copy, Clone)]
+pub struct Semaphore {
+    pub raw: vk::Semaphore,
+}
+
+impl Semaphore {
+    pub fn new(device: &ash::Device) -> BackendResult<Semaphore> {
+        let info = vk::SemaphoreCreateInfo::builder().build();
+        Ok(Semaphore {
+            raw: unsafe { device.create_semaphore(&info, None) }?,
+        })
+    }
+}
+
+impl FreeGpuResource for Semaphore {
+    fn free(&self, device: &ash::Device) {
+        unsafe { device.destroy_semaphore(self.raw, None) };
+    }
+}

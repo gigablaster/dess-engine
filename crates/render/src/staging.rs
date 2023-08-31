@@ -26,7 +26,7 @@ use buffer_allocator::{BufferCache, BufferHandle, BufferType};
 use dess_common::memory::BumpAllocator;
 use dess_render_backend::{
     Buffer, BufferDesc, CommandBuffer, CommandBufferRecorder, Device, FreeGpuResource, Image,
-    SubImage, SubmitWaitDesc,
+    Semaphore, SubImage, SubmitWait,
 };
 
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
@@ -62,7 +62,7 @@ pub struct Staging {
     upload_images: Vec<ImageUploadRequest>,
     mappings: Vec<NonNull<u8>>,
     buffers: Vec<Buffer>,
-    semaphores: Vec<vk::Semaphore>,
+    semaphores: Vec<Semaphore>,
     last: Option<usize>,
     current: usize,
     index: u64,
@@ -82,10 +82,9 @@ impl Staging {
             .collect::<Vec<_>>();
         let semaphores = (0..STAGES)
             .map(|index| {
-                let info = vk::SemaphoreCreateInfo::builder().build();
-                let semaphore = unsafe { device.raw.create_semaphore(&info, None) }.unwrap();
+                let semaphore = Semaphore::new(&device.raw).unwrap();
                 device
-                    .set_object_name(semaphore, &format!("Staging sempahore {}", index))
+                    .set_object_name(semaphore.raw, &format!("Staging sempahore {}", index))
                     .unwrap();
                 semaphore
             })
@@ -250,7 +249,7 @@ impl Staging {
         self.upload_buffers.is_empty() && self.upload_images.is_empty()
     }
 
-    pub fn upload(&mut self) -> RenderResult<Option<vk::Semaphore>> {
+    pub fn upload(&mut self) -> RenderResult<Option<Semaphore>> {
         if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
             return Ok(None);
         }
@@ -284,15 +283,11 @@ impl Staging {
                 .cmd_end_label(self.tranfser_cbs[self.current].raw);
         })?;
         let semaphore = self.semaphores[self.current];
-        dbg!(&self.current, &self.last);
 
         if let Some(last) = self.last {
             self.device.submit_transfer(
                 &self.tranfser_cbs[self.current],
-                &[SubmitWaitDesc {
-                    semaphore: self.semaphores[last],
-                    stage: vk::PipelineStageFlags::TRANSFER,
-                }],
+                &[SubmitWait::Transfer(&self.semaphores[last])],
                 slice::from_ref(&semaphore),
             )?;
         } else {
@@ -454,6 +449,6 @@ impl Drop for Staging {
             .for_each(|cb| cb.free(&self.device.raw));
         self.semaphores
             .iter()
-            .for_each(|semaphore| unsafe { self.device.raw.destroy_semaphore(*semaphore, None) });
+            .for_each(|semaphore| semaphore.free(&self.device.raw));
     }
 }
