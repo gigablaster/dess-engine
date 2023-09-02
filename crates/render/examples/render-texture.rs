@@ -89,6 +89,7 @@ fn main() {
         window.raw_window_handle(),
         RenderSystemDesc::new([size.width, size.height])
             .debug(true)
+            // .trace(true)
             .gpu_type(GpuType::DiscreteOnly),
     )
     .unwrap();

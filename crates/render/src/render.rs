@@ -75,6 +75,7 @@ pub struct RenderSystem {
 
 pub struct RenderSystemDesc {
     pub debug: bool,
+    pub trace: bool,
     pub gpu_type: GpuType,
     pub resolution: [u32; 2],
 }
@@ -83,6 +84,7 @@ impl RenderSystemDesc {
     pub fn new(resolution: [u32; 2]) -> Self {
         Self {
             debug: false,
+            trace: false,
             gpu_type: GpuType::PreferDiscrete,
             resolution,
         }
@@ -95,6 +97,11 @@ impl RenderSystemDesc {
 
     pub fn gpu_type(mut self, value: GpuType) -> Self {
         self.gpu_type = value;
+        self
+    }
+
+    pub fn trace(mut self, value: bool) -> Self {
+        self.trace = value;
         self
     }
 }
@@ -333,6 +340,7 @@ impl RenderSystem {
     ) -> RenderResult<Self> {
         let instance = Instance::builder()
             .debug(desc.debug)
+            .trace(desc.trace)
             .build(display_handle)?;
         let surface = Surface::create(&instance, display_handle, window_handle)?;
         let allowed_gpus = match desc.gpu_type {

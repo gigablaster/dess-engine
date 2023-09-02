@@ -35,6 +35,7 @@ pub struct Instance {
 pub struct InstanceBuilder {
     pub extensions: Vec<&'static CStr>,
     pub debug: bool,
+    pub trace: bool,
 }
 
 impl InstanceBuilder {
@@ -45,6 +46,11 @@ impl InstanceBuilder {
 
     pub fn debug(mut self, debug: bool) -> Self {
         self.debug = debug;
+        self
+    }
+
+    pub fn trace(mut self, trace: bool) -> Self {
+        self.trace = trace;
         self
     }
 
@@ -80,6 +86,9 @@ impl Instance {
         let mut names = Vec::new();
         if builder.debug {
             names.push(CString::new("VK_LAYER_KHRONOS_validation").unwrap());
+        }
+        if builder.trace {
+            names.push(CString::new("VK_LAYER_LUNARG_api_dump").unwrap());
         }
 
         names

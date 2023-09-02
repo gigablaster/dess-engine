@@ -33,7 +33,7 @@ use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::RenderResult;
 
-const STAGES: usize = 4;
+const STAGES: usize = 2;
 
 pub struct ImageSubresourceData<'a> {
     pub data: &'a [u8],
