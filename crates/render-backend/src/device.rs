@@ -75,8 +75,7 @@ pub struct Device {
     instance: Instance,
     pub raw: ash::Device,
     pub pdevice: PhysicalDevice,
-    pub graphics_queue: Queue,
-    pub transfer_queue: Queue,
+    pub universal_queue: Queue,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     frames: [Mutex<Arc<FrameContext>>; 2],
     current_drop_list: Mutex<DropList>,
@@ -101,8 +100,8 @@ impl Device {
             }
         }
 
-        let graphics_queue = pdevice.get_queue(vk::QueueFlags::GRAPHICS)?;
-        let transfer_queue = pdevice.get_queue(vk::QueueFlags::TRANSFER)?;
+        let universal_queue =
+            pdevice.get_queue(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER)?;
 
         let mut features = vk::PhysicalDeviceFeatures2::builder().build();
 
@@ -114,7 +113,7 @@ impl Device {
 
         let priorities = [1.0];
         let queue_info = [vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(graphics_queue.index)
+            .queue_family_index(universal_queue.index)
             .queue_priorities(&priorities)
             .build()];
 
@@ -136,13 +135,13 @@ impl Device {
             Mutex::new(Arc::new(FrameContext::new(
                 &instance,
                 &device,
-                &graphics_queue,
+                &universal_queue,
                 "frame 1",
             )?)),
             Mutex::new(Arc::new(FrameContext::new(
                 &instance,
                 &device,
-                &graphics_queue,
+                &universal_queue,
                 "frame 2",
             )?)),
         ];
@@ -165,17 +164,14 @@ impl Device {
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
         let allocator = GpuAllocator::new(allocator_config, allocator_props);
 
-        let graphics_queue = Self::create_queue(&device, graphics_queue);
-        let transfer_queue = Self::create_queue(&device, transfer_queue);
+        let universal_queue = Self::create_queue(&device, universal_queue);
 
-        Self::set_object_name_impl(&instance, &device, graphics_queue.raw, "Render queue")?;
-        Self::set_object_name_impl(&instance, &device, transfer_queue.raw, "Transfer queue")?;
+        Self::set_object_name_impl(&instance, &device, universal_queue.raw, "Main queue")?;
 
         Ok(Arc::new(Self {
             instance,
             pdevice,
-            graphics_queue,
-            transfer_queue,
+            universal_queue,
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
@@ -286,7 +282,7 @@ impl Device {
         }
     }
 
-    pub fn submit_transfer(
+    pub fn submit(
         &self,
         cb: &CommandBuffer,
         wait: &[SubmitWait],
@@ -310,40 +306,7 @@ impl Device {
         unsafe {
             self.raw.reset_fences(slice::from_ref(&cb.fence))?;
             self.raw.queue_submit(
-                self.transfer_queue.raw,
-                slice::from_ref(&submit_info),
-                cb.fence,
-            )?;
-        }
-
-        Ok(())
-    }
-
-    pub fn submit_render(
-        &self,
-        cb: &CommandBuffer,
-        wait: &[SubmitWait],
-        trigger: &[Semaphore],
-    ) -> BackendResult<()> {
-        let masks = wait
-            .iter()
-            .map(|x| x.get_stage_flags())
-            .collect::<ArrayVec<_, 8>>();
-        let wait = wait
-            .iter()
-            .map(|x| x.get_semahore())
-            .collect::<ArrayVec<_, 8>>();
-        let trigger = trigger.iter().map(|x| x.raw).collect::<ArrayVec<_, 8>>();
-        let submit_info = vk::SubmitInfo::builder()
-            .wait_dst_stage_mask(&masks)
-            .wait_semaphores(&wait)
-            .signal_semaphores(&trigger)
-            .command_buffers(slice::from_ref(&cb.raw))
-            .build();
-        unsafe {
-            self.raw.reset_fences(slice::from_ref(&cb.fence))?;
-            self.raw.queue_submit(
-                self.graphics_queue.raw,
+                self.universal_queue.raw,
                 slice::from_ref(&submit_info),
                 cb.fence,
             )?;

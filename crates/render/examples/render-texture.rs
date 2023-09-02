@@ -89,7 +89,7 @@ fn main() {
         window.raw_window_handle(),
         RenderSystemDesc::new([size.width, size.height])
             .debug(true)
-            .gpu_type(GpuType::PreferIntegrated),
+            .gpu_type(GpuType::DiscreteOnly),
     )
     .unwrap();
     let vertex_shader = render
@@ -259,8 +259,8 @@ fn main() {
                                 previous_layout: vk_sync::ImageLayout::Optimal,
                                 next_layout: vk_sync::ImageLayout::Optimal,
                                 discard_contents: true,
-                                src_queue_family_index: context.graphics_queue,
-                                dst_queue_family_index: context.graphics_queue,
+                                src_queue_family_index: context.queue,
+                                dst_queue_family_index: context.queue,
                                 image: context.backbuffer.raw,
                                 range: context.backbuffer.subresource_range(
                                     SubImage::LayerAndMip(0, 0),

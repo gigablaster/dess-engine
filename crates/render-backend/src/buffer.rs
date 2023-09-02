@@ -84,17 +84,12 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    fn new(
-        device: &Arc<Device>,
-        desc: BufferDesc,
-        queue_family_index: u32,
-        name: Option<&str>,
-    ) -> BackendResult<Self> {
+    pub fn new(device: &Arc<Device>, desc: BufferDesc, name: Option<&str>) -> BackendResult<Self> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
             .usage(desc.usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(slice::from_ref(&queue_family_index))
+            .queue_family_indices(slice::from_ref(&device.universal_queue.family.index))
             .build();
         let buffer = unsafe { device.raw.create_buffer(&buffer_create_info, None) }?;
         if let Some(name) = name {
@@ -139,22 +134,6 @@ impl Buffer {
             desc,
             allocation: Some(allocation),
         })
-    }
-
-    pub fn graphics(
-        device: &Arc<Device>,
-        desc: BufferDesc,
-        name: Option<&str>,
-    ) -> BackendResult<Self> {
-        Self::new(device, desc, device.graphics_queue.family.index, name)
-    }
-
-    pub fn transfer(
-        device: &Arc<Device>,
-        desc: BufferDesc,
-        name: Option<&str>,
-    ) -> BackendResult<Self> {
-        Self::new(device, desc, device.transfer_queue.family.index, name)
     }
 
     pub fn map(&mut self) -> BackendResult<NonNull<u8>> {

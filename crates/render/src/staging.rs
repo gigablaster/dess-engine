@@ -72,7 +72,7 @@ impl Staging {
     pub fn new(device: &Arc<Device>, size: usize) -> RenderResult<Self> {
         let mut buffers = (0..STAGES)
             .map(|x| {
-                Buffer::transfer(
+                Buffer::new(
                     device,
                     BufferDesc::host_only(size, vk::BufferUsageFlags::TRANSFER_SRC).dedicated(true),
                     Some(&format!("staging {}", x)),
@@ -92,7 +92,7 @@ impl Staging {
         let tranfser_cbs = (0..STAGES)
             .map(|index| {
                 let cb =
-                    CommandBuffer::new(&device.raw, device.transfer_queue.family.index).unwrap();
+                    CommandBuffer::new(&device.raw, device.universal_queue.family.index).unwrap();
                 device
                     .set_object_name(cb.raw, &format!("Stage CB {}", index))
                     .unwrap();
@@ -262,22 +262,10 @@ impl Staging {
                 &format!("Sending staging queue #{}", self.index),
             );
 
-            self.barrier_pre(
-                &recorder,
-                &self.upload_buffers,
-                &self.upload_images,
-                self.device.graphics_queue.family.index,
-                self.device.transfer_queue.family.index,
-            );
+            self.barrier_pre(&recorder, &self.upload_buffers, &self.upload_images);
             self.copy_buffers(&recorder, &self.upload_buffers);
             self.copy_images(&recorder, &self.upload_images);
-            self.barrier_after(
-                &recorder,
-                &self.upload_buffers,
-                &self.upload_images,
-                self.device.transfer_queue.family.index,
-                self.device.graphics_queue.family.index,
-            );
+            self.barrier_after(&recorder, &self.upload_buffers, &self.upload_images);
 
             self.device
                 .cmd_end_label(self.tranfser_cbs[self.current].raw);
@@ -285,13 +273,13 @@ impl Staging {
         let semaphore = self.semaphores[self.current];
 
         if let Some(last) = self.last {
-            self.device.submit_transfer(
+            self.device.submit(
                 &self.tranfser_cbs[self.current],
                 &[SubmitWait::Transfer(&self.semaphores[last])],
                 slice::from_ref(&semaphore),
             )?;
         } else {
-            self.device.submit_transfer(
+            self.device.submit(
                 &self.tranfser_cbs[self.current],
                 &[],
                 slice::from_ref(&semaphore),
@@ -314,8 +302,6 @@ impl Staging {
         recorder: &CommandBufferRecorder,
         buffers: &HashMap<vk::Buffer, Vec<BufferUploadRequest>>,
         images: &[ImageUploadRequest],
-        from: u32,
-        to: u32,
     ) {
         let mut buffer_barriers = Vec::with_capacity(128);
         buffers.iter().for_each(|(buffer, requests)| {
@@ -323,8 +309,8 @@ impl Staging {
                 buffer_barriers.push(BufferBarrier {
                     previous_accesses: &[AccessType::Nothing],
                     next_accesses: &[AccessType::TransferWrite],
-                    src_queue_family_index: from,
-                    dst_queue_family_index: to,
+                    src_queue_family_index: self.device.universal_queue.family.index,
+                    dst_queue_family_index: self.device.universal_queue.family.index,
                     buffer: *buffer,
                     offset: request.op.dst_offset as _,
                     size: request.op.size as _,
@@ -334,8 +320,8 @@ impl Staging {
         buffer_barriers.push(BufferBarrier {
             previous_accesses: &[AccessType::Nothing],
             next_accesses: &[AccessType::TransferRead],
-            src_queue_family_index: self.device.transfer_queue.family.index,
-            dst_queue_family_index: self.device.transfer_queue.family.index,
+            src_queue_family_index: self.device.universal_queue.family.index,
+            dst_queue_family_index: self.device.universal_queue.family.index,
             buffer: self.buffers[self.current].raw,
             offset: 0,
             size: self.buffers[self.current].desc.size,
@@ -346,8 +332,8 @@ impl Staging {
             .map(|request| ImageBarrier {
                 previous_accesses: &[AccessType::Nothing],
                 next_accesses: &[AccessType::TransferWrite],
-                src_queue_family_index: from,
-                dst_queue_family_index: to,
+                src_queue_family_index: self.device.universal_queue.family.index,
+                dst_queue_family_index: self.device.universal_queue.family.index,
                 previous_layout: vk_sync::ImageLayout::Optimal,
                 next_layout: vk_sync::ImageLayout::Optimal,
                 discard_contents: true,
@@ -370,8 +356,6 @@ impl Staging {
         recorder: &CommandBufferRecorder,
         buffers: &HashMap<vk::Buffer, Vec<BufferUploadRequest>>,
         images: &[ImageUploadRequest],
-        from: u32,
-        to: u32,
     ) {
         let mut buffer_barriers = Vec::with_capacity(128);
         buffers.iter().for_each(|(buffer, requests)| {
@@ -379,8 +363,8 @@ impl Staging {
                 buffer_barriers.push(BufferBarrier {
                     previous_accesses: &[AccessType::TransferWrite],
                     next_accesses: request.access,
-                    src_queue_family_index: from,
-                    dst_queue_family_index: to,
+                    src_queue_family_index: self.device.universal_queue.family.index,
+                    dst_queue_family_index: self.device.universal_queue.family.index,
                     buffer: *buffer,
                     offset: request.op.dst_offset as _,
                     size: request.op.size as _,
@@ -392,8 +376,8 @@ impl Staging {
             .map(|request| ImageBarrier {
                 previous_accesses: &[AccessType::TransferWrite],
                 next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
-                src_queue_family_index: from,
-                dst_queue_family_index: to,
+                src_queue_family_index: self.device.universal_queue.family.index,
+                dst_queue_family_index: self.device.universal_queue.family.index,
                 previous_layout: vk_sync::ImageLayout::Optimal,
                 next_layout: vk_sync::ImageLayout::Optimal,
                 discard_contents: false,

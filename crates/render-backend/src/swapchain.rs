@@ -316,7 +316,7 @@ impl Swapchain {
         match unsafe {
             self.inner
                 .loader
-                .queue_present(self.device.graphics_queue.raw, &present_info)
+                .queue_present(self.device.universal_queue.raw, &present_info)
         } {
             Ok(_) => (),
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}

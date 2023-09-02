@@ -182,8 +182,7 @@ impl<'a> UpdateContext<'a> {
 pub struct RenderContext<'a> {
     pub backbuffer: &'a Image,
     pub resolution: [u32; 2],
-    pub graphics_queue: u32,
-    pub transfer_queue: u32,
+    pub queue: u32,
     cb: &'a CommandBuffer,
     device: &'a Device,
     descriptor_cache: &'a DescriptorCache,
@@ -358,7 +357,7 @@ impl RenderSystem {
             let descriptor_allocator = DescriptorAllocator::new(DESCRIPTOR_SET_GROW);
             let uniform_cache = UniformBufferCache::new(
                 BufferCacheDesc::default()
-                    .family_index(device.graphics_queue.family.index)
+                    .family_index(device.universal_queue.family.index)
                     .align(
                         device
                             .pdevice
@@ -368,7 +367,7 @@ impl RenderSystem {
                     ),
             );
             let geometry_cache = GeometryBufferCache::new(
-                BufferCacheDesc::default().family_index(device.graphics_queue.family.index),
+                BufferCacheDesc::default().family_index(device.universal_queue.family.index),
             );
 
             Ok(Self {
@@ -477,15 +476,14 @@ impl RenderSystem {
                 device: &self.device,
                 descriptor_cache: &descriptor_cache,
                 resolution: current_resolution,
-                graphics_queue: self.device.graphics_queue.family.index,
-                transfer_queue: self.device.transfer_queue.family.index,
+                queue: self.device.universal_queue.family.index,
                 geometry_cache: &geometry_cache,
             };
 
             frame_cb(context);
 
             if let Some(upload) = upload {
-                self.device.submit_render(
+                self.device.submit(
                     &frame.main_cb,
                     &[
                         SubmitWait::ColorAttachmentOutput(&image.acquire_semaphore),
@@ -494,7 +492,7 @@ impl RenderSystem {
                     &[frame.render_finished],
                 )?;
             } else {
-                self.device.submit_render(
+                self.device.submit(
                     &frame.main_cb,
                     &[SubmitWait::ColorAttachmentOutput(&image.acquire_semaphore)],
                     &[frame.render_finished],
@@ -512,8 +510,8 @@ impl RenderSystem {
                     next_accesses: &[AccessType::Present],
                     previous_layout: ImageLayout::Optimal,
                     next_layout: ImageLayout::Optimal,
-                    src_queue_family_index: self.device.graphics_queue.family.index,
-                    dst_queue_family_index: self.device.graphics_queue.family.index,
+                    src_queue_family_index: self.device.universal_queue.family.index,
+                    dst_queue_family_index: self.device.universal_queue.family.index,
                     discard_contents: false,
                     image: image.image.raw,
                     range: image.image.subresource_range(
@@ -523,7 +521,7 @@ impl RenderSystem {
                 };
                 recorder.barrier(None, &[], &[barrier]);
             })?;
-            self.device.submit_render(
+            self.device.submit(
                 &frame.presentation_cb,
                 &[SubmitWait::ColorAttachmentOutput(&frame.render_finished)],
                 &[image.presentation_finished],
