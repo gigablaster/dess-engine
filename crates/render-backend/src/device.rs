@@ -304,6 +304,8 @@ impl Device {
             .command_buffers(slice::from_ref(&cb.raw))
             .build();
         unsafe {
+            self.raw
+                .wait_for_fences(slice::from_ref(&cb.fence), true, u64::MAX)?;
             self.raw.reset_fences(slice::from_ref(&cb.fence))?;
             self.raw.queue_submit(
                 self.universal_queue.raw,
