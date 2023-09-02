@@ -33,7 +33,7 @@ use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::RenderResult;
 
-const STAGES: usize = 2;
+const STAGES: usize = 4;
 
 pub struct ImageSubresourceData<'a> {
     pub data: &'a [u8],
@@ -63,6 +63,7 @@ pub struct Staging {
     mappings: Vec<NonNull<u8>>,
     buffers: Vec<Buffer>,
     semaphores: Vec<Semaphore>,
+    render_semaphores: Vec<Semaphore>,
     last: Option<usize>,
     current: usize,
     index: u64,
@@ -89,6 +90,19 @@ impl Staging {
                 semaphore
             })
             .collect::<Vec<_>>();
+        let render_semaphores = (0..STAGES)
+            .map(|index| {
+                let semaphore = Semaphore::new(&device.raw).unwrap();
+                device
+                    .set_object_name(
+                        semaphore.raw,
+                        &format!("Staging->Render sempahore {}", index),
+                    )
+                    .unwrap();
+                semaphore
+            })
+            .collect::<Vec<_>>();
+
         let tranfser_cbs = (0..STAGES)
             .map(|index| {
                 let cb =
@@ -112,6 +126,7 @@ impl Staging {
             device: device.clone(),
             buffers,
             semaphores,
+            render_semaphores,
             last: None,
             current: 0,
             tranfser_cbs,
@@ -271,18 +286,19 @@ impl Staging {
                 .cmd_end_label(self.tranfser_cbs[self.current].raw);
         })?;
         let semaphore = self.semaphores[self.current];
+        let render_semaphore = self.render_semaphores[self.current];
 
         if let Some(last) = self.last {
             self.device.submit(
                 &self.tranfser_cbs[self.current],
                 &[SubmitWait::Transfer(&self.semaphores[last])],
-                slice::from_ref(&semaphore),
+                &[semaphore, render_semaphore],
             )?;
         } else {
             self.device.submit(
                 &self.tranfser_cbs[self.current],
                 &[],
-                slice::from_ref(&semaphore),
+                &[semaphore, render_semaphore],
             )?;
         }
 
@@ -294,7 +310,7 @@ impl Staging {
         self.current += 1;
         self.current %= STAGES;
 
-        Ok(Some(semaphore))
+        Ok(Some(render_semaphore))
     }
 
     fn barrier_pre(
@@ -432,6 +448,9 @@ impl Drop for Staging {
             .iter()
             .for_each(|cb| cb.free(&self.device.raw));
         self.semaphores
+            .iter()
+            .for_each(|semaphore| semaphore.free(&self.device.raw));
+        self.render_semaphores
             .iter()
             .for_each(|semaphore| semaphore.free(&self.device.raw));
     }
