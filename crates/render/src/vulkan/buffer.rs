@@ -13,18 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use core::slice;
-use std::{ptr::NonNull, sync::Arc};
+use std::ptr::NonNull;
 
 use ash::vk::{self, BufferCreateInfo};
 use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{BackendError, Device};
+use super::{droplist::DropList, Device, MapError, ResourceCreateError, Retire};
 
-use super::BackendResult;
-
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
     pub size: usize,
     pub usage: vk::BufferUsageFlags,
@@ -77,25 +74,76 @@ impl BufferDesc {
 
 #[derive(Debug)]
 pub struct Buffer {
-    device: Arc<Device>,
-    pub raw: vk::Buffer,
-    pub desc: BufferDesc,
-    pub allocation: Option<MemoryBlock<vk::DeviceMemory>>,
+    raw: vk::Buffer,
+    desc: BufferDesc,
+    allocation: Option<MemoryBlock<vk::DeviceMemory>>,
 }
 
+unsafe impl Send for Buffer {}
+
 impl Buffer {
-    pub fn new(device: &Arc<Device>, desc: BufferDesc, name: Option<&str>) -> BackendResult<Self> {
+    /// Отображает буфер на память если тот выделен в памяти хоста
+    ///
+    /// # Паникует
+    ///
+    /// Если буфер уже отмечен на удаление
+    pub fn map(&mut self, device: &ash::Device) -> Result<NonNull<u8>, MapError> {
+        if let Some(allocation) = &mut self.allocation {
+            let ptr = unsafe { allocation.map(AshMemoryDevice::wrap(device), 0, self.desc.size) }?
+                .as_ptr() as *mut u8;
+
+            Ok(NonNull::new(ptr).unwrap())
+        } else {
+            panic!("Buffer is already retired");
+        }
+    }
+
+    /// Отменяет отображение буфера на память
+    pub fn unmap(&mut self, device: &ash::Device) {
+        if let Some(allocation) = &mut self.allocation {
+            unsafe { allocation.unmap(AshMemoryDevice::wrap(device)) };
+        }
+    }
+
+    /// Возвращает описание буфера
+    pub fn desc(&self) -> &BufferDesc {
+        &self.desc
+    }
+
+    pub fn raw(&self) -> vk::Buffer {
+        self.raw
+    }
+}
+
+impl Retire for Buffer {
+    fn retire(&mut self, drop_list: &mut DropList) {
+        drop_list.drop_buffer(self.raw);
+        if let Some(allocation) = self.allocation.take() {
+            drop_list.free_memory(allocation);
+        }
+    }
+}
+
+impl Device {
+    /// Создаёт GPU буффер
+    ///
+    /// Может быть вызвано из разных потоков, синхронизация только для доступа к аллокатуру
+    pub fn create_buffer(
+        &self,
+        desc: BufferDesc,
+        name: Option<&str>,
+    ) -> Result<Buffer, ResourceCreateError> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
             .usage(desc.usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(slice::from_ref(&device.universal_queue.family.index))
+            .queue_family_indices(&[self.queue_index()])
             .build();
-        let buffer = unsafe { device.raw.create_buffer(&buffer_create_info, None) }?;
+        let buffer = unsafe { self.raw().create_buffer(&buffer_create_info, None) }?;
         if let Some(name) = name {
-            device.set_object_name(buffer, name)?;
+            self.set_object_name(buffer, name);
         }
-        let requirement = unsafe { device.raw.get_buffer_memory_requirements(buffer) };
+        let requirement = unsafe { self.raw().get_buffer_memory_requirements(buffer) };
         let aligment = if let Some(aligment) = desc.alignment {
             aligment.max(requirement.alignment)
         } else {
@@ -109,60 +157,27 @@ impl Buffer {
         };
         let allocation = if desc.dedicated {
             unsafe {
-                device.allocator().alloc_with_dedicated(
-                    AshMemoryDevice::wrap(&device.raw),
+                self.allocator().alloc_with_dedicated(
+                    AshMemoryDevice::wrap(self.raw()),
                     request,
                     Dedicated::Required,
                 )
             }?
         } else {
             unsafe {
-                device
-                    .allocator()
-                    .alloc(AshMemoryDevice::wrap(&device.raw), request)
+                self.allocator()
+                    .alloc(AshMemoryDevice::wrap(self.raw()), request)
             }?
         };
         unsafe {
-            device
-                .raw
+            self.raw()
                 .bind_buffer_memory(buffer, *allocation.memory(), allocation.offset())
         }?;
 
-        Ok(Self {
-            device: device.clone(),
+        Ok(Buffer {
             raw: buffer,
             desc,
             allocation: Some(allocation),
-        })
-    }
-
-    pub fn map(&mut self) -> BackendResult<NonNull<u8>> {
-        if let Some(allocation) = &mut self.allocation {
-            let ptr = unsafe {
-                allocation.map(AshMemoryDevice::wrap(&self.device.raw), 0, self.desc.size)
-            }?
-            .as_ptr() as *mut u8;
-
-            Ok(NonNull::new(ptr).unwrap())
-        } else {
-            Err(BackendError::MemoryNotAllocated)
-        }
-    }
-
-    pub fn unmap(&mut self) {
-        if let Some(allocation) = &mut self.allocation {
-            unsafe { allocation.unmap(AshMemoryDevice::wrap(&self.device.raw)) };
-        }
-    }
-}
-
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        self.device.with_drop_list(|droplist| {
-            droplist.drop_buffer(self.raw);
-            if let Some(allocation) = self.allocation.take() {
-                droplist.free_memory(allocation);
-            }
         })
     }
 }

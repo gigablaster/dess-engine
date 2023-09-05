@@ -17,7 +17,7 @@ use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use super::{BackendError, BackendResult, Instance, Surface};
+use super::{Instance, PhysicalDeviceError, Surface};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QueueFamily {
@@ -33,11 +33,11 @@ impl QueueFamily {
 
 #[derive(Clone)]
 pub struct PhysicalDevice {
-    pub(crate) raw: vk::PhysicalDevice,
-    pub queue_families: Vec<QueueFamily>,
-    pub properties: vk::PhysicalDeviceProperties,
-    pub memory_properties: vk::PhysicalDeviceMemoryProperties,
-    pub(crate) supported_extensions: HashSet<String>,
+    raw: vk::PhysicalDevice,
+    queue_families: Vec<QueueFamily>,
+    properties: vk::PhysicalDeviceProperties,
+    memory_properties: vk::PhysicalDeviceMemoryProperties,
+    supported_extensions: HashSet<String>,
 }
 
 impl PhysicalDevice {
@@ -47,15 +47,28 @@ impl PhysicalDevice {
             .any(|queue_family| queue_family.is_supported(flags))
     }
 
-    pub fn get_queue(&self, flags: vk::QueueFlags) -> BackendResult<QueueFamily> {
+    pub fn get_queue(&self, flags: vk::QueueFlags) -> Option<QueueFamily> {
         self.queue_families
             .iter()
             .filter(|x| x.is_supported(flags))
             .copied()
             .next()
-            .ok_or_else(|| {
-                BackendError::Other(format!("Can't find queue with {:?} support", flags))
-            })
+    }
+
+    pub fn raw(&self) -> vk::PhysicalDevice {
+        self.raw
+    }
+
+    pub fn is_extensions_sipported(&self, ext: &str) -> bool {
+        self.supported_extensions.contains(ext)
+    }
+
+    pub fn properties(&self) -> &vk::PhysicalDeviceProperties {
+        &self.properties
+    }
+
+    pub fn memory_properties(&self) -> &vk::PhysicalDeviceMemoryProperties {
+        &self.memory_properties
     }
 }
 
@@ -66,7 +79,7 @@ impl Debug for PhysicalDevice {
 }
 
 impl Instance {
-    pub fn enumerate_physical_devices(&self) -> BackendResult<Vec<PhysicalDevice>> {
+    pub fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, PhysicalDeviceError> {
         unsafe {
             Ok(self
                 .raw

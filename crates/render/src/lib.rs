@@ -13,19 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod descriptors;
-mod error;
-mod render;
-mod staging;
-
-use ash::vk;
-pub use descriptors::DescriptorHandle;
-pub use error::*;
-pub use render::*;
-pub use staging::*;
+mod vulkan;
 
 pub type Index = u16;
-
-pub type DescriptorAllocator =
-    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
-pub type DescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;

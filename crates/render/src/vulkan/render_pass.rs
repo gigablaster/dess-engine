@@ -15,10 +15,9 @@
 
 use std::{collections::HashMap, sync::Mutex};
 
+use super::{CreateError, GpuResource, Image, ImageViewDesc};
 use arrayvec::ArrayVec;
 use ash::vk;
-
-use super::{BackendResult, FreeGpuResource, Image, ImageViewDesc};
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -86,32 +85,36 @@ pub struct FboCacheKey {
 }
 
 impl FboCacheKey {
-    pub fn new(color_attachments: &[&Image], depth_attachment: Option<&Image>) -> Self {
+    pub fn new(
+        device: &ash::Device,
+        color_attachments: &[&Image],
+        depth_attachment: Option<&Image>,
+    ) -> Self {
         let dims = color_attachments
             .iter()
             .chain(depth_attachment.iter())
-            .map(|image| image.desc.extent)
+            .map(|image| image.desc().extent)
             .next();
         if let Some(dims) = dims {
             let attachments = color_attachments
                 .iter()
                 .map(|image| {
                     let desc = ImageViewDesc::default()
-                        .format(image.desc.format)
+                        .format(image.desc().format)
                         .view_type(vk::ImageViewType::TYPE_2D)
                         .level_count(1)
                         .base_mip_level(0)
                         .aspect_mask(vk::ImageAspectFlags::COLOR);
-                    image.get_or_create_view(desc).unwrap()
+                    image.get_or_create_view(device, desc).unwrap()
                 })
                 .chain(depth_attachment.iter().map(|image| {
                     let desc = ImageViewDesc::default()
-                        .format(image.desc.format)
+                        .format(image.desc().format)
                         .view_type(vk::ImageViewType::TYPE_2D)
                         .level_count(1)
                         .base_mip_level(0)
                         .aspect_mask(vk::ImageAspectFlags::DEPTH);
-                    image.get_or_create_view(desc).unwrap()
+                    image.get_or_create_view(device, desc).unwrap()
                 }))
                 .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
 
@@ -139,7 +142,7 @@ impl FboCache {
         &self,
         device: &ash::Device,
         key: FboCacheKey,
-    ) -> BackendResult<vk::Framebuffer> {
+    ) -> Result<vk::Framebuffer, CreateError> {
         let mut entries = self.entries.lock().unwrap();
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
@@ -154,7 +157,7 @@ impl FboCache {
         &self,
         device: &ash::Device,
         key: &FboCacheKey,
-    ) -> BackendResult<vk::Framebuffer> {
+    ) -> Result<vk::Framebuffer, CreateError> {
         let attachments = key
             .attachments
             .iter()
@@ -186,7 +189,7 @@ pub struct RenderPass {
 }
 
 impl RenderPass {
-    pub fn new(device: &ash::Device, layout: RenderPassLayout) -> BackendResult<Self> {
+    pub fn new(device: &ash::Device, layout: RenderPassLayout) -> Result<Self, CreateError> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -247,8 +250,8 @@ impl RenderPass {
     }
 }
 
-impl FreeGpuResource for RenderPass {
-    fn free(&self, device: &ash::Device) {
+impl GpuResource for RenderPass {
+    fn free(&mut self, device: &ash::Device) {
         self.clear_fbos(device);
         unsafe { device.destroy_render_pass(self.raw, None) };
     }

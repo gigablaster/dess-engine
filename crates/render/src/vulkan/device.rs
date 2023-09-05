@@ -30,11 +30,11 @@ use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
-use crate::{BackendError, GpuAllocator, Semaphore};
+use crate::vulkan::DeviceCreateError;
 
 use super::{
-    droplist::DropList, BackendResult, CommandBuffer, FrameContext, FreeGpuResource, Instance,
-    PhysicalDevice, QueueFamily,
+    droplist::DropList, CommandBuffer, FrameContext, GpuAllocator, GpuResource, Instance,
+    PhysicalDevice, QueueFamily, Semaphore, WaitError,
 };
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -72,10 +72,11 @@ impl<'a> SubmitWait<'a> {
 }
 
 pub struct Device {
+    raw: ash::Device,
     instance: Instance,
-    pub raw: ash::Device,
-    pub pdevice: PhysicalDevice,
-    pub universal_queue: Queue,
+    pdevice: PhysicalDevice,
+    queue: Mutex<Queue>,
+    queue_index: u32,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     frames: [Mutex<Arc<FrameContext>>; 2],
     current_drop_list: Mutex<DropList>,
@@ -83,32 +84,33 @@ pub struct Device {
     allocator: Mutex<GpuAllocator>,
 }
 
+unsafe impl Sync for Device {}
+
 impl Device {
-    pub fn create(instance: Instance, pdevice: PhysicalDevice) -> BackendResult<Arc<Self>> {
+    pub fn create(instance: Instance, pdevice: PhysicalDevice) -> Result<Self, DeviceCreateError> {
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER) {
-            return Err(BackendError::Other(
-                "Device doesn't support graphics and transfer queues".into(),
-            ));
+            return Err(DeviceCreateError::NoSuitableQueues);
         };
 
         let device_extension_names = vec![khr::Swapchain::name().as_ptr()];
 
         for ext in &device_extension_names {
             let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
-            if !pdevice.supported_extensions.contains(ext) {
-                return Err(BackendError::NoExtension(ext.into()));
+            if !pdevice.is_extensions_sipported(ext) {
+                return Err(DeviceCreateError::NoExtension(ext.into()));
             }
         }
 
-        let universal_queue =
-            pdevice.get_queue(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER)?;
+        let universal_queue = pdevice
+            .get_queue(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER)
+            .ok_or(DeviceCreateError::NoSuitableQueues)?;
 
         let mut features = vk::PhysicalDeviceFeatures2::builder().build();
 
         unsafe {
             instance
                 .raw
-                .get_physical_device_features2(pdevice.raw, &mut features)
+                .get_physical_device_features2(pdevice.raw(), &mut features)
         };
 
         let priorities = [1.0];
@@ -126,24 +128,14 @@ impl Device {
         let device = unsafe {
             instance
                 .raw
-                .create_device(pdevice.raw, &device_create_info, None)?
+                .create_device(pdevice.raw(), &device_create_info, None)?
         };
 
         info!("Created a Vulkan device");
 
         let frames = [
-            Mutex::new(Arc::new(FrameContext::new(
-                &instance,
-                &device,
-                &universal_queue,
-                "frame 1",
-            )?)),
-            Mutex::new(Arc::new(FrameContext::new(
-                &instance,
-                &device,
-                &universal_queue,
-                "frame 2",
-            )?)),
+            Mutex::new(Arc::new(FrameContext::new(&device, universal_queue.index)?)),
+            Mutex::new(Arc::new(FrameContext::new(&device, universal_queue.index)?)),
         ];
 
         let drop_lists = [
@@ -161,24 +153,25 @@ impl Device {
             initial_buddy_dedicated_size: 32 * 1024 * 1024,
         };
         let allocator_props =
-            unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
+            unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw()) }?;
         let allocator = GpuAllocator::new(allocator_config, allocator_props);
 
-        let universal_queue = Self::create_queue(&device, universal_queue);
+        let queue = Self::create_queue(&device, universal_queue);
 
-        Self::set_object_name_impl(&instance, &device, universal_queue.raw, "Main queue")?;
+        Self::set_object_name_impl(&instance, &device, queue.raw, "Main queue");
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             instance,
             pdevice,
-            universal_queue,
+            queue_index: queue.family.index,
+            queue: Mutex::new(queue),
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
             current_drop_list: Mutex::new(DropList::default()),
             drop_lists,
             allocator: Mutex::new(allocator),
-        }))
+        })
     }
 
     fn generate_samplers(device: &ash::Device) -> HashMap<SamplerDesc, vk::Sampler> {
@@ -234,7 +227,7 @@ impl Device {
         }
     }
 
-    pub fn begin_frame(&self) -> BackendResult<Arc<FrameContext>> {
+    pub fn begin_frame(&self) -> Result<Arc<FrameContext>, WaitError> {
         puffin::profile_scope!("begin frame");
         let mut frame0 = self.frames[0].lock().unwrap();
         {
@@ -252,15 +245,13 @@ impl Device {
                     .free(&self.raw, &mut self.allocator());
                 frame0.reset(&self.raw)?;
             } else {
-                return Err(BackendError::Other(
-                    "Unable to begin frame: frame data is being held by user code".into(),
-                ));
+                panic!("Unable to begin frame: frame data is being held by user code")
             }
         }
         Ok(frame0.clone())
     }
 
-    pub fn end_frame(&self, frame: Arc<FrameContext>) -> BackendResult<()> {
+    pub fn end_frame(&self, frame: Arc<FrameContext>) {
         drop(frame);
 
         let mut frame0 = self.frames[0].lock().unwrap();
@@ -274,11 +265,8 @@ impl Device {
                 &mut self.drop_lists[0].lock().unwrap(),
                 &mut self.drop_lists[1].lock().unwrap(),
             );
-            Ok(())
         } else {
-            Err(BackendError::Other(
-                "Unable to finish frame: frame data is being held by user code".into(),
-            ))
+            panic!("Unable to finish frame: frame data is being held by user code",)
         }
     }
 
@@ -287,7 +275,7 @@ impl Device {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> BackendResult<()> {
+    ) -> Result<(), WaitError> {
         let masks = wait
             .iter()
             .map(|x| x.get_stage_flags())
@@ -307,11 +295,8 @@ impl Device {
             self.raw
                 .wait_for_fences(slice::from_ref(&cb.fence), true, u64::MAX)?;
             self.raw.reset_fences(slice::from_ref(&cb.fence))?;
-            self.raw.queue_submit(
-                self.universal_queue.raw,
-                slice::from_ref(&submit_info),
-                cb.fence,
-            )?;
+            self.raw
+                .queue_submit(self.queue().raw, slice::from_ref(&submit_info), cb.fence)?;
         }
 
         Ok(())
@@ -325,17 +310,12 @@ impl Device {
         unsafe { self.raw.device_wait_idle().unwrap() };
     }
 
-    pub(crate) fn with_drop_list<F: FnOnce(&mut DropList)>(&self, cb: F) {
-        let mut list = self.current_drop_list.lock().unwrap();
-        cb(&mut list);
-    }
-
     pub fn get_sampler(&self, desc: SamplerDesc) -> Option<vk::Sampler> {
         self.samplers.get(&desc).copied()
     }
 
-    pub fn set_object_name<T: Handle>(&self, object: T, name: &str) -> BackendResult<()> {
-        Self::set_object_name_impl(&self.instance, &self.raw, object, name)
+    pub fn set_object_name<T: Handle>(&self, object: T, name: &str) {
+        Self::set_object_name_impl(&self.instance, &self.raw, object, name);
     }
 
     pub(crate) fn set_object_name_impl<T: Handle>(
@@ -343,7 +323,7 @@ impl Device {
         devcie: &ash::Device,
         object: T,
         name: &str,
-    ) -> BackendResult<()> {
+    ) {
         if let Some(debug_utils) = instance.get_debug_utils() {
             let name = CString::new(name).unwrap();
             let name_info = vk::DebugUtilsObjectNameInfoEXT::builder()
@@ -351,10 +331,9 @@ impl Device {
                 .object_handle(object.as_raw())
                 .object_name(&name)
                 .build();
-            unsafe { debug_utils.set_debug_utils_object_name(devcie.handle(), &name_info) }?;
+            unsafe { debug_utils.set_debug_utils_object_name(devcie.handle(), &name_info) }
+                .unwrap();
         }
-
-        Ok(())
     }
 
     pub fn scoped_label(&self, cb: vk::CommandBuffer, label: &str) -> ScopedCommandBufferLabel {
@@ -388,6 +367,22 @@ impl Device {
     pub fn allocator(&self) -> MutexGuard<GpuAllocator> {
         self.allocator.lock().unwrap()
     }
+
+    pub fn raw(&self) -> &ash::Device {
+        &self.raw
+    }
+
+    pub fn physical_device(&self) -> &PhysicalDevice {
+        &self.pdevice
+    }
+
+    pub fn queue_index(&self) -> u32 {
+        self.queue_index
+    }
+
+    pub fn queue(&self) -> MutexGuard<Queue> {
+        self.queue.lock().unwrap()
+    }
 }
 
 impl Drop for Device {
@@ -416,7 +411,6 @@ impl Debug for Device {
         f.write_str("Vulkan Device")
     }
 }
-
 pub struct ScopedCommandBufferLabel<'a> {
     device: &'a Device,
     cb: vk::CommandBuffer,

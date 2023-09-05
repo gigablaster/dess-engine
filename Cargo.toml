@@ -1,9 +1,7 @@
 [workspace]
 members=[
-    "crates/buffer-allocator",
     "crates/common",
     "crates/vfs",
-    "crates/render-backend",
     "crates/render",
     "tools/packer"
 ]

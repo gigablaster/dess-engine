@@ -4,18 +4,21 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-dess-render-backend = { path = "../render-backend" }
 dess-common = { path = "../common" }
-ash =  "0.37"
+ash =  "0.37.0"
 vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
-puffin = "0.16"
-raw-window-handle = "0.5"
-arrayvec = "0.7"
-gpu-descriptor = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
-gpu-descriptor-ash = { git = "https://git.sr.ht/~gigablaster/gpu-descriptor" }
-buffer-allocator = { path = "../buffer-allocator" }
-rayon = "1.7"
-log = "0.4"
+puffin = "0.16.0"
+ash-window = "0.12.0"
+raw-window-handle = "0.5.0"
+arrayvec = "0.7.0"
+rayon = "1.7.0"
+log = "0.4.0"
+gpu-alloc = "0.6.0"
+gpu-alloc-ash = "0.6.0"
+gpu-descriptor = "0.2.3"
+gpu-descriptor-ash = "0.2.0"
+rspirv-reflect = "0.8.0"
+byte-slice-cast = "1.2.2"
 
 [dev-dependencies]
 winit = "0.28"

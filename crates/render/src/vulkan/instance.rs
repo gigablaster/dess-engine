@@ -22,7 +22,7 @@ use ash::{
 use log::{info, log, Level};
 use raw_window_handle::RawDisplayHandle;
 
-use super::BackendResult;
+use super::InstanceCreateError;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,
@@ -54,7 +54,7 @@ impl InstanceBuilder {
         self
     }
 
-    pub fn build(self, display_handle: RawDisplayHandle) -> BackendResult<Instance> {
+    pub fn build(self, display_handle: RawDisplayHandle) -> Result<Instance, InstanceCreateError> {
         Instance::create(&self, display_handle)
     }
 }
@@ -67,19 +67,20 @@ impl Instance {
     fn generate_extension_names(
         builder: &InstanceBuilder,
         display_handle: RawDisplayHandle,
-    ) -> BackendResult<Vec<CString>> {
+    ) -> Vec<CString> {
         let mut names = Vec::new();
         if builder.debug {
             names.push(vk::ExtDebugUtilsFn::name().into());
         }
-        let window_extensions = ash_window::enumerate_required_extensions(display_handle)?
+        let window_extensions = ash_window::enumerate_required_extensions(display_handle)
+            .unwrap()
             .iter()
             .map(|x| unsafe { CStr::from_ptr(*x).into() })
             .collect::<Vec<_>>();
 
         names.extend_from_slice(&window_extensions);
 
-        Ok(names)
+        names
     }
 
     fn generate_layer_names(builder: &InstanceBuilder) -> Vec<CString> {
@@ -98,7 +99,10 @@ impl Instance {
         vk::make_api_version(0, 1, 1, 0)
     }
 
-    fn create(builder: &InstanceBuilder, display_handle: RawDisplayHandle) -> BackendResult<Self> {
+    fn create(
+        builder: &InstanceBuilder,
+        display_handle: RawDisplayHandle,
+    ) -> Result<Self, InstanceCreateError> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(builder);
@@ -107,7 +111,7 @@ impl Instance {
             .map(|name| name.as_ptr())
             .collect::<Vec<_>>();
 
-        let extensions = Self::generate_extension_names(builder, display_handle)?;
+        let extensions = Self::generate_extension_names(builder, display_handle);
         let extensions = extensions
             .iter()
             .map(|name| name.as_ptr())
@@ -140,8 +144,11 @@ impl Instance {
                 .pfn_user_callback(Some(Self::vk_debug))
                 .build();
             let debug_utils_loader = DebugUtils::new(&entry, &instance);
-            let debug_callback =
-                unsafe { debug_utils_loader.create_debug_utils_messenger(&debug_info, None)? };
+            let debug_callback = unsafe {
+                debug_utils_loader
+                    .create_debug_utils_messenger(&debug_info, None)
+                    .unwrap()
+            };
             (Some(debug_utils_loader), Some(debug_callback))
         } else {
             (None, None)

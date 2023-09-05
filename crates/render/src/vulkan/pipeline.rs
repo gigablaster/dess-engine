@@ -18,7 +18,6 @@ use std::{
     ffi::CString,
     mem::size_of,
     slice,
-    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
@@ -26,7 +25,7 @@ use ash::vk;
 use byte_slice_cast::AsSliceOf;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
-use super::{BackendError, BackendResult, Device, FreeGpuResource, RenderPass, SamplerDesc};
+use super::{CreateError, Device, GpuResource, RenderPass, SamplerDesc, ShaderCreateError};
 
 const MAX_SAMPLERS: usize = 16;
 
@@ -45,7 +44,7 @@ impl DescriptorSetInfo {
         device: &Device,
         stage: vk::ShaderStageFlags,
         set: &BTreeMap<u32, DescriptorInfo>,
-    ) -> BackendResult<Self> {
+    ) -> Result<Self, CreateError> {
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
         let mut bindings = HashMap::with_capacity(set.len());
         for (index, binding) in set.iter() {
@@ -99,7 +98,7 @@ impl DescriptorSetInfo {
             .build();
         let layout = unsafe {
             device
-                .raw
+                .raw()
                 .create_descriptor_set_layout(&layout_create_info, None)
         }?;
 
@@ -189,8 +188,8 @@ impl DescriptorSetInfo {
     }
 }
 
-impl FreeGpuResource for DescriptorSetInfo {
-    fn free(&self, device: &ash::Device) {
+impl GpuResource for DescriptorSetInfo {
+    fn free(&mut self, device: &ash::Device) {
         unsafe { device.destroy_descriptor_set_layout(self.layout, None) };
     }
 }
@@ -232,15 +231,12 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn new(device: &Arc<Device>, desc: ShaderDesc, name: Option<&str>) -> BackendResult<Self> {
+    pub fn new(device: ash::Device, desc: ShaderDesc) -> Result<Self, ShaderCreateError> {
         let shader_create_info = vk::ShaderModuleCreateInfo::builder()
             .code(desc.code.as_slice_of::<u32>().unwrap())
             .build();
 
-        let shader = unsafe { device.raw.create_shader_module(&shader_create_info, None) }?;
-        if let Some(name) = name {
-            device.set_object_name(shader, name)?;
-        }
+        let shader = unsafe { device.create_shader_module(&shader_create_info, None) }?;
         Ok(Self {
             stage: desc.stage,
             raw: shader,
@@ -251,8 +247,8 @@ impl Shader {
     }
 }
 
-impl FreeGpuResource for Shader {
-    fn free(&self, device: &ash::Device) {
+impl GpuResource for Shader {
+    fn free(&mut self, device: &ash::Device) {
         unsafe { device.destroy_shader_module(self.raw, None) }
     }
 }
@@ -318,7 +314,7 @@ impl<'a> PipelineDesc<'a> {
     }
 }
 
-pub fn create_pipeline_cache(device: &ash::Device) -> BackendResult<vk::PipelineCache> {
+pub fn create_pipeline_cache(device: &ash::Device) -> Result<vk::PipelineCache, CreateError> {
     let cache_create_info = vk::PipelineCacheCreateInfo::builder().build();
 
     let cache = unsafe { device.create_pipeline_cache(&cache_create_info, None) }?;
@@ -331,7 +327,7 @@ impl Pipeline {
         device: &Device,
         cache: &vk::PipelineCache,
         desc: PipelineDesc,
-    ) -> BackendResult<Self> {
+    ) -> Result<Self, CreateError> {
         let shader_create_info = desc
             .shaders
             .iter()
@@ -449,8 +445,11 @@ impl Pipeline {
             .set_layouts(&descriptor_layouts)
             .build();
 
-        let pipeline_layout =
-            unsafe { device.raw.create_pipeline_layout(&layout_create_info, None) }?;
+        let pipeline_layout = unsafe {
+            device
+                .raw()
+                .create_pipeline_layout(&layout_create_info, None)
+        }?;
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
             .render_pass(desc.render_pass.raw)
@@ -468,13 +467,13 @@ impl Pipeline {
             .build();
 
         let pipeline = unsafe {
-            device.raw.create_graphics_pipelines(
+            device.raw().create_graphics_pipelines(
                 *cache,
                 slice::from_ref(&pipeline_create_info),
                 None,
             )
         }
-        .map_err(|_| BackendError::Other("Shit happened".into()))?[0];
+        .map_err(|(_, error)| CreateError::from(error))?[0];
 
         Ok(Self {
             pipeline_layout,
@@ -487,7 +486,7 @@ impl Pipeline {
         device: &Device,
         stages: vk::ShaderStageFlags,
         shaders: &[&Shader],
-    ) -> BackendResult<Vec<DescriptorSetInfo>> {
+    ) -> Result<Vec<DescriptorSetInfo>, CreateError> {
         let sets = shaders
             .iter()
             .map(|shader| shader.descriptor_sets.clone())
@@ -560,8 +559,8 @@ impl Pipeline {
     }
 }
 
-impl FreeGpuResource for Pipeline {
-    fn free(&self, device: &ash::Device) {
+impl GpuResource for Pipeline {
+    fn free(&mut self, device: &ash::Device) {
         self.sets
             .iter()
             .for_each(|set| unsafe { device.destroy_descriptor_set_layout(set.layout, None) });

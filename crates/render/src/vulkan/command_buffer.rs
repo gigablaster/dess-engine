@@ -20,23 +20,81 @@ use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier};
 
 use super::{
-    BackendResult, FboCacheKey, FreeGpuResource, Image, Pipeline, RenderPass, MAX_ATTACHMENTS,
-    MAX_COLOR_ATTACHMENTS,
+    CreateError, FboCacheKey, GpuResource, Image, Pipeline, RenderPass, ResetError, WaitError,
+    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
+pub struct CommandPool {
+    pool: vk::CommandPool,
+    free_cbs: Vec<CommandBuffer>,
+    processing_cbs: Vec<CommandBuffer>,
+}
+
+impl CommandPool {
+    pub fn new(
+        device: &ash::Device,
+        query: u32,
+        flags: vk::CommandPoolCreateFlags,
+    ) -> Result<Self, CreateError> {
+        let command_pool_info = vk::CommandPoolCreateInfo::builder()
+            .queue_family_index(query)
+            .flags(flags)
+            .build();
+        let pool = unsafe { device.create_command_pool(&command_pool_info, None) }?;
+
+        Ok(Self {
+            pool,
+            free_cbs: Vec::new(),
+            processing_cbs: Vec::new(),
+        })
+    }
+    pub fn get_or_create(&mut self, device: &ash::Device) -> Result<CommandBuffer, CreateError> {
+        if let Some(cb) = self.free_cbs.pop() {
+            Ok(cb)
+        } else {
+            Ok(CommandBuffer::new(device, self.pool)?)
+        }
+    }
+
+    pub fn retire(&mut self, cb: CommandBuffer) {
+        assert_eq!(
+            self.pool, cb.pool,
+            "Command buffer wasn't created from same pool"
+        );
+        self.processing_cbs.push(cb);
+    }
+
+    pub fn reset(&self, device: &ash::Device) -> Result<(), ResetError> {
+        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
+
+        Ok(())
+    }
+
+    pub fn recycle(&mut self) {
+        self.free_cbs.append(&mut self.processing_cbs);
+    }
+}
+
+impl GpuResource for CommandPool {
+    fn free(&mut self, device: &ash::Device) {
+        self.recycle();
+        self.reset(device).unwrap();
+        self.free_cbs.iter_mut().for_each(|cb| {
+            cb.free(device);
+        });
+        unsafe { device.destroy_command_pool(self.pool, None) };
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub struct CommandBuffer {
-    pub pool: vk::CommandPool,
-    pub raw: vk::CommandBuffer,
-    pub fence: vk::Fence,
+    pub(self) pool: vk::CommandPool,
+    pub(crate) raw: vk::CommandBuffer,
+    pub(crate) fence: vk::Fence,
 }
 
 impl CommandBuffer {
-    pub fn new(device: &ash::Device, queue_family_index: u32) -> BackendResult<Self> {
-        let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(queue_family_index)
-            .build();
-        let pool = unsafe { device.create_command_pool(&command_pool_create_info, None) }?;
-
+    pub(crate) fn new(device: &ash::Device, pool: vk::CommandPool) -> Result<Self, CreateError> {
         let command_buffer_allocation_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .command_pool(pool)
@@ -53,38 +111,37 @@ impl CommandBuffer {
         let fence = unsafe { device.create_fence(&fence_create_info, None)? };
 
         Ok(Self {
+            pool,
             raw: command_buffer,
             fence,
-            pool,
         })
+    }
+
+    pub fn wait(&self, device: &ash::Device) -> Result<(), WaitError> {
+        unsafe { device.wait_for_fences(slice::from_ref(&self.fence), true, u64::MAX) }?;
+        Ok(())
+    }
+
+    pub fn reset(&self, device: &ash::Device) -> Result<(), ResetError> {
+        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
+        Ok(())
     }
 
     pub fn record<F: FnOnce(CommandBufferRecorder)>(
         &self,
         device: &ash::Device,
         cb: F,
-    ) -> BackendResult<()> {
+    ) -> Result<(), CreateError> {
         let recorder = CommandBufferRecorder::new(device, &self.raw)?;
         cb(recorder);
 
         Ok(())
     }
-
-    pub fn wait(&self, device: &ash::Device) -> BackendResult<()> {
-        unsafe { device.wait_for_fences(slice::from_ref(&self.fence), true, u64::MAX) }?;
-        Ok(())
-    }
-
-    pub fn reset(&self, device: &ash::Device) -> BackendResult<()> {
-        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
-        Ok(())
-    }
 }
 
-impl FreeGpuResource for CommandBuffer {
-    fn free(&self, device: &ash::Device) {
+impl GpuResource for CommandBuffer {
+    fn free(&mut self, device: &ash::Device) {
         unsafe {
-            device.free_command_buffers(self.pool, slice::from_ref(&self.raw));
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
         }
@@ -108,7 +165,10 @@ pub struct CommandBufferRecorder<'a> {
 }
 
 impl<'a> CommandBufferRecorder<'a> {
-    pub(self) fn new(device: &'a ash::Device, cb: &'a vk::CommandBuffer) -> BackendResult<Self> {
+    pub(self) fn new(
+        device: &'a ash::Device,
+        cb: &'a vk::CommandBuffer,
+    ) -> Result<Self, CreateError> {
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
             .build();
@@ -118,6 +178,7 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn render_pass<F: FnOnce(RenderPassRecorder)>(
         &self,
+        device: &ash::Device,
         render_pass: &RenderPass,
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<RenderPassAttachment>,
@@ -136,11 +197,11 @@ impl<'a> CommandBufferRecorder<'a> {
             .iter()
             .map(|attachment| attachment.image)
             .next();
-        let key = FboCacheKey::new(&color_attachments, depth_attachment);
+        let key = FboCacheKey::new(device, &color_attachments, depth_attachment);
         let dims = color_attachments
             .iter()
             .chain(depth_attachment.iter())
-            .map(|image| image.desc.extent)
+            .map(|image| image.desc().extent)
             .next();
         if let Some(dims) = dims {
             let framebuffer = render_pass
@@ -270,7 +331,7 @@ pub struct Semaphore {
 }
 
 impl Semaphore {
-    pub fn new(device: &ash::Device) -> BackendResult<Semaphore> {
+    pub fn new(device: &ash::Device) -> Result<Semaphore, CreateError> {
         let info = vk::SemaphoreCreateInfo::builder().build();
         Ok(Semaphore {
             raw: unsafe { device.create_semaphore(&info, None) }?,
@@ -278,8 +339,8 @@ impl Semaphore {
     }
 }
 
-impl FreeGpuResource for Semaphore {
-    fn free(&self, device: &ash::Device) {
+impl GpuResource for Semaphore {
+    fn free(&mut self, device: &ash::Device) {
         unsafe { device.destroy_semaphore(self.raw, None) };
     }
 }
