@@ -45,7 +45,3 @@ pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
 pub type DescriptorAllocator =
     gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
 pub type DescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
-
-pub(crate) trait GpuResource {
-    fn free(&mut self, device: &ash::Device);
-}

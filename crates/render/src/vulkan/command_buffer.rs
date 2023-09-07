@@ -19,9 +19,11 @@ use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier};
 
+use crate::GpuResource;
+
 use super::{
-    Buffer, CreateError, FboCacheKey, GpuResource, Image, Pipeline, RenderPass, ResetError,
-    WaitError, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    CreateError, FboCacheKey, Image, RenderPass, ResetError, WaitError, MAX_ATTACHMENTS,
+    MAX_COLOR_ATTACHMENTS,
 };
 
 pub(crate) struct CommandPool {
@@ -76,11 +78,9 @@ impl CommandPool {
 }
 
 impl GpuResource for CommandPool {
-    fn free(&mut self, device: &ash::Device) {
-        self.recycle();
-        self.free_cbs.iter_mut().for_each(|cb| {
-            cb.free(device);
-        });
+    fn free(&self, device: &ash::Device) {
+        self.free_cbs.iter().for_each(|cb| cb.free(device));
+        self.processing_cbs.iter().for_each(|cb| cb.free(device));
         unsafe { device.destroy_command_pool(self.pool, None) };
     }
 }
@@ -147,7 +147,7 @@ impl CommandBuffer {
 }
 
 impl GpuResource for CommandBuffer {
-    fn free(&mut self, device: &ash::Device) {
+    fn free(&self, device: &ash::Device) {
         unsafe {
             device.free_command_buffers(self.pool, &[self.raw]);
             device.destroy_fence(self.fence, None);
@@ -340,7 +340,7 @@ impl Semaphore {
 }
 
 impl GpuResource for Semaphore {
-    fn free(&mut self, device: &ash::Device) {
+    fn free(&self, device: &ash::Device) {
         unsafe { device.destroy_semaphore(self.raw, None) };
     }
 }

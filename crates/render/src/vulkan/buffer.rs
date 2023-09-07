@@ -139,7 +139,7 @@ impl Buffer {
         }))
     }
 
-    pub fn map_buffer(&mut self) -> Result<NonNull<u8>, MapError> {
+    pub fn map(&mut self) -> Result<NonNull<u8>, MapError> {
         if let Some(allocation) = &mut self.allocation {
             let ptr = unsafe {
                 allocation.map(AshMemoryDevice::wrap(self.device.raw()), 0, self.desc.size)
@@ -152,7 +152,7 @@ impl Buffer {
         }
     }
 
-    pub fn unmap_buffer(&mut self) {
+    pub fn unmap(&mut self) {
         if let Some(allocation) = &mut self.allocation {
             unsafe { allocation.unmap(AshMemoryDevice::wrap(self.device.raw())) };
         }

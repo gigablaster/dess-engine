@@ -21,7 +21,9 @@ use std::{
 
 use ash::vk;
 
-use super::{CommandBuffer, CommandPool, CreateError, GpuResource, ResetError, Semaphore};
+use crate::GpuResource;
+
+use super::{CommandBuffer, CommandPool, CreateError, ResetError, Semaphore};
 
 pub struct FrameContext {
     pub(crate) main_cb: CommandBuffer,
@@ -105,7 +107,7 @@ impl<'a> Drop for CommandBufferGuard<'a> {
 }
 
 impl GpuResource for FrameContext {
-    fn free(&mut self, device: &ash::Device) {
+    fn free(&self, device: &ash::Device) {
         self.render_finished.free(device);
         let mut pools = self.command_pools.lock().unwrap();
         pools.iter_mut().for_each(|(_, pool)| pool.free(device));

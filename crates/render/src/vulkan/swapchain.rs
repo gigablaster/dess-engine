@@ -22,11 +22,12 @@ use ash::{
 use log::info;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
-use crate::vulkan::{ImageDesc, ImageType};
-
-use super::{
-    AcquireError, CreateError, Device, GpuResource, Image, Instance, Semaphore, SwapchainError,
+use crate::{
+    vulkan::{ImageDesc, ImageType},
+    GpuResource,
 };
+
+use super::{AcquireError, CreateError, Device, Image, Instance, Semaphore, SwapchainError};
 
 pub struct Surface {
     _instance: Arc<Instance>,

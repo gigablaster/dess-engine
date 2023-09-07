@@ -26,7 +26,9 @@ use ash::vk;
 use byte_slice_cast::AsSliceOf;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
-use super::{CreateError, Device, GpuResource, RenderPass, SamplerDesc, ShaderCreateError};
+use crate::GpuResource;
+
+use super::{CreateError, Device, RenderPass, SamplerDesc, ShaderCreateError};
 
 const MAX_SAMPLERS: usize = 16;
 
@@ -190,7 +192,7 @@ impl DescriptorSetInfo {
 }
 
 impl GpuResource for DescriptorSetInfo {
-    fn free(&mut self, device: &ash::Device) {
+    fn free(&self, device: &ash::Device) {
         unsafe { device.destroy_descriptor_set_layout(self.layout, None) };
     }
 }
@@ -249,7 +251,7 @@ impl Shader {
 }
 
 impl GpuResource for Shader {
-    fn free(&mut self, device: &ash::Device) {
+    fn free(&self, device: &ash::Device) {
         unsafe { device.destroy_shader_module(self.raw, None) }
     }
 }

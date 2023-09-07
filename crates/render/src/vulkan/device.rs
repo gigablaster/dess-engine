@@ -30,11 +30,11 @@ use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use log::info;
 
-use crate::vulkan::DeviceCreateError;
+use crate::{vulkan::DeviceCreateError, GpuResource};
 
 use super::{
-    droplist::DropList, CommandBuffer, FrameContext, GpuAllocator, GpuResource, Instance,
-    PhysicalDevice, QueueFamily, Semaphore, WaitError,
+    droplist::DropList, CommandBuffer, FrameContext, GpuAllocator, Instance, PhysicalDevice,
+    QueueFamily, Semaphore, WaitError,
 };
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
