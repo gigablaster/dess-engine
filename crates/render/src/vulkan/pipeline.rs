@@ -452,7 +452,7 @@ impl Pipeline {
         }?;
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .render_pass(desc.render_pass.raw)
+            .render_pass(desc.render_pass.raw())
             .layout(pipeline_layout)
             .stages(&shader_create_info)
             .subpass(desc.subpass)

@@ -13,9 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
-use super::{CreateError, GpuResource, Image, ImageViewDesc};
+use super::{CreateError, Device, Image, ImageViewDesc};
 use arrayvec::ArrayVec;
 use ash::vk;
 
@@ -184,12 +187,13 @@ impl FboCache {
 }
 
 pub struct RenderPass {
-    pub raw: vk::RenderPass,
-    pub(crate) fbo_cache: FboCache,
+    device: Arc<Device>,
+    raw: vk::RenderPass,
+    fbo_cache: FboCache,
 }
 
 impl RenderPass {
-    pub fn new(device: &ash::Device, layout: RenderPassLayout) -> Result<Self, CreateError> {
+    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> Result<Self, CreateError> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -237,22 +241,31 @@ impl RenderPass {
             .subpasses(&subpasses)
             .build();
 
-        let render_pass = unsafe { device.create_render_pass(&render_pass_info, None) }?;
+        let render_pass = unsafe { device.raw().create_render_pass(&render_pass_info, None) }?;
 
         Ok(Self {
+            device: device.clone(),
             raw: render_pass,
             fbo_cache: FboCache::new(render_pass),
         })
     }
 
-    pub fn clear_fbos(&self, device: &ash::Device) {
-        self.fbo_cache.clear(device);
+    pub fn clear_fbos(&self) {
+        self.fbo_cache.clear(self.device.raw());
+    }
+
+    pub fn raw(&self) -> vk::RenderPass {
+        self.raw
+    }
+
+    pub fn get_or_create_fbo(&self, key: FboCacheKey) -> Result<vk::Framebuffer, CreateError> {
+        self.fbo_cache.get_or_create(self.device.raw(), key)
     }
 }
 
-impl GpuResource for RenderPass {
-    fn free(&mut self, device: &ash::Device) {
-        self.clear_fbos(device);
-        unsafe { device.destroy_render_pass(self.raw, None) };
+impl Drop for RenderPass {
+    fn drop(&mut self) {
+        self.clear_fbos();
+        unsafe { self.device.raw().destroy_render_pass(self.raw, None) };
     }
 }

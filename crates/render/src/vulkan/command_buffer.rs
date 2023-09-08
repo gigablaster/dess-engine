@@ -190,7 +190,7 @@ impl<'a> CommandBufferRecorder<'a> {
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<RenderPassAttachment>,
         cb: F,
-    ) {
+    ) -> Result<(), CreateError> {
         let clear_values = color_attachments
             .iter()
             .chain(depth_attachment.iter())
@@ -211,13 +211,10 @@ impl<'a> CommandBufferRecorder<'a> {
             .map(|image| image.desc().extent)
             .next();
         if let Some(dims) = dims {
-            let framebuffer = render_pass
-                .fbo_cache
-                .get_or_create(self.device, key)
-                .unwrap();
+            let framebuffer = render_pass.get_or_create_fbo(key)?;
 
             let begin_pass_info = vk::RenderPassBeginInfo::builder()
-                .render_pass(render_pass.raw)
+                .render_pass(render_pass.raw())
                 .framebuffer(framebuffer)
                 .clear_values(&clear_values)
                 .render_area(vk::Rect2D {
@@ -241,6 +238,8 @@ impl<'a> CommandBufferRecorder<'a> {
                 device: self.device,
                 cb: self.cb,
             });
+
+            Ok(())
         } else {
             panic!("Can't start render pass without attachments");
         }
