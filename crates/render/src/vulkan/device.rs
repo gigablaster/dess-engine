@@ -56,14 +56,14 @@ pub enum SubmitWait<'a> {
 }
 
 impl<'a> SubmitWait<'a> {
-    pub fn get_stage_flags(&self) -> vk::PipelineStageFlags {
+    pub fn stage_flags(&self) -> vk::PipelineStageFlags {
         match self {
             SubmitWait::ColorAttachmentOutput(_) => vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
             SubmitWait::Transfer(_) => vk::PipelineStageFlags::TRANSFER,
         }
     }
 
-    pub fn get_semahore(&self) -> vk::Semaphore {
+    pub fn semahore(&self) -> vk::Semaphore {
         match self {
             SubmitWait::ColorAttachmentOutput(semaphore) => semaphore.raw,
             SubmitWait::Transfer(semaphore) => semaphore.raw,
@@ -281,11 +281,11 @@ impl Device {
     ) -> Result<(), WaitError> {
         let masks = wait
             .iter()
-            .map(|x| x.get_stage_flags())
+            .map(|x| x.stage_flags())
             .collect::<ArrayVec<_, 8>>();
         let wait = wait
             .iter()
-            .map(|x| x.get_semahore())
+            .map(|x| x.semahore())
             .collect::<ArrayVec<_, 8>>();
         let trigger = trigger.iter().map(|x| x.raw).collect::<ArrayVec<_, 8>>();
         let submit_info = vk::SubmitInfo::builder()
