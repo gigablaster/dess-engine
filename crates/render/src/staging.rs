@@ -455,7 +455,7 @@ impl Drop for Staging {
         self.tranfser_cbs
             .drain(..)
             .for_each(|cb| self.pool.retire(cb));
-        self.pool.free(&self.device.raw());
+        self.pool.free(self.device.raw());
         self.semaphores
             .iter()
             .for_each(|semaphore| semaphore.free(&self.device.raw()));
