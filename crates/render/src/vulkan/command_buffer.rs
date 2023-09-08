@@ -78,7 +78,6 @@ impl CommandPool {
 impl GpuResource for CommandPool {
     fn free(&mut self, device: &ash::Device) {
         self.recycle();
-        self.reset(device).unwrap();
         self.free_cbs.iter_mut().for_each(|cb| {
             cb.free(device);
         });
@@ -89,8 +88,8 @@ impl GpuResource for CommandPool {
 #[derive(Debug, Clone, Copy)]
 pub struct CommandBuffer {
     pub(self) pool: vk::CommandPool,
-    pub(crate) raw: vk::CommandBuffer,
-    pub(crate) fence: vk::Fence,
+    pub raw: vk::CommandBuffer,
+    fence: vk::Fence,
 }
 
 impl CommandBuffer {
@@ -137,12 +136,20 @@ impl CommandBuffer {
 
         Ok(())
     }
+
+    pub fn raw(&self) -> vk::CommandBuffer {
+        self.raw
+    }
+
+    pub fn fence(&self) -> vk::Fence {
+        self.fence
+    }
 }
 
 impl GpuResource for CommandBuffer {
     fn free(&mut self, device: &ash::Device) {
         unsafe {
-            device.destroy_command_pool(self.pool, None);
+            device.free_command_buffers(self.pool, &[self.raw]);
             device.destroy_fence(self.fence, None);
         }
     }

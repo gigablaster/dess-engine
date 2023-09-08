@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::slice;
+use std::{slice, sync::Arc};
 
 use ash::{
     extensions::khr,
@@ -29,13 +29,14 @@ use super::{
 };
 
 pub struct Surface {
+    _instance: Arc<Instance>,
     pub(crate) raw: vk::SurfaceKHR,
     pub(crate) loader: khr::Surface,
 }
 
 impl Surface {
     pub fn create(
-        instance: &Instance,
+        instance: &Arc<Instance>,
         display_handle: RawDisplayHandle,
         window_handle: RawWindowHandle,
     ) -> Result<Self, CreateError> {
@@ -51,6 +52,7 @@ impl Surface {
         let loader = khr::Surface::new(&instance.entry, &instance.raw);
 
         Ok(Self {
+            _instance: instance.clone(),
             raw: surface,
             loader,
         })
@@ -240,6 +242,7 @@ impl SwapchainInner {
 }
 
 pub struct Swapchain {
+    device: Arc<Device>,
     surface: Surface,
     inner: SwapchainInner,
 }
@@ -253,11 +256,12 @@ pub struct SwapchainImage<'a> {
 
 impl Swapchain {
     pub fn new(
-        device: &Device,
+        device: &Arc<Device>,
         surface: Surface,
         resolution: [u32; 2],
     ) -> Result<Self, SwapchainError> {
         Ok(Self {
+            device: device.clone(),
             inner: SwapchainInner::new(device, &surface, resolution)?,
             surface,
         })
@@ -336,8 +340,8 @@ impl Swapchain {
     }
 }
 
-impl GpuResource for Swapchain {
-    fn free(&mut self, device: &ash::Device) {
-        self.inner.cleanup(device);
+impl Drop for Swapchain {
+    fn drop(&mut self) {
+        self.inner.cleanup(self.device.raw());
     }
 }

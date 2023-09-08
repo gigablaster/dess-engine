@@ -73,7 +73,7 @@ impl<'a> SubmitWait<'a> {
 
 pub struct Device {
     raw: ash::Device,
-    instance: Instance,
+    instance: Arc<Instance>,
     pdevice: PhysicalDevice,
     queue: Mutex<Queue>,
     queue_index: u32,
@@ -87,7 +87,10 @@ pub struct Device {
 unsafe impl Sync for Device {}
 
 impl Device {
-    pub fn create(instance: Instance, pdevice: PhysicalDevice) -> Result<Self, DeviceCreateError> {
+    pub fn create(
+        instance: &Arc<Instance>,
+        pdevice: PhysicalDevice,
+    ) -> Result<Arc<Self>, DeviceCreateError> {
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER) {
             return Err(DeviceCreateError::NoSuitableQueues);
         };
@@ -160,8 +163,8 @@ impl Device {
 
         Self::set_object_name_impl(&instance, &device, queue.raw, "Main queue");
 
-        Ok(Self {
-            instance,
+        Ok(Arc::new(Self {
+            instance: instance.clone(),
             pdevice,
             queue_index: queue.family.index,
             queue: Mutex::new(queue),
@@ -171,7 +174,7 @@ impl Device {
             current_drop_list: Mutex::new(DropList::default()),
             drop_lists,
             allocator: Mutex::new(allocator),
-        })
+        }))
     }
 
     fn generate_samplers(device: &ash::Device) -> HashMap<SamplerDesc, vk::Sampler> {
@@ -234,7 +237,7 @@ impl Device {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
                 unsafe {
                     self.raw.wait_for_fences(
-                        &[frame0.presentation_cb.fence, frame0.main_cb.fence],
+                        &[frame0.presentation_cb.fence(), frame0.main_cb.fence()],
                         true,
                         u64::MAX,
                     )
@@ -293,10 +296,10 @@ impl Device {
             .build();
         unsafe {
             self.raw
-                .wait_for_fences(slice::from_ref(&cb.fence), true, u64::MAX)?;
-            self.raw.reset_fences(slice::from_ref(&cb.fence))?;
+                .wait_for_fences(slice::from_ref(&cb.fence()), true, u64::MAX)?;
+            self.raw.reset_fences(slice::from_ref(&cb.fence()))?;
             self.raw
-                .queue_submit(self.queue().raw, slice::from_ref(&submit_info), cb.fence)?;
+                .queue_submit(self.queue().raw, slice::from_ref(&submit_info), cb.fence())?;
         }
 
         Ok(())

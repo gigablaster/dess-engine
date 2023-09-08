@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::ffi::{c_void, CStr, CString};
+use std::{
+    ffi::{c_void, CStr, CString},
+    sync::Arc,
+};
 
 use ash::{
     extensions::ext::DebugUtils,
@@ -54,7 +57,10 @@ impl InstanceBuilder {
         self
     }
 
-    pub fn build(self, display_handle: RawDisplayHandle) -> Result<Instance, InstanceCreateError> {
+    pub fn build(
+        self,
+        display_handle: RawDisplayHandle,
+    ) -> Result<Arc<Instance>, InstanceCreateError> {
         Instance::create(&self, display_handle)
     }
 }
@@ -102,7 +108,7 @@ impl Instance {
     fn create(
         builder: &InstanceBuilder,
         display_handle: RawDisplayHandle,
-    ) -> Result<Self, InstanceCreateError> {
+    ) -> Result<Arc<Self>, InstanceCreateError> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(builder);
@@ -154,12 +160,12 @@ impl Instance {
             (None, None)
         };
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             entry,
             raw: instance,
             debug_utils,
             debug_messenger,
-        })
+        }))
     }
 
     pub(crate) fn get_debug_utils(&self) -> Option<&DebugUtils> {
