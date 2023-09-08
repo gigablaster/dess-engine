@@ -5,14 +5,14 @@ edition = "2021"
 
 [dependencies]
 dess-common = { path = "../common" }
-ash =  "0.37.0"
+ash =  "0.37.3+1.3.251"
 vk-sync = { git = "https://git.sr.ht/~gigablaster/vk-sync-rs" }
 puffin = "0.16.0"
 ash-window = "0.12.0"
-raw-window-handle = "0.5.0"
-arrayvec = "0.7.0"
+raw-window-handle = "0.5.2"
+arrayvec = "0.7.4"
 rayon = "1.7.0"
-log = "0.4.0"
+log = "0.4.20"
 gpu-alloc = "0.6.0"
 gpu-alloc-ash = "0.6.0"
 gpu-descriptor = "0.2.3"
@@ -21,8 +21,8 @@ rspirv-reflect = "0.8.0"
 byte-slice-cast = "1.2.2"
 
 [dev-dependencies]
-winit = "0.28"
-simple_logger = "4.1"
+winit = "0.28.6"
+simple_logger = "4.2.0"
 dess-vfs = { path = "../vfs" }
-glam = "0.24"
-image = "0.24"
+glam = "0.24.1"
+image = "0.24.7"

@@ -292,7 +292,7 @@ impl Device {
             .wait_dst_stage_mask(&masks)
             .wait_semaphores(&wait)
             .signal_semaphores(&trigger)
-            .command_buffers(slice::from_ref(&cb.raw))
+            .command_buffers(slice::from_ref(&cb.raw()))
             .build();
         unsafe {
             self.raw
@@ -385,6 +385,11 @@ impl Device {
 
     pub fn queue(&self) -> MutexGuard<Queue> {
         self.queue.lock().unwrap()
+    }
+
+    pub fn with_drop_list<F: FnOnce(&mut DropList)>(&self, cb: F) {
+        let mut drop_list = self.current_drop_list.lock().unwrap();
+        cb(&mut drop_list);
     }
 }
 

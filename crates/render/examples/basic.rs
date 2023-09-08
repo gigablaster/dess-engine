@@ -1,7 +1,5 @@
 use ash::vk;
-use dess_render::vulkan::{
-    Device, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
-};
+use dess_render::vulkan::{Device, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::WindowBuilder};

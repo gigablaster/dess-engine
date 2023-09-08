@@ -77,7 +77,7 @@ struct SwapchainInner {
 
 impl SwapchainInner {
     pub fn new(
-        device: &Device,
+        device: &Arc<Device>,
         surface: &Surface,
         resolution: [u32; 2],
     ) -> Result<Self, SwapchainError> {
@@ -162,6 +162,7 @@ impl SwapchainInner {
             .iter()
             .map(|image| {
                 Image::external(
+                    device,
                     *image,
                     ImageDesc {
                         image_type: ImageType::Tex2D,
@@ -227,16 +228,16 @@ impl SwapchainInner {
         prefered.into_iter().find(|format| formats.contains(format))
     }
 
-    pub fn cleanup(&mut self, device: &ash::Device) {
+    pub fn cleanup(&mut self, device: &Device) {
         unsafe { self.loader.destroy_swapchain(self.raw, None) };
         for semaphore in &mut self.acquire_semaphore {
-            semaphore.free(device)
+            semaphore.free(device.raw())
         }
         for semaphore in &mut self.rendering_finished_semaphore {
-            semaphore.free(device)
+            semaphore.free(device.raw())
         }
         for image in self.images.iter() {
-            image.destroy_all_views(device);
+            image.destroy_all_views();
         }
     }
 }
@@ -308,18 +309,18 @@ impl Swapchain {
         } {
             Ok(_) => (),
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
-            _err => panic!("Can't present image by some reasons"),
+            Err(err) => panic!("Can't present image: {}", err),
         }
     }
 
     pub fn recreate(
         &mut self,
-        device: &Device,
+        device: &Arc<Device>,
         resolution: [u32; 2],
     ) -> Result<(), SwapchainError> {
         device.wait();
         info!("Recreate swapchain");
-        self.inner.cleanup(device.raw());
+        self.inner.cleanup(device);
         self.inner = SwapchainInner::new(device, &self.surface, resolution)?;
 
         Ok(())
@@ -342,6 +343,6 @@ impl Swapchain {
 
 impl Drop for Swapchain {
     fn drop(&mut self) {
-        self.inner.cleanup(self.device.raw());
+        self.inner.cleanup(&self.device);
     }
 }

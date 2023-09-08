@@ -16,9 +16,12 @@
 use ash::vk;
 use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
-use std::{collections::HashMap, sync::Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
-use super::{droplist::DropList, Device, ResourceCreateError, Retire};
+use super::{CreateError, Device, ResourceCreateError};
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ImageType {
@@ -132,18 +135,86 @@ pub enum SubImage {
 /// Хранит вулкановское изображение, описание, выделенную память и все ассоциированные виды.
 #[derive(Debug)]
 pub struct Image {
+    device: Arc<Device>,
     raw: vk::Image,
     desc: ImageDesc,
     allocation: Option<MemoryBlock<vk::DeviceMemory>>,
     views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
+unsafe impl Send for Image {}
+
 impl Image {
-    /// Создаёт изображение для внешнего вылканоского изображения.
-    ///
-    /// Не выделяет память и не контролирует время жизни.
-    pub fn external(image: vk::Image, image_desc: ImageDesc) -> Self {
+    pub fn texture(
+        device: &Arc<Device>,
+        desc: ImageDesc,
+        name: Option<&str>,
+    ) -> Result<Arc<Self>, ResourceCreateError> {
+        let image = unsafe { device.raw().create_image(&desc.build(), None) }?;
+        if let Some(name) = name {
+            device.set_object_name(image, name);
+        }
+        let requirement = unsafe { device.raw().get_image_memory_requirements(image) };
+        let allocation = unsafe {
+            device.allocator().alloc(
+                AshMemoryDevice::wrap(device.raw()),
+                Request {
+                    size: requirement.size,
+                    align_mask: requirement.alignment,
+                    memory_types: requirement.memory_type_bits,
+                    usage: UsageFlags::FAST_DEVICE_ACCESS,
+                },
+            )
+        }?;
+        unsafe {
+            device
+                .raw()
+                .bind_image_memory(image, *allocation.memory(), allocation.offset())
+        }?;
+
+        Ok(Arc::new(Self {
+            device: device.clone(),
+            raw: image,
+            desc,
+            views: Default::default(),
+            allocation: Some(allocation),
+        }))
+    }
+
+    pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, CreateError> {
+        let mut views = self.views.lock().unwrap();
+        if let Some(view) = views.get(&desc) {
+            Ok(*view)
+        } else {
+            if self.desc.format == vk::Format::D32_SFLOAT
+                && !desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
+            {
+                panic!("Depth-only resource used without vk::ImageAspectFlags::DEPTH flag");
+            }
+            let create_info = vk::ImageViewCreateInfo {
+                image: self.raw,
+                ..desc.build(self)
+            };
+
+            let view = unsafe { self.device.raw().create_image_view(&create_info, None) }?;
+
+            views.insert(desc, view);
+
+            Ok(view)
+        }
+    }
+
+    pub(crate) fn destroy_all_views(&self) {
+        let mut views = self.views.lock().unwrap();
+        views.iter().for_each(|(_, view)| {
+            unsafe { self.device.raw().destroy_image_view(*view, None) };
+        });
+        views.clear();
+    }
+
+    pub fn external(device: &Arc<Device>, image: vk::Image, image_desc: ImageDesc) -> Self {
         Self {
+            device: device.clone(),
             raw: image,
             desc: image_desc,
             views: Default::default(),
@@ -195,54 +266,6 @@ impl Image {
         }
     }
 
-    /// Возвращает вид на изображение
-    ///
-    /// Создаёт если не существует.
-    ///
-    /// # Паникует
-    ///
-    /// Если попытаться создать вид для изображения в формате глубины но без запроса
-    /// соответствующего аспекта.
-    pub fn get_or_create_view(
-        &self,
-        device: &ash::Device,
-        view_desc: ImageViewDesc,
-    ) -> Result<vk::ImageView, ResourceCreateError> {
-        let mut views = self.views.lock().unwrap();
-        if let Some(view) = views.get(&view_desc) {
-            Ok(*view)
-        } else {
-            if self.desc.format == vk::Format::D32_SFLOAT
-                && !view_desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
-            {
-                panic!("Depth-only resource used without vk::ImageAspectFlags::DEPTH flag");
-            }
-            let create_info = vk::ImageViewCreateInfo {
-                image: self.raw,
-                ..view_desc.build(self)
-            };
-
-            let view = unsafe { device.create_image_view(&create_info, None) }?;
-
-            views.insert(view_desc, view);
-
-            Ok(view)
-        }
-    }
-
-    /// Уничтожает все виды
-    ///
-    /// Не смотрит на то используются они или нет, клиент должен убедиться в том
-    /// что виды нигде больше не используются.
-    pub fn destroy_all_views(&self, device: &ash::Device) {
-        let mut views = self.views.lock().unwrap();
-        views.iter().for_each(|(_, view)| {
-            unsafe { device.destroy_image_view(*view, None) };
-        });
-        views.clear();
-    }
-
-    /// Описание изображения
     pub fn desc(&self) -> &ImageDesc {
         &self.desc
     }
@@ -252,55 +275,18 @@ impl Image {
     }
 }
 
-impl Retire for Image {
-    fn retire(&mut self, drop_list: &mut DropList) {
-        self.views
-            .lock()
-            .unwrap()
-            .drain()
-            .for_each(|(_, view)| drop_list.drop_image_view(view));
-        if let Some(memory) = self.allocation.take() {
-            drop_list.drop_image(self.raw);
-            drop_list.free_memory(memory);
-        }
-    }
-}
-
-impl Device {
-    /// Создаёт изображение на GPU
-    ///
-    /// Может быть вызвано из множества потоков, синхронизация только по доступу к аллокатору.
-    pub fn create_image(
-        &self,
-        desc: ImageDesc,
-        name: Option<&str>,
-    ) -> Result<Image, ResourceCreateError> {
-        let image = unsafe { self.raw().create_image(&desc.build(), None) }?;
-        if let Some(name) = name {
-            self.set_object_name(image, name);
-        }
-        let requirement = unsafe { self.raw().get_image_memory_requirements(image) };
-        let allocation = unsafe {
-            self.allocator().alloc(
-                AshMemoryDevice::wrap(self.raw()),
-                Request {
-                    size: requirement.size,
-                    align_mask: requirement.alignment,
-                    memory_types: requirement.memory_type_bits,
-                    usage: UsageFlags::FAST_DEVICE_ACCESS,
-                },
-            )
-        }?;
-        unsafe {
-            self.raw()
-                .bind_image_memory(image, *allocation.memory(), allocation.offset())
-        }?;
-
-        Ok(Image {
-            raw: image,
-            desc,
-            views: Default::default(),
-            allocation: Some(allocation),
+impl Drop for Image {
+    fn drop(&mut self) {
+        self.device.with_drop_list(|drop_list| {
+            self.views
+                .lock()
+                .unwrap()
+                .drain()
+                .for_each(|(_, view)| drop_list.drop_image_view(view));
+            if let Some(memory) = self.allocation.take() {
+                drop_list.drop_image(self.raw);
+                drop_list.free_memory(memory);
+            }
         })
     }
 }

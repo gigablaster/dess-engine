@@ -13,18 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::slice;
+use std::{slice, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier};
 
 use super::{
-    CreateError, FboCacheKey, GpuResource, Image, Pipeline, RenderPass, ResetError, WaitError,
-    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+    Buffer, CreateError, FboCacheKey, GpuResource, Image, Pipeline, RenderPass, ResetError,
+    WaitError, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
-pub struct CommandPool {
+pub(crate) struct CommandPool {
     pool: vk::CommandPool,
     free_cbs: Vec<CommandBuffer>,
     processing_cbs: Vec<CommandBuffer>,
@@ -87,13 +87,13 @@ impl GpuResource for CommandPool {
 
 #[derive(Debug, Clone, Copy)]
 pub struct CommandBuffer {
-    pub(self) pool: vk::CommandPool,
-    pub raw: vk::CommandBuffer,
+    pool: vk::CommandPool,
+    raw: vk::CommandBuffer,
     fence: vk::Fence,
 }
 
 impl CommandBuffer {
-    pub(crate) fn new(device: &ash::Device, pool: vk::CommandPool) -> Result<Self, CreateError> {
+    pub(self) fn new(device: &ash::Device, pool: vk::CommandPool) -> Result<Self, CreateError> {
         let command_buffer_allocation_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .command_pool(pool)
@@ -156,12 +156,12 @@ impl GpuResource for CommandBuffer {
 }
 
 pub struct RenderPassAttachment<'a> {
-    pub image: &'a Image,
+    pub image: &'a Arc<Image>,
     pub clear: vk::ClearValue,
 }
 
 impl<'a> RenderPassAttachment<'a> {
-    pub fn new(image: &'a Image, clear: vk::ClearValue) -> Self {
+    pub fn new(image: &'a Arc<Image>, clear: vk::ClearValue) -> Self {
         Self { image, clear }
     }
 }
@@ -185,7 +185,6 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn render_pass<F: FnOnce(RenderPassRecorder)>(
         &self,
-        device: &ash::Device,
         render_pass: &RenderPass,
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<RenderPassAttachment>,
@@ -204,45 +203,43 @@ impl<'a> CommandBufferRecorder<'a> {
             .iter()
             .map(|attachment| attachment.image)
             .next();
-        let key = FboCacheKey::new(device, &color_attachments, depth_attachment);
         let dims = color_attachments
             .iter()
             .chain(depth_attachment.iter())
             .map(|image| image.desc().extent)
-            .next();
-        if let Some(dims) = dims {
-            let framebuffer = render_pass.get_or_create_fbo(key)?;
+            .next()
+            .expect("Render pass needs at least one attachment");
 
-            let begin_pass_info = vk::RenderPassBeginInfo::builder()
-                .render_pass(render_pass.raw())
-                .framebuffer(framebuffer)
-                .clear_values(&clear_values)
-                .render_area(vk::Rect2D {
-                    offset: vk::Offset2D { x: 0, y: 0 },
-                    extent: vk::Extent2D {
-                        width: dims[0] as _,
-                        height: dims[1] as _,
-                    },
-                })
-                .build();
+        let key = FboCacheKey::new(&color_attachments, depth_attachment);
+        let framebuffer = render_pass.get_or_create_fbo(key)?;
 
-            unsafe {
-                self.device.cmd_begin_render_pass(
-                    *self.cb,
-                    &begin_pass_info,
-                    vk::SubpassContents::INLINE,
-                )
-            };
+        let begin_pass_info = vk::RenderPassBeginInfo::builder()
+            .render_pass(render_pass.raw())
+            .framebuffer(framebuffer)
+            .clear_values(&clear_values)
+            .render_area(vk::Rect2D {
+                offset: vk::Offset2D { x: 0, y: 0 },
+                extent: vk::Extent2D {
+                    width: dims[0] as _,
+                    height: dims[1] as _,
+                },
+            })
+            .build();
 
-            cb(RenderPassRecorder {
-                device: self.device,
-                cb: self.cb,
-            });
+        unsafe {
+            self.device.cmd_begin_render_pass(
+                *self.cb,
+                &begin_pass_info,
+                vk::SubpassContents::INLINE,
+            )
+        };
 
-            Ok(())
-        } else {
-            panic!("Can't start render pass without attachments");
-        }
+        cb(RenderPassRecorder {
+            device: self.device,
+            cb: self.cb,
+        });
+
+        Ok(())
     }
 
     pub fn barrier(
@@ -267,13 +264,10 @@ pub struct RenderPassRecorder<'a> {
 }
 
 impl<'a> RenderPassRecorder<'a> {
-    pub fn bind_pipeline(&self, pipeline: &Pipeline) {
+    pub fn bind_pipeline(&self, pipeline: vk::Pipeline) {
         unsafe {
-            self.device.cmd_bind_pipeline(
-                *self.cb,
-                vk::PipelineBindPoint::GRAPHICS,
-                pipeline.pipeline,
-            )
+            self.device
+                .cmd_bind_pipeline(*self.cb, vk::PipelineBindPoint::GRAPHICS, pipeline)
         };
     }
 

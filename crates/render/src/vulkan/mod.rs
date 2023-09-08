@@ -26,7 +26,6 @@ mod pipeline;
 mod render_pass;
 mod swapchain;
 
-use self::droplist::DropList;
 pub use self::image::*;
 
 use ash::vk;
@@ -47,11 +46,6 @@ pub type DescriptorAllocator =
     gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
 pub type DescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
 
-pub trait GpuResource {
+pub(crate) trait GpuResource {
     fn free(&mut self, device: &ash::Device);
-}
-
-/// Отмечает объекты на удаление
-pub trait Retire {
-    fn retire(&mut self, drop_list: &mut DropList);
 }

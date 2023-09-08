@@ -15,6 +15,7 @@
 
 use std::{
     collections::HashMap,
+    hash::Hash,
     sync::{Arc, Mutex},
 };
 
@@ -81,54 +82,78 @@ impl RenderPassAttachmentDesc {
     }
 }
 
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct FboCacheKey {
     dims: [u32; 2],
     attachments: ArrayVec<vk::ImageView, MAX_ATTACHMENTS>,
+    images: ArrayVec<Arc<Image>, MAX_ATTACHMENTS>,
 }
 
+impl Hash for FboCacheKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u32(self.dims[0]);
+        state.write_u32(self.dims[1]);
+        self.images.iter().for_each(|image| {
+            image.raw().hash(state);
+        });
+    }
+}
+
+impl PartialEq for FboCacheKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.dims == other.dims && self.attachments == other.attachments
+    }
+}
+
+impl Eq for FboCacheKey {}
+
 impl FboCacheKey {
-    pub fn new(
-        device: &ash::Device,
-        color_attachments: &[&Image],
-        depth_attachment: Option<&Image>,
-    ) -> Self {
+    pub fn new(color_attachments: &[&Arc<Image>], depth_attachment: Option<&Arc<Image>>) -> Self {
         let dims = color_attachments
             .iter()
             .chain(depth_attachment.iter())
             .map(|image| image.desc().extent)
-            .next();
-        if let Some(dims) = dims {
-            let attachments = color_attachments
-                .iter()
-                .map(|image| {
-                    let desc = ImageViewDesc::default()
-                        .format(image.desc().format)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .level_count(1)
-                        .base_mip_level(0)
-                        .aspect_mask(vk::ImageAspectFlags::COLOR);
-                    image.get_or_create_view(device, desc).unwrap()
-                })
-                .chain(depth_attachment.iter().map(|image| {
-                    let desc = ImageViewDesc::default()
-                        .format(image.desc().format)
-                        .view_type(vk::ImageViewType::TYPE_2D)
-                        .level_count(1)
-                        .base_mip_level(0)
-                        .aspect_mask(vk::ImageAspectFlags::DEPTH);
-                    image.get_or_create_view(device, desc).unwrap()
-                }))
-                .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+            .next()
+            .expect("FBO must have at least one attachment");
 
-            Self { dims, attachments }
-        } else {
-            panic!("Can't create FboCacheKey without attachments");
+        let images = color_attachments
+            .into_iter()
+            .cloned()
+            .chain(depth_attachment.into_iter())
+            .cloned()
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+
+        let attachments = color_attachments
+            .iter()
+            .map(|image| {
+                let desc = ImageViewDesc::default()
+                    .format(image.desc().format)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .level_count(1)
+                    .base_mip_level(0)
+                    .aspect_mask(vk::ImageAspectFlags::COLOR);
+                image.get_or_create_view(desc).unwrap()
+            })
+            .chain(depth_attachment.iter().map(|image| {
+                let desc = ImageViewDesc::default()
+                    .format(image.desc().format)
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .level_count(1)
+                    .base_mip_level(0)
+                    .aspect_mask(vk::ImageAspectFlags::DEPTH);
+                image.get_or_create_view(desc).unwrap()
+            }))
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+
+        Self {
+            dims,
+            attachments,
+            images,
         }
     }
 }
 
-pub(crate) struct FboCache {
+struct FboCache {
     entries: Mutex<HashMap<FboCacheKey, vk::Framebuffer>>,
     render_pass: vk::RenderPass,
 }
@@ -143,7 +168,7 @@ impl FboCache {
 
     pub fn get_or_create(
         &self,
-        device: &ash::Device,
+        device: &Device,
         key: FboCacheKey,
     ) -> Result<vk::Framebuffer, CreateError> {
         let mut entries = self.entries.lock().unwrap();
@@ -158,7 +183,7 @@ impl FboCache {
 
     fn create_fbo(
         &self,
-        device: &ash::Device,
+        device: &Device,
         key: &FboCacheKey,
     ) -> Result<vk::Framebuffer, CreateError> {
         let attachments = key
@@ -175,14 +200,14 @@ impl FboCache {
             .attachments(&attachments)
             .build();
 
-        Ok(unsafe { device.create_framebuffer(&fbo_desc, None) }?)
+        Ok(unsafe { device.raw().create_framebuffer(&fbo_desc, None) }?)
     }
 
-    pub fn clear(&self, device: &ash::Device) {
+    pub fn clear(&self, device: &Device) {
         let mut entries = self.entries.lock().unwrap();
         entries
             .drain()
-            .for_each(|(_, fbo)| unsafe { device.destroy_framebuffer(fbo, None) });
+            .for_each(|(_, fbo)| unsafe { device.raw().destroy_framebuffer(fbo, None) });
     }
 }
 
@@ -193,7 +218,7 @@ pub struct RenderPass {
 }
 
 impl RenderPass {
-    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> Result<Self, CreateError> {
+    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> Result<Arc<Self>, CreateError> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -243,15 +268,15 @@ impl RenderPass {
 
         let render_pass = unsafe { device.raw().create_render_pass(&render_pass_info, None) }?;
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             device: device.clone(),
             raw: render_pass,
             fbo_cache: FboCache::new(render_pass),
-        })
+        }))
     }
 
     pub fn clear_fbos(&self) {
-        self.fbo_cache.clear(self.device.raw());
+        self.fbo_cache.clear(&self.device);
     }
 
     pub fn raw(&self) -> vk::RenderPass {
@@ -259,7 +284,7 @@ impl RenderPass {
     }
 
     pub fn get_or_create_fbo(&self, key: FboCacheKey) -> Result<vk::Framebuffer, CreateError> {
-        self.fbo_cache.get_or_create(self.device.raw(), key)
+        self.fbo_cache.get_or_create(&self.device, key)
     }
 }
 

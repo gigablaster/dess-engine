@@ -18,6 +18,7 @@ use std::{
     ffi::CString,
     mem::size_of,
     slice,
+    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
@@ -258,9 +259,10 @@ pub trait PipelineVertex: Sized {
 }
 
 pub struct Pipeline {
-    pub pipeline: vk::Pipeline,
-    pub pipeline_layout: vk::PipelineLayout,
-    pub sets: Vec<DescriptorSetInfo>,
+    device: Arc<Device>,
+    pipeline: vk::Pipeline,
+    pipeline_layout: vk::PipelineLayout,
+    sets: Vec<DescriptorSetInfo>,
 }
 
 pub enum PipelineBlend {
@@ -324,10 +326,10 @@ pub fn create_pipeline_cache(device: &ash::Device) -> Result<vk::PipelineCache, 
 
 impl Pipeline {
     pub fn new<V: PipelineVertex>(
-        device: &Device,
+        device: &Arc<Device>,
         cache: &vk::PipelineCache,
         desc: PipelineDesc,
-    ) -> Result<Self, CreateError> {
+    ) -> Result<Arc<Self>, CreateError> {
         let shader_create_info = desc
             .shaders
             .iter()
@@ -475,11 +477,12 @@ impl Pipeline {
         }
         .map_err(|(_, error)| CreateError::from(error))?[0];
 
-        Ok(Self {
+        Ok(Arc::new(Self {
+            device: device.clone(),
             pipeline_layout,
             pipeline,
             sets,
-        })
+        }))
     }
 
     fn create_descriptor_set_layouts(
@@ -557,16 +560,28 @@ impl Pipeline {
             }
         }
     }
+
+    pub fn pipeline(&self) -> vk::Pipeline {
+        self.pipeline
+    }
+
+    pub fn layout(&self) -> vk::PipelineLayout {
+        self.pipeline_layout
+    }
 }
 
-impl GpuResource for Pipeline {
-    fn free(&mut self, device: &ash::Device) {
-        self.sets
-            .iter()
-            .for_each(|set| unsafe { device.destroy_descriptor_set_layout(set.layout, None) });
+impl Drop for Pipeline {
+    fn drop(&mut self) {
+        self.sets.iter().for_each(|set| unsafe {
+            self.device
+                .raw()
+                .destroy_descriptor_set_layout(set.layout, None)
+        });
         unsafe {
-            device.destroy_pipeline(self.pipeline, None);
-            device.destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.raw().destroy_pipeline(self.pipeline, None);
+            self.device
+                .raw()
+                .destroy_pipeline_layout(self.pipeline_layout, None);
         }
     }
 }

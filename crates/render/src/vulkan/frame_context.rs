@@ -21,7 +21,6 @@ use std::{
 
 use ash::vk;
 
-
 use super::{CommandBuffer, CommandPool, CreateError, GpuResource, ResetError, Semaphore};
 
 pub struct FrameContext {
