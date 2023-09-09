@@ -17,6 +17,8 @@ mod error;
 mod staging;
 pub mod vulkan;
 
+pub use staging::*;
+
 pub type Index = u16;
 
 pub(crate) trait GpuResource {

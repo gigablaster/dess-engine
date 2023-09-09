@@ -1,5 +1,8 @@
 use ash::vk;
-use dess_render::vulkan::{Device, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain};
+use dess_render::{
+    vulkan::{Buffer, BufferDesc, Device, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain},
+    Staging,
+};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::WindowBuilder};
@@ -36,4 +39,11 @@ fn main() {
         .unwrap();
     let device = Device::create(&instance, physical_device).unwrap();
     let _swapchain = Swapchain::new(&device, surface, [1280, 720]).unwrap();
+    let buffer = Buffer::new(
+        &device,
+        BufferDesc::gpu_only(4000, vk::BufferUsageFlags::TRANSFER_SRC),
+        None,
+    )
+    .unwrap();
+    let staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
 }
