@@ -32,6 +32,12 @@ use super::{CreateError, Device, SamplerDesc, ShaderCreateError};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
+// Slots are
+// 0 - per pass
+// 1 - per material
+// 2 - per object
+// 4 - big dynamic shit
+static DESCRIPTORS_PER_SLOT: [u32; MAX_SETS] = [4, 64, 512, 128];
 
 type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
 type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
@@ -49,6 +55,7 @@ impl DescriptorSetInfo {
         device: &Device,
         stage: vk::ShaderStageFlags,
         set: &BTreeMap<u32, DescriptorInfo>,
+        expected_count: u32,
     ) -> Result<Self, CreateError> {
         let mut uniform_buffers_count = 0;
         let mut combined_samplers_count = 0;
@@ -124,12 +131,12 @@ impl DescriptorSetInfo {
             layout,
             descriptor_count: DescriptorTotalCount {
                 sampler: 0,
-                combined_image_sampler: combined_samplers_count,
-                sampled_image: sampled_images_count,
+                combined_image_sampler: combined_samplers_count * expected_count,
+                sampled_image: sampled_images_count * expected_count,
                 storage_image: 0,
                 uniform_texel_buffer: 0,
                 storage_texel_buffer: 0,
-                uniform_buffer: uniform_buffers_count,
+                uniform_buffer: uniform_buffers_count * expected_count,
                 storage_buffer: 0,
                 uniform_buffer_dynamic: 0,
                 storage_buffer_dynamic: 0,
@@ -342,7 +349,12 @@ impl Program {
             let set = sets.get(&set_index);
             match set {
                 Some(set) => {
-                    layouts.push(DescriptorSetInfo::new(device, stages, set)?);
+                    layouts.push(DescriptorSetInfo::new(
+                        device,
+                        stages,
+                        set,
+                        DESCRIPTORS_PER_SLOT[set_index as usize],
+                    )?);
                 }
                 None => {
                     layouts.push(DescriptorSetInfo::default());
