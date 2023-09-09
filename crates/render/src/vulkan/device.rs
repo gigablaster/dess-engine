@@ -28,13 +28,14 @@ use ash::{
 };
 use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
+use gpu_descriptor_ash::AshDescriptorDevice;
 use log::info;
 
 use crate::{vulkan::DeviceCreateError, GpuResource};
 
 use super::{
-    droplist::DropList, CommandBuffer, FrameContext, GpuAllocator, Instance, PhysicalDevice,
-    QueueFamily, Semaphore, WaitError,
+    droplist::DropList, CommandBuffer, DescriptorAllocator, FrameContext, GpuAllocator, Instance,
+    PhysicalDevice, QueueFamily, Semaphore, WaitError,
 };
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -82,6 +83,7 @@ pub struct Device {
     current_drop_list: Mutex<DropList>,
     drop_lists: [Mutex<DropList>; 2],
     allocator: Mutex<GpuAllocator>,
+    descriptor_allocator: Mutex<DescriptorAllocator>,
 }
 
 unsafe impl Sync for Device {}
@@ -158,6 +160,7 @@ impl Device {
         let allocator_props =
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw()) }?;
         let allocator = GpuAllocator::new(allocator_config, allocator_props);
+        let descriptor_allocator = DescriptorAllocator::new(128);
 
         let queue = Self::create_queue(&device, universal_queue);
 
@@ -174,6 +177,7 @@ impl Device {
             current_drop_list: Mutex::new(DropList::default()),
             drop_lists,
             allocator: Mutex::new(allocator),
+            descriptor_allocator: Mutex::new(descriptor_allocator),
         }))
     }
 
@@ -242,10 +246,11 @@ impl Device {
                         u64::MAX,
                     )
                 }?;
-                self.drop_lists[0]
-                    .lock()
-                    .unwrap()
-                    .free(&self.raw, &mut self.allocator());
+                self.drop_lists[0].lock().unwrap().free(
+                    &self.raw,
+                    &mut self.allocator(),
+                    &mut self.descriptor_allocator(),
+                );
                 frame0.reset(&self.raw)?;
             } else {
                 panic!("Unable to begin frame: frame data is being held by user code")
@@ -371,6 +376,10 @@ impl Device {
         self.allocator.lock().unwrap()
     }
 
+    pub fn descriptor_allocator(&self) -> MutexGuard<DescriptorAllocator> {
+        self.descriptor_allocator.lock().unwrap()
+    }
+
     pub fn raw(&self) -> &ash::Device {
         &self.raw
     }
@@ -397,13 +406,15 @@ impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle().ok() };
         let mut allocator = self.allocator();
-        self.current_drop_list
-            .lock()
-            .unwrap()
-            .free(&self.raw, &mut allocator);
+        let mut descriptor_allocator = self.descriptor_allocator();
+        self.current_drop_list.lock().unwrap().free(
+            &self.raw,
+            &mut allocator,
+            &mut descriptor_allocator,
+        );
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
-            list.free(&self.raw, &mut allocator);
+            list.free(&self.raw, &mut allocator, &mut descriptor_allocator);
         });
         self.frames.iter().for_each(|frame| {
             let mut frame = frame.lock().unwrap();
@@ -414,6 +425,7 @@ impl Drop for Device {
             self.raw.destroy_sampler(*sampler, None);
         });
         unsafe { allocator.cleanup(AshMemoryDevice::wrap(&self.raw)) };
+        unsafe { descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.raw)) };
         unsafe { self.raw.destroy_device(None) };
     }
 }
