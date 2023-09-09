@@ -13,4 +13,4 @@ tasks:
       cargo test
   - clippy: |
       cd dess-engine
-      cargo clippy
+      cargo clippy -- -D warnings
