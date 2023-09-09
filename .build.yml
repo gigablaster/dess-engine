@@ -5,12 +5,12 @@ packages:
 sources:
   - https://git.sr.ht/~gigablaster/dess-engine
 tasks:
+  - clippy: |
+      cd dess-engine
+      cargo clippy --all-targets -- -D warnings
   - build: |
       cd dess-engine
       cargo build
   - test: |
       cd dess-engine
       cargo test
-  - clippy: |
-      cd dess-engine
-      cargo clippy -- -D warnings

@@ -39,11 +39,11 @@ fn main() {
         .unwrap();
     let device = Device::create(&instance, physical_device).unwrap();
     let _swapchain = Swapchain::new(&device, surface, [1280, 720]).unwrap();
-    let buffer = Buffer::new(
+    let _buffer = Buffer::new(
         &device,
         BufferDesc::gpu_only(4000, vk::BufferUsageFlags::TRANSFER_SRC),
         None,
     )
     .unwrap();
-    let staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
+    let _staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
 }
