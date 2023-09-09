@@ -397,6 +397,10 @@ impl Drop for Device {
     fn drop(&mut self) {
         unsafe { self.raw.device_wait_idle().ok() };
         let mut allocator = self.allocator();
+        self.current_drop_list
+            .lock()
+            .unwrap()
+            .free(&self.raw, &mut allocator);
         self.drop_lists.iter().for_each(|list| {
             let mut list = list.lock().unwrap();
             list.free(&self.raw, &mut allocator);
