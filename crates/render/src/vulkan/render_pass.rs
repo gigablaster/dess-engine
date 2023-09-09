@@ -119,7 +119,7 @@ impl FboCacheKey {
         let images = color_attachments
             .iter()
             .cloned()
-            .chain(depth_attachment.into_iter())
+            .chain(depth_attachment)
             .cloned()
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
 
