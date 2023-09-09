@@ -5,7 +5,7 @@ const INDEX_MASK: u32 = (1 << GENERATOPN_OFFSET) - 1;
 const GENERATON_MASK: u32 = u32::MAX & !INDEX_MASK;
 const DEFAULT_SPACE: usize = 1024;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct Handle<T> {
     id: u32,
     _phantom: PhantomData<T>,
@@ -22,17 +22,6 @@ impl<T> Eq for Handle<T> {}
 impl<T> Hash for Handle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.id.hash(state);
-    }
-}
-
-impl<T> Copy for Handle<T> {}
-
-impl<T> Clone for Handle<T> {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id,
-            _phantom: PhantomData::<T>,
-        }
     }
 }
 
