@@ -16,6 +16,7 @@
 use std::{ptr::NonNull, sync::Arc};
 
 use ash::vk::{self, BufferCreateInfo};
+use dess_common::{Handle, HandleContainer};
 use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
@@ -175,5 +176,53 @@ impl Drop for Buffer {
                 drop_list.free_memory(allocation);
             }
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+#[repr(C, align(16))]
+pub struct BufferCacheEntry {
+    pub raw: vk::Buffer,
+    pub buffer: Arc<Buffer>,
+}
+
+pub type BufferHandle = Handle<BufferCacheEntry>;
+
+pub struct BufferCache {
+    device: Arc<Device>,
+    data: HandleContainer<BufferCacheEntry>,
+}
+
+impl BufferCache {
+    pub fn new(device: &Arc<Device>) -> Self {
+        Self {
+            device: device.clone(),
+            data: HandleContainer::new(),
+        }
+    }
+
+    pub fn create(
+        &mut self,
+        desc: BufferDesc,
+        name: Option<&str>,
+    ) -> Result<BufferHandle, ResourceCreateError> {
+        let buffer = Buffer::new(&self.device, desc, name)?;
+        Ok(self.add(buffer))
+    }
+
+    pub fn add(&mut self, buffer: Arc<Buffer>) -> BufferHandle {
+        self.data.push(BufferCacheEntry {
+            raw: buffer.raw(),
+            buffer,
+        })
+    }
+
+    pub fn remove(&mut self, handle: BufferHandle) -> Option<Arc<Buffer>> {
+        let removed = self.data.remove(handle);
+        removed.map(|removed| removed.buffer)
+    }
+
+    pub fn resolve(&self, handle: BufferHandle) -> Option<vk::Buffer> {
+        self.data.get(handle).map(|data| data.raw)
     }
 }
