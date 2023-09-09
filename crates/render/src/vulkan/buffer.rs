@@ -144,7 +144,7 @@ impl Buffer {
             let ptr = unsafe {
                 allocation.map(AshMemoryDevice::wrap(self.device.raw()), 0, self.desc.size)
             }?
-            .as_ptr() as *mut u8;
+            .as_ptr();
 
             Ok(NonNull::new(ptr).unwrap())
         } else {

@@ -117,7 +117,7 @@ impl FboCacheKey {
             .expect("FBO must have at least one attachment");
 
         let images = color_attachments
-            .into_iter()
+            .iter()
             .cloned()
             .chain(depth_attachment.into_iter())
             .cloned()

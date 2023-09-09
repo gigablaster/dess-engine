@@ -161,7 +161,7 @@ impl Device {
 
         let queue = Self::create_queue(&device, universal_queue);
 
-        Self::set_object_name_impl(&instance, &device, queue.raw, "Main queue");
+        Self::set_object_name_impl(instance, &device, queue.raw, "Main queue");
 
         Ok(Arc::new(Self {
             instance: instance.clone(),

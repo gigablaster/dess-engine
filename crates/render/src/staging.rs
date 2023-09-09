@@ -91,14 +91,14 @@ impl Staging {
             .collect::<Vec<_>>();
         let semaphores = (0..STAGES)
             .map(|index| {
-                let semaphore = Semaphore::new(&device.raw()).unwrap();
+                let semaphore = Semaphore::new(device.raw()).unwrap();
                 device.set_object_name(semaphore.raw, &format!("Staging sempahore {}", index));
                 semaphore
             })
             .collect::<Vec<_>>();
         let render_semaphores = (0..STAGES)
             .map(|index| {
-                let semaphore = Semaphore::new(&device.raw()).unwrap();
+                let semaphore = Semaphore::new(device.raw()).unwrap();
                 device.set_object_name(
                     semaphore.raw,
                     &format!("Staging->Render sempahore {}", index),
@@ -276,10 +276,10 @@ impl Staging {
         if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
             return Ok(None);
         }
-        self.tranfser_cbs[self.current].wait(&self.device.raw())?;
-        self.tranfser_cbs[self.current].reset(&self.device.raw())?;
+        self.tranfser_cbs[self.current].wait(self.device.raw())?;
+        self.tranfser_cbs[self.current].reset(self.device.raw())?;
 
-        self.tranfser_cbs[self.current].record(&self.device.raw(), |recorder| {
+        self.tranfser_cbs[self.current].record(self.device.raw(), |recorder| {
             self.device.cmd_begin_label(
                 self.tranfser_cbs[self.current].raw(),
                 &format!("Sending staging queue #{}", self.index),
@@ -458,9 +458,9 @@ impl Drop for Staging {
         self.pool.free(self.device.raw());
         self.semaphores
             .iter()
-            .for_each(|semaphore| semaphore.free(&self.device.raw()));
+            .for_each(|semaphore| semaphore.free(self.device.raw()));
         self.render_semaphores
             .iter()
-            .for_each(|semaphore| semaphore.free(&self.device.raw()));
+            .for_each(|semaphore| semaphore.free(self.device.raw()));
     }
 }

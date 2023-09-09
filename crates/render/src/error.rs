@@ -2,39 +2,39 @@ use crate::vulkan::{CreateError, MapError, ResetError, ResourceCreateError, Wait
 
 #[derive(Debug)]
 pub enum StagingError {
-    ResourceCreateError(ResourceCreateError),
-    CreateError(CreateError),
-    WaitError(WaitError),
-    ResetError(ResetError),
-    MapError(MapError),
+    ResourceCreate(ResourceCreateError),
+    Create(CreateError),
+    Wait(WaitError),
+    Reset(ResetError),
+    Map(MapError),
 }
 
 impl From<ResourceCreateError> for StagingError {
     fn from(value: ResourceCreateError) -> Self {
-        Self::ResourceCreateError(value)
+        Self::ResourceCreate(value)
     }
 }
 
 impl From<CreateError> for StagingError {
     fn from(value: CreateError) -> Self {
-        Self::CreateError(value)
+        Self::Create(value)
     }
 }
 
 impl From<WaitError> for StagingError {
     fn from(value: WaitError) -> Self {
-        Self::WaitError(value)
+        Self::Wait(value)
     }
 }
 
 impl From<ResetError> for StagingError {
     fn from(value: ResetError) -> Self {
-        Self::ResetError(value)
+        Self::Reset(value)
     }
 }
 
 impl From<MapError> for StagingError {
     fn from(value: MapError) -> Self {
-        Self::MapError(value)
+        Self::Map(value)
     }
 }
