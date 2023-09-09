@@ -23,6 +23,7 @@ mod image;
 mod instance;
 mod physical_device;
 mod pipeline;
+mod program;
 mod render_pass;
 mod swapchain;
 
@@ -37,6 +38,7 @@ pub use frame_context::*;
 pub use instance::*;
 pub use physical_device::*;
 pub use pipeline::*;
+pub use program::*;
 pub use render_pass::*;
 pub use swapchain::*;
 
