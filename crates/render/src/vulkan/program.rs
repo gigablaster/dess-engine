@@ -23,6 +23,7 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
+use gpu_descriptor::DescriptorTotalCount;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
 use crate::GpuResource;
@@ -37,9 +38,10 @@ type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
 
 #[derive(Debug, Default)]
 pub struct DescriptorSetInfo {
+    pub layout: vk::DescriptorSetLayout,
+    pub descriptor_count: DescriptorTotalCount,
     pub types: HashMap<u32, vk::DescriptorType>,
     pub names: HashMap<String, u32>,
-    pub layout: vk::DescriptorSetLayout,
 }
 
 impl DescriptorSetInfo {
@@ -48,6 +50,9 @@ impl DescriptorSetInfo {
         stage: vk::ShaderStageFlags,
         set: &BTreeMap<u32, DescriptorInfo>,
     ) -> Result<Self, CreateError> {
+        let mut uniform_buffers_count = 0;
+        let mut combined_samplers_count = 0;
+        let mut sampled_images_count = 0;
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
         let mut bindings = HashMap::with_capacity(set.len());
         for (index, binding) in set.iter() {
@@ -58,12 +63,14 @@ impl DescriptorSetInfo {
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
                     bindings.insert(*index, Self::create_uniform_binding(*index, stage, binding));
+                    uniform_buffers_count += 1;
                 }
                 rspirv_reflect::DescriptorType::SAMPLED_IMAGE => {
                     bindings.insert(
                         *index,
                         Self::create_sampled_image_binding(*index, stage, binding),
                     );
+                    sampled_images_count += 1;
                 }
                 rspirv_reflect::DescriptorType::SAMPLER
                 | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
@@ -86,6 +93,7 @@ impl DescriptorSetInfo {
                             &samplers[sampler_index],
                         ),
                     );
+                    combined_samplers_count += 1;
                 }
                 _ => unimplemented!("{:?}", binding),
             };
@@ -114,6 +122,22 @@ impl DescriptorSetInfo {
             types,
             names,
             layout,
+            descriptor_count: DescriptorTotalCount {
+                sampler: 0,
+                combined_image_sampler: combined_samplers_count,
+                sampled_image: sampled_images_count,
+                storage_image: 0,
+                uniform_texel_buffer: 0,
+                storage_texel_buffer: 0,
+                uniform_buffer: uniform_buffers_count,
+                storage_buffer: 0,
+                uniform_buffer_dynamic: 0,
+                storage_buffer_dynamic: 0,
+                input_attachment: 0,
+                acceleration_structure: 0,
+                inline_uniform_block_bytes: 0,
+                inline_uniform_block_bindings: 0,
+            },
         })
     }
 
