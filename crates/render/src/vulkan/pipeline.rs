@@ -85,7 +85,7 @@ impl PipelineState {
         program: &Arc<Program>,
         desc: PipelineStateDesc,
         cache: &vk::PipelineCache,
-    ) -> Result<Arc<Self>, CreateError> {
+    ) -> Result<Self, CreateError> {
         let shader_create_info = program
             .shaders()
             .iter()
@@ -215,10 +215,10 @@ impl PipelineState {
         }
         .map_err(|(_, error)| CreateError::from(error))?[0];
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             program: program.clone(),
             pipeline,
-        }))
+        })
     }
 
     pub fn pipeline(&self) -> vk::Pipeline {
