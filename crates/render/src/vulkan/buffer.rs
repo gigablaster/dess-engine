@@ -179,7 +179,7 @@ impl Drop for Buffer {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 #[repr(C, align(16))]
 pub struct BufferCacheEntry {
     pub raw: vk::Buffer,
@@ -226,3 +226,5 @@ impl BufferCache {
         self.data.get(handle).map(|data| data.raw)
     }
 }
+
+pub type BufferSlice = (BufferHandle, u32);

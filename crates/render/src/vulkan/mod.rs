@@ -33,6 +33,7 @@ use ash::vk;
 pub use buffer::*;
 pub use command_buffer::*;
 pub use device::*;
+pub use droplist::*;
 pub use error::*;
 pub use frame_context::*;
 pub use instance::*;

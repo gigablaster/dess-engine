@@ -5,11 +5,22 @@ const INDEX_MASK: u32 = (1 << GENERATOPN_OFFSET) - 1;
 const GENERATON_MASK: u32 = u32::MAX & !INDEX_MASK;
 const DEFAULT_SPACE: usize = 1024;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug)]
 pub struct Handle<T> {
     id: u32,
     _phantom: PhantomData<T>,
 }
+
+impl<T> Clone for Handle<T> {
+    fn clone(&self) -> Self {
+        Self {
+            id: self.id,
+            _phantom: PhantomData,
+        }
+    }
+}
+
+impl<T> Copy for Handle<T> {}
 
 impl<T> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
