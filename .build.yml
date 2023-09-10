@@ -1,7 +1,6 @@
-image: ubuntu/lts
+image: archlinux
 packages:
-  - rust-all
-  - pkg-config
+  - rust
 sources:
   - https://git.sr.ht/~gigablaster/dess-engine
 tasks:
@@ -10,10 +9,8 @@ tasks:
       cargo fmt -- --check
   - clippy: |
       cd dess-engine
-      cargo clippy --all-targets -- -D warnings
-  - build: |
-      cd dess-engine
-      cargo build
+      cargo clippy --locked --all-targets -- -D warnings
   - test: |
       cd dess-engine
-      cargo test
+      cargo check --locked --all-targets --all-features
+      cargo test --locked --all-targets --all-features
