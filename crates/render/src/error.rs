@@ -54,7 +54,7 @@ impl From<MapError> for StagingError {
             gpu_alloc::MapError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
             gpu_alloc::MapError::OutOfHostMemory => Self::OutOfHostMemory,
             gpu_alloc::MapError::MapFailed => Self::MapFailed,
-            _ => panic!("Unknown error {}", value),
+            _ => panic!("Unexpected error {}", value),
         }
     }
 }
@@ -112,6 +112,40 @@ impl From<CreateError> for DescriptorError {
         match value {
             CreateError::OutOfDeviceMemory => DescriptorError::OutOfDeviceMemory,
             CreateError::OutOfHostMemory => DescriptorError::OutOfHostMemory,
+        }
+    }
+}
+
+pub enum UniformCreateError {
+    OutOfHostMemory,
+    OutOfDeviceMemory,
+    NoCompatibleMemory,
+    TooManyObjects,
+    MapFailed,
+}
+
+pub enum UniformAllocateError {
+    OutOfSpace,
+}
+
+impl From<ResourceCreateError> for UniformCreateError {
+    fn from(value: ResourceCreateError) -> Self {
+        match value {
+            ResourceCreateError::NoCompatibleMemory => UniformCreateError::NoCompatibleMemory,
+            ResourceCreateError::OutOfDeviceMemory => UniformCreateError::OutOfDeviceMemory,
+            ResourceCreateError::OutOfHostMemory => UniformCreateError::OutOfHostMemory,
+            ResourceCreateError::TooManyObjects => UniformCreateError::TooManyObjects,
+        }
+    }
+}
+
+impl From<MapError> for UniformCreateError {
+    fn from(value: MapError) -> Self {
+        match value {
+            gpu_alloc::MapError::MapFailed => UniformCreateError::MapFailed,
+            gpu_alloc::MapError::OutOfHostMemory => UniformCreateError::OutOfHostMemory,
+            gpu_alloc::MapError::OutOfDeviceMemory => UniformCreateError::OutOfDeviceMemory,
+            _ => panic!("Unexpected error {}", value),
         }
     }
 }

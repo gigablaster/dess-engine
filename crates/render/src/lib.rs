@@ -16,6 +16,7 @@
 mod descriptors;
 mod error;
 mod staging;
+mod uniforms;
 pub mod vulkan;
 
 pub use staging::*;
