@@ -1,4 +1,8 @@
-use std::{ptr::NonNull, sync::Arc};
+use std::{
+    mem::size_of,
+    ptr::{self, copy_nonoverlapping, NonNull},
+    sync::Arc,
+};
 
 use arrayvec::ArrayVec;
 use ash::vk;
@@ -12,7 +16,7 @@ use crate::{
 const BUCKET_SIZE: u32 = 0xFFFF;
 const MIN_UNIFORM_SIZE: u32 = 0x100;
 const MAX_UNIFORM_SIZE: u32 = 0x4000;
-const UNIFORM_BUFFER_SIZE: u32 = 32 * 1024 * 1024;
+const UNIFORM_BUFFER_SIZE: u32 = 16 * 1024 * 1024;
 const BUCKET_COUNT: u32 = UNIFORM_BUFFER_SIZE / BUCKET_SIZE;
 const SIZE_RANGES: [(u32, u32); 7] = [
     (8192, 16384),
@@ -88,13 +92,14 @@ pub struct Uniforms {
 }
 
 impl Uniforms {
-    fn new(device: &Arc<Device>) -> Result<Self, UniformCreateError> {
+    pub fn new(device: &Arc<Device>) -> Result<Self, UniformCreateError> {
         let mut buffer = Buffer::new(
             device,
             BufferDesc::upload(
                 UNIFORM_BUFFER_SIZE as _,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
-            ),
+            )
+            .dedicated(true),
             Some(&"Unified uniform buffer"),
         )?;
         let mapping = Arc::get_mut(&mut buffer).unwrap().map()?;
@@ -106,7 +111,8 @@ impl Uniforms {
         })
     }
 
-    pub fn alloc(&mut self, size: u32) -> Result<u32, UniformAllocateError> {
+    pub fn push<T: Sized>(&mut self, data: &T) -> Result<u32, UniformAllocateError> {
+        let size = size_of::<T>() as u32;
         let mut index = self.find_bucket_index(size);
         if index.is_none() {
             index = self.allocate_bucket(size);
@@ -114,13 +120,35 @@ impl Uniforms {
         if let Some(index) = index {
             let base_offset = index as u32 * BUCKET_SIZE;
             if let Some(offset) = self.buckets[index].alloc() {
-                Ok(base_offset + offset)
+                let offset = base_offset + offset;
+                unsafe {
+                    copy_nonoverlapping(
+                        ptr::addr_of!(data) as *const u8,
+                        self.mapping.as_ptr().add(offset as usize),
+                        size as usize,
+                    )
+                }
+                Ok(offset)
             } else {
                 Err(UniformAllocateError::OutOfSpace)
             }
         } else {
             Err(UniformAllocateError::OutOfSpace)
         }
+    }
+
+    pub fn dealloc(&mut self, offset: u32) {
+        let index = offset / BUCKET_SIZE;
+        let local_offset = offset - index * BUCKET_SIZE;
+        let bucket = &mut self.buckets[index as usize];
+        if !bucket.dealloc(local_offset) {
+            bucket.release();
+            self.free_buckets.push(index as usize);
+        }
+    }
+
+    pub fn raw(&self) -> vk::Buffer {
+        self.buffer.raw()
     }
 
     fn find_bucket_index(&self, size: u32) -> Option<usize> {
