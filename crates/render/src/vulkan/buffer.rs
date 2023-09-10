@@ -16,7 +16,6 @@
 use std::{ptr::NonNull, sync::Arc};
 
 use ash::vk::{self, BufferCreateInfo};
-use dess_common::{Handle, HandleContainer};
 use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
