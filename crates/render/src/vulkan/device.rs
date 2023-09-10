@@ -396,9 +396,8 @@ impl Device {
         self.queue.lock().unwrap()
     }
 
-    pub fn with_drop_list<F: FnOnce(&mut DropList)>(&self, cb: F) {
-        let mut drop_list = self.current_drop_list.lock().unwrap();
-        cb(&mut drop_list);
+    pub fn drop_list(&self) -> MutexGuard<DropList> {
+        self.current_drop_list.lock().unwrap()
     }
 }
 

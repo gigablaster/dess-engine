@@ -1,14 +1,24 @@
 use ash::vk;
 use dess_render::{
-    vulkan::{Buffer, BufferDesc, Device, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain},
-    Staging,
+    vulkan::{
+        Buffer, BufferDesc, Device, InstanceBuilder, PhysicalDeviceList, Program, ShaderDesc,
+        Surface, Swapchain,
+    },
+    DescriptorCache, Staging,
 };
+use glam::Mat4;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::WindowBuilder};
 
+struct Camera {
+    view: Mat4,
+    projection: Mat4,
+}
+
 fn main() {
     SimpleLogger::new().init().unwrap();
+    dess_vfs::scan(".").unwrap();
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_resizable(false)
@@ -45,5 +55,26 @@ fn main() {
         None,
     )
     .unwrap();
+    let vertex = dess_vfs::get("shaders/unlit.vert.spv").unwrap();
+    let fragment = dess_vfs::get("shaders/unlit.frag.spv").unwrap();
+    let shaders = [
+        ShaderDesc::vertex(vertex.data()),
+        ShaderDesc::fragment(fragment.data()),
+    ];
+    let program = Program::new(&device, &shaders).unwrap();
     let _staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
+    let mut desciptors = DescriptorCache::new(&device).unwrap();
+    let handle = desciptors.create(program.descriptor_set(0)).unwrap();
+    desciptors
+        .set_uniform(
+            handle,
+            0,
+            &Camera {
+                view: Mat4::IDENTITY,
+                projection: Mat4::IDENTITY,
+            },
+        )
+        .unwrap();
+    desciptors.update_descriptors().unwrap();
+    desciptors.remove(handle);
 }

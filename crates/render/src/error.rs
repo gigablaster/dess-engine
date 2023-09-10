@@ -59,6 +59,7 @@ impl From<MapError> for StagingError {
     }
 }
 
+#[derive(Debug)]
 pub enum DescriptorError {
     OutOfDeviceMemory,
     OutOfHostMemory,
@@ -139,6 +140,8 @@ impl From<UniformCreateError> for DescriptorError {
         }
     }
 }
+
+#[derive(Debug)]
 pub enum UniformCreateError {
     OutOfHostMemory,
     OutOfDeviceMemory,
@@ -146,6 +149,8 @@ pub enum UniformCreateError {
     TooManyObjects,
     MapFailed,
 }
+
+#[derive(Debug)]
 
 pub enum UniformAllocateError {
     OutOfSpace,

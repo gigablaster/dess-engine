@@ -277,17 +277,16 @@ impl Image {
 
 impl Drop for Image {
     fn drop(&mut self) {
-        self.device.with_drop_list(|drop_list| {
-            self.views
-                .lock()
-                .unwrap()
-                .drain()
-                .for_each(|(_, view)| drop_list.drop_image_view(view));
-            if let Some(memory) = self.allocation.take() {
-                drop_list.drop_image(self.raw);
-                drop_list.free_memory(memory);
-            }
-        })
+        let mut drop_list = self.device.drop_list();
+        self.views
+            .lock()
+            .unwrap()
+            .drain()
+            .for_each(|(_, view)| drop_list.drop_image_view(view));
+        if let Some(memory) = self.allocation.take() {
+            drop_list.drop_image(self.raw);
+            drop_list.free_memory(memory);
+        }
     }
 }
 

@@ -170,12 +170,11 @@ impl Buffer {
 
 impl Drop for Buffer {
     fn drop(&mut self) {
-        self.device.with_drop_list(|drop_list| {
-            drop_list.drop_buffer(self.raw);
-            if let Some(allocation) = self.allocation.take() {
-                drop_list.free_memory(allocation);
-            }
-        })
+        let mut drop_list = self.device.drop_list();
+        drop_list.drop_buffer(self.raw);
+        if let Some(allocation) = self.allocation.take() {
+            drop_list.free_memory(allocation);
+        }
     }
 }
 

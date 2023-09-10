@@ -298,7 +298,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new(device: &Arc<Device>, shaders: &[&ShaderDesc]) -> Result<Arc<Self>, CreateError> {
+    pub fn new(device: &Arc<Device>, shaders: &[ShaderDesc]) -> Result<Arc<Self>, CreateError> {
         let shaders = shaders
             .iter()
             .map(|desc| Shader::new(device.raw(), desc).unwrap())
@@ -441,5 +441,6 @@ impl Drop for Program {
                 .raw()
                 .destroy_pipeline_layout(self.pipeline_layout, None)
         };
+        self.sets.iter().for_each(|set| set.free(self.device.raw()));
     }
 }

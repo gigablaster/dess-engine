@@ -87,6 +87,8 @@ pub struct DescriptorCache {
     uniforms: Uniforms,
 }
 
+unsafe impl Sync for DescriptorCache {}
+
 impl DescriptorCache {
     pub fn new(device: &Arc<Device>) -> Result<Self, DescriptorError> {
         Ok(Self {
@@ -188,7 +190,7 @@ impl DescriptorCache {
         Ok(())
     }
 
-    pub(crate) fn set_uniform<T: Sized>(
+    pub fn set_uniform<T: Sized>(
         &mut self,
         handle: DescriptorHandle,
         binding: u32,
@@ -213,12 +215,10 @@ impl DescriptorCache {
         Ok(())
     }
 
-    pub fn update_descriptors(
-        &mut self,
-        allocator: &mut DescriptorAllocator,
-        drop_list: &mut DropList,
-    ) -> Result<(), DescriptorError> {
+    pub fn update_descriptors(&mut self) -> Result<(), DescriptorError> {
         puffin::profile_scope!("update descriptors");
+        let drop_list = &mut self.device.drop_list();
+        let allocator = &mut self.device.descriptor_allocator();
         // Free uniforms from last update
         self.retired_uniforms
             .drain(..)
@@ -332,5 +332,15 @@ impl DescriptorCache {
         } else {
             false
         }
+    }
+}
+
+impl Drop for DescriptorCache {
+    fn drop(&mut self) {
+        let mut drop_list = self.device.drop_list();
+        self.retired_descriptors
+            .drain(..)
+            .filter_map(|x| x.data.descriptor)
+            .for_each(|x| drop_list.free_descriptor_set(x));
     }
 }

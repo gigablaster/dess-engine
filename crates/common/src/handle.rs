@@ -11,6 +11,9 @@ pub struct Handle<T> {
     _phantom: PhantomData<T>,
 }
 
+unsafe impl<T> Send for Handle<T> {}
+unsafe impl<T> Sync for Handle<T> {}
+
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
