@@ -75,12 +75,13 @@ impl Staging {
         )?;
         let mut buffers = (0..STAGES)
             .map(|x| {
-                Buffer::new(
+                let buffer = Buffer::new(
                     device,
                     BufferDesc::host_only(size, vk::BufferUsageFlags::TRANSFER_SRC).dedicated(true),
-                    Some(&format!("staging {}", x)),
                 )
-                .unwrap()
+                .unwrap();
+                buffer.name(&format!("staging {}", x));
+                buffer
             })
             .collect::<Vec<_>>();
         let semaphores = (0..STAGES)

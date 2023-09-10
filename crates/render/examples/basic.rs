@@ -50,12 +50,6 @@ fn main() {
         .unwrap();
     let device = Device::create(&instance, physical_device).unwrap();
     let _swapchain = Swapchain::new(&device, surface, [1280, 720]).unwrap();
-    let _buffer = Buffer::new(
-        &device,
-        BufferDesc::gpu_only(4000, vk::BufferUsageFlags::TRANSFER_SRC),
-        None,
-    )
-    .unwrap();
     let vertex = dess_vfs::get("shaders/unlit.vert.spv").unwrap();
     let fragment = dess_vfs::get("shaders/unlit.frag.spv").unwrap();
     let shaders = [
@@ -79,7 +73,6 @@ fn main() {
             [512, 512],
         )
         .usage(vk::ImageUsageFlags::SAMPLED),
-        Some("Test texture"),
     )
     .unwrap();
     let _buffer = Buffer::new(
@@ -88,7 +81,6 @@ fn main() {
             1024,
             vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
         ),
-        Some("Test buffer"),
     )
     .unwrap();
     desciptors.set_uniform(handle1, 0, &camera).unwrap();

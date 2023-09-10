@@ -148,12 +148,8 @@ impl Image {
     pub fn texture(
         device: &Arc<Device>,
         desc: ImageDesc,
-        name: Option<&str>,
     ) -> Result<Arc<Self>, ResourceCreateError> {
         let image = unsafe { device.raw().create_image(&desc.build(), None) }?;
-        if let Some(name) = name {
-            device.set_object_name(image, name);
-        }
         let requirement = unsafe { device.raw().get_image_memory_requirements(image) };
         let allocation = unsafe {
             device.allocator().alloc(
@@ -272,6 +268,10 @@ impl Image {
 
     pub fn raw(&self) -> vk::Image {
         self.raw
+    }
+
+    pub fn name(&self, name: &str) {
+        self.device.set_object_name(self.raw, name);
     }
 }
 

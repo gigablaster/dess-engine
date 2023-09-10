@@ -84,11 +84,7 @@ pub struct Buffer {
 unsafe impl Send for Buffer {}
 
 impl Buffer {
-    pub fn new(
-        device: &Arc<Device>,
-        desc: BufferDesc,
-        name: Option<&str>,
-    ) -> Result<Arc<Self>, ResourceCreateError> {
+    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Arc<Self>, ResourceCreateError> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
             .usage(desc.usage)
@@ -96,9 +92,6 @@ impl Buffer {
             .queue_family_indices(&[device.queue_index()])
             .build();
         let buffer = unsafe { device.raw().create_buffer(&buffer_create_info, None) }?;
-        if let Some(name) = name {
-            device.set_object_name(buffer, name);
-        }
         let requirement = unsafe { device.raw().get_buffer_memory_requirements(buffer) };
         let aligment = if let Some(aligment) = desc.alignment {
             aligment.max(requirement.alignment)
@@ -166,6 +159,10 @@ impl Buffer {
     pub fn raw(&self) -> vk::Buffer {
         self.raw
     }
+
+    pub fn name(&self, name: &str) {
+        self.device.set_object_name(self.raw, name);
+    }
 }
 
 impl Drop for Buffer {
@@ -177,53 +174,3 @@ impl Drop for Buffer {
         }
     }
 }
-
-#[derive(Debug)]
-#[repr(C, align(16))]
-pub struct BufferCacheEntry {
-    pub raw: vk::Buffer,
-    pub buffer: Arc<Buffer>,
-}
-
-pub type BufferHandle = Handle<BufferCacheEntry>;
-
-pub struct BufferCache {
-    device: Arc<Device>,
-    data: HandleContainer<BufferCacheEntry>,
-}
-
-impl BufferCache {
-    pub fn new(device: &Arc<Device>) -> Self {
-        Self {
-            device: device.clone(),
-            data: HandleContainer::new(),
-        }
-    }
-
-    pub fn create(
-        &mut self,
-        desc: BufferDesc,
-        name: Option<&str>,
-    ) -> Result<BufferHandle, ResourceCreateError> {
-        let buffer = Buffer::new(&self.device, desc, name)?;
-        Ok(self.add(buffer))
-    }
-
-    pub fn add(&mut self, buffer: Arc<Buffer>) -> BufferHandle {
-        self.data.push(BufferCacheEntry {
-            raw: buffer.raw(),
-            buffer,
-        })
-    }
-
-    pub fn remove(&mut self, handle: BufferHandle) -> Option<Arc<Buffer>> {
-        let removed = self.data.remove(handle);
-        removed.map(|removed| removed.buffer)
-    }
-
-    pub fn resolve(&self, handle: BufferHandle) -> Option<vk::Buffer> {
-        self.data.get(handle).map(|data| data.raw)
-    }
-}
-
-pub type BufferSlice = (BufferHandle, u32);

@@ -99,8 +99,8 @@ impl Uniforms {
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
             )
             .dedicated(true),
-            Some("Unified uniform buffer"),
         )?;
+        buffer.name("Unified uniform buffer");
         let mapping = Arc::get_mut(&mut buffer).unwrap().map()?;
         Ok(Self {
             buffer,
