@@ -4,13 +4,12 @@ use std::{
     sync::Arc,
 };
 
-use arrayvec::ArrayVec;
 use ash::vk;
 use dess_common::memory::BlockAllocator;
 
 use crate::{
     error::{UniformAllocateError, UniformCreateError},
-    vulkan::{Buffer, BufferDesc, Device, ResourceCreateError},
+    vulkan::{Buffer, BufferDesc, Device},
 };
 
 const BUCKET_SIZE: u32 = 0xFFFF;
@@ -100,7 +99,7 @@ impl Uniforms {
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
             )
             .dedicated(true),
-            Some(&"Unified uniform buffer"),
+            Some("Unified uniform buffer"),
         )?;
         let mapping = Arc::get_mut(&mut buffer).unwrap().map()?;
         Ok(Self {

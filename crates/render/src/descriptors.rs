@@ -23,10 +23,7 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 use crate::{
     error::DescriptorError,
     uniforms::Uniforms,
-    vulkan::{
-        DescriptorAllocator, DescriptorSet, DescriptorSetInfo, Device, DropList, Image,
-        ImageViewDesc,
-    },
+    vulkan::{DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc},
 };
 
 #[derive(Debug, Clone, Copy)]

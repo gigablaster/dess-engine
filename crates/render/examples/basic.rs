@@ -1,8 +1,8 @@
 use ash::vk;
 use dess_render::{
     vulkan::{
-        Buffer, BufferDesc, Device, InstanceBuilder, PhysicalDeviceList, Program, ShaderDesc,
-        Surface, Swapchain,
+        Buffer, BufferDesc, Device, Image, ImageDesc, ImageType, InstanceBuilder,
+        PhysicalDeviceList, Program, ShaderDesc, Surface, Swapchain,
     },
     DescriptorCache, Staging,
 };
@@ -11,6 +11,7 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
 use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::WindowBuilder};
 
+#[allow(dead_code)]
 struct Camera {
     view: Mat4,
     projection: Mat4,
@@ -64,17 +65,44 @@ fn main() {
     let program = Program::new(&device, &shaders).unwrap();
     let _staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
     let mut desciptors = DescriptorCache::new(&device).unwrap();
-    let handle = desciptors.create(program.descriptor_set(0)).unwrap();
+    let handle1 = desciptors.create(program.descriptor_set(0)).unwrap();
+    let handle2 = desciptors.create(program.descriptor_set(1)).unwrap();
+    let camera = Camera {
+        view: Mat4::IDENTITY,
+        projection: Mat4::IDENTITY,
+    };
+    let image = Image::texture(
+        &device,
+        ImageDesc::new(
+            vk::Format::A8B8G8R8_UNORM_PACK32,
+            ImageType::Tex2D,
+            [512, 512],
+        )
+        .usage(vk::ImageUsageFlags::SAMPLED),
+        Some("Test texture"),
+    )
+    .unwrap();
+    let _buffer = Buffer::new(
+        &device,
+        BufferDesc::gpu_only(
+            1024,
+            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        ),
+        Some("Test buffer"),
+    )
+    .unwrap();
+    desciptors.set_uniform(handle1, 0, &camera).unwrap();
+    desciptors.set_uniform(handle2, 0, &Mat4::IDENTITY).unwrap();
     desciptors
-        .set_uniform(
-            handle,
-            0,
-            &Camera {
-                view: Mat4::IDENTITY,
-                projection: Mat4::IDENTITY,
-            },
+        .set_image(
+            handle2,
+            1,
+            &image,
+            vk::ImageAspectFlags::COLOR,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         )
         .unwrap();
     desciptors.update_descriptors().unwrap();
-    desciptors.remove(handle);
+    desciptors.remove(handle1);
+    desciptors.remove(handle2);
 }
