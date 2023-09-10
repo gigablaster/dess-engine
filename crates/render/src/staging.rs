@@ -43,12 +43,6 @@ pub struct ImageSubresourceData<'a> {
 }
 
 #[derive(Debug, Copy, Clone)]
-struct BufferUploadRequest {
-    pub op: vk::BufferCopy,
-    pub access: &'static [AccessType],
-}
-
-#[derive(Debug, Copy, Clone)]
 struct ImageUploadRequest {
     pub op: vk::BufferImageCopy,
     pub subresource: vk::ImageSubresourceRange,
@@ -61,7 +55,7 @@ pub struct Staging {
     tranfser_cbs: Vec<CommandBuffer>,
     size: u64,
     allocator: BumpAllocator,
-    upload_buffers: HashMap<vk::Buffer, Vec<BufferUploadRequest>>,
+    upload_buffers: HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
     upload_images: Vec<ImageUploadRequest>,
     mappings: Vec<NonNull<u8>>,
     buffers: Vec<Arc<Buffer>>,
@@ -153,25 +147,12 @@ impl Staging {
         buffer: &Buffer,
         offset: u64,
         data: &[T],
-        access: &'static [AccessType],
     ) -> Result<(), StagingError> {
         let size = size_of_val(data);
         assert!(size as u64 <= self.size);
-        if !self.try_push_buffer(
-            buffer.raw(),
-            offset,
-            size,
-            data.as_ptr() as *const u8,
-            access,
-        ) {
+        if !self.try_push_buffer(buffer.raw(), offset, size, data.as_ptr() as *const u8) {
             self.upload()?;
-            if !self.try_push_buffer(
-                buffer.raw(),
-                offset,
-                size,
-                data.as_ptr() as *const u8,
-                access,
-            ) {
+            if !self.try_push_buffer(buffer.raw(), offset, size, data.as_ptr() as *const u8) {
                 panic!(
                     "Despite just pushing entire staging buffer we still can't push data in it."
                 );
@@ -243,7 +224,6 @@ impl Staging {
         offset: u64,
         size: usize,
         data: *const u8,
-        access: &'static [AccessType],
     ) -> bool {
         if let Some(staging_offset) = self.allocator.allocate(size as _) {
             unsafe {
@@ -260,8 +240,7 @@ impl Staging {
                 dst_offset: offset,
                 size: size as u64,
             };
-            let request = BufferUploadRequest { op, access };
-            self.upload_buffers.entry(buffer).or_default().push(request);
+            self.upload_buffers.entry(buffer).or_default().push(op);
             true
         } else {
             false
@@ -324,7 +303,7 @@ impl Staging {
     fn barrier_pre(
         &self,
         recorder: &CommandBufferRecorder,
-        buffers: &HashMap<vk::Buffer, Vec<BufferUploadRequest>>,
+        buffers: &HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
         images: &[ImageUploadRequest],
     ) {
         let mut buffer_barriers = Vec::with_capacity(128);
@@ -336,8 +315,8 @@ impl Staging {
                     src_queue_family_index: self.device.queue_index(),
                     dst_queue_family_index: self.device.queue_index(),
                     buffer: *buffer,
-                    offset: request.op.dst_offset as _,
-                    size: request.op.size as _,
+                    offset: request.dst_offset as _,
+                    size: request.size as _,
                 })
             })
         });
@@ -378,7 +357,7 @@ impl Staging {
     fn barrier_after(
         &self,
         recorder: &CommandBufferRecorder,
-        buffers: &HashMap<vk::Buffer, Vec<BufferUploadRequest>>,
+        buffers: &HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
         images: &[ImageUploadRequest],
     ) {
         let mut buffer_barriers = Vec::with_capacity(128);
@@ -386,12 +365,12 @@ impl Staging {
             requests.iter().for_each(|request| {
                 buffer_barriers.push(BufferBarrier {
                     previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: request.access,
+                    next_accesses: &[AccessType::VertexBuffer, AccessType::IndexBuffer],
                     src_queue_family_index: self.device.queue_index(),
                     dst_queue_family_index: self.device.queue_index(),
                     buffer: *buffer,
-                    offset: request.op.dst_offset as _,
-                    size: request.op.size as _,
+                    offset: request.dst_offset as _,
+                    size: request.size as _,
                 })
             })
         });
@@ -422,16 +401,15 @@ impl Staging {
     fn copy_buffers(
         &self,
         recorder: &CommandBufferRecorder,
-        requests: &HashMap<vk::Buffer, Vec<BufferUploadRequest>>,
+        requests: &HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
     ) {
         requests.iter().for_each(|(buffer, requests)| {
-            let ops = requests.iter().map(|x| x.op).collect::<Vec<_>>();
             unsafe {
                 recorder.device.cmd_copy_buffer(
                     *recorder.cb,
                     self.buffers[self.current].raw(),
                     *buffer,
-                    &ops,
+                    requests,
                 )
             };
         });
