@@ -27,8 +27,6 @@ mod program;
 mod render_pass;
 mod swapchain;
 
-pub use self::image::*;
-
 use ash::vk;
 pub use buffer::*;
 pub use command_buffer::*;
@@ -36,6 +34,7 @@ pub use device::*;
 pub use droplist::*;
 pub use error::*;
 pub use frame_context::*;
+pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
 pub use pipeline::*;
