@@ -5,3 +5,5 @@ members=[
     "crates/render",
     "tools/packer"
 ]
+
+resolver = "2"

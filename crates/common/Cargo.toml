@@ -6,10 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-log = "0.4"
-simple_logger = "4.0"
-byteorder = "1.4"
-four-cc = "0.2"
-uuid = "1.3"
-arrayvec = "0.7"
+log = "0.4.20"
+simple_logger = "4.2.0"
+byteorder = "1.4.0"
+four-cc = "0.3.0"
+uuid = "1.4.1"
+arrayvec = "0.7.4"
 
