@@ -21,24 +21,24 @@ use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 
 use crate::{
-    error::{DescriptorError, UniformAllocateError, UniformCreateError},
+    error::DescriptorError,
     uniforms::Uniforms,
     vulkan::{
-        BufferCache, BufferSlice, DescriptorAllocator, DescriptorSet, DescriptorSetInfo, Device,
-        DropList, Image, ImageViewDesc,
+        DescriptorAllocator, DescriptorSet, DescriptorSetInfo, Device, DropList, Image,
+        ImageViewDesc,
     },
 };
 
 #[derive(Debug, Clone, Copy)]
-pub struct BindedImage {
+struct BindedImage {
     layout: vk::ImageLayout,
     view: vk::ImageView,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct BindedBuffer {
-    pub offset: u32,
-    pub size: u32,
+struct BindedBuffer {
+    offset: u32,
+    size: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -49,11 +49,11 @@ pub struct BindingPoint<T> {
 
 #[derive(Debug)]
 pub struct Descriptor {
-    pub descriptor: Option<DescriptorSet>,
-    pub buffers: Vec<BindingPoint<BindedBuffer>>,
-    pub images: Vec<BindingPoint<BindedImage>>,
-    pub count: DescriptorTotalCount,
-    pub layout: vk::DescriptorSetLayout,
+    descriptor: Option<DescriptorSet>,
+    buffers: Vec<BindingPoint<BindedBuffer>>,
+    images: Vec<BindingPoint<BindedImage>>,
+    count: DescriptorTotalCount,
+    layout: vk::DescriptorSetLayout,
 }
 
 impl Descriptor {
@@ -75,7 +75,7 @@ pub struct DescriptorCache {
 }
 
 impl DescriptorCache {
-    pub fn new(device: &Arc<Device>) -> Result<Self, UniformCreateError> {
+    pub fn new(device: &Arc<Device>) -> Result<Self, DescriptorError> {
         Ok(Self {
             device: device.clone(),
             container: HandleContainer::new(),
@@ -172,12 +172,12 @@ impl DescriptorCache {
         Ok(())
     }
 
-    pub(crate) fn set_buffer<T: Sized>(
+    pub(crate) fn set_uniform<T: Sized>(
         &mut self,
         handle: DescriptorHandle,
         binding: u32,
         data: &T,
-    ) -> Result<(), UniformAllocateError> {
+    ) -> Result<(), DescriptorError> {
         if let Some(desc) = self.container.get_mut(handle) {
             let buffer = desc
                 .buffers

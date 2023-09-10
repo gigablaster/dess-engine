@@ -64,6 +64,10 @@ pub enum DescriptorError {
     OutOfHostMemory,
     OutOfPoolMemory,
     Fragmentation,
+    OutOfUniformSpace,
+    MapFailed,
+    NoCompatibleMemory,
+    TooManyObjects,
 }
 
 impl From<gpu_descriptor::AllocationError> for DescriptorError {
@@ -116,6 +120,25 @@ impl From<CreateError> for DescriptorError {
     }
 }
 
+impl From<UniformAllocateError> for DescriptorError {
+    fn from(value: UniformAllocateError) -> Self {
+        match value {
+            UniformAllocateError::OutOfSpace => DescriptorError::OutOfUniformSpace,
+        }
+    }
+}
+
+impl From<UniformCreateError> for DescriptorError {
+    fn from(value: UniformCreateError) -> Self {
+        match value {
+            UniformCreateError::OutOfDeviceMemory => DescriptorError::OutOfHostMemory,
+            UniformCreateError::MapFailed => DescriptorError::MapFailed,
+            UniformCreateError::NoCompatibleMemory => DescriptorError::NoCompatibleMemory,
+            UniformCreateError::OutOfHostMemory => DescriptorError::OutOfHostMemory,
+            UniformCreateError::TooManyObjects => DescriptorError::TooManyObjects,
+        }
+    }
+}
 pub enum UniformCreateError {
     OutOfHostMemory,
     OutOfDeviceMemory,
