@@ -1,4 +1,4 @@
-image: ubuntu/oldlts
+image: ubuntu/lts
 packages:
   - rust-all
   - pkg-config
