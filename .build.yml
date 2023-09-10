@@ -5,6 +5,9 @@ packages:
 sources:
   - https://git.sr.ht/~gigablaster/dess-engine
 tasks:
+  - format: |
+      cd dess-engine
+      cargo fmt -- --check
   - clippy: |
       cd dess-engine
       cargo clippy --all-targets -- -D warnings
