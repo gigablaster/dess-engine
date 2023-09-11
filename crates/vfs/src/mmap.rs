@@ -13,51 +13,69 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fs::File, io, path::Path, sync::Arc};
+use std::{
+    cmp::min,
+    fs::File,
+    io::{self, Error, Read, Seek},
+    path::Path,
+    ptr::copy_nonoverlapping,
+    sync::Arc,
+};
 
 use memmap2::{Mmap, MmapOptions};
 
-use crate::Content;
+pub fn map_file(path: &Path) -> io::Result<Arc<Mmap>> {
+    let mmap = unsafe { MmapOptions::new().map(&File::open(path)?) }?;
 
-#[derive(Debug)]
-pub(crate) struct MappedFile {
-    mmap: Mmap,
-}
-
-impl MappedFile {
-    pub fn open(path: &Path) -> io::Result<Self> {
-        let file = File::open(path)?;
-        let mmap = unsafe { MmapOptions::new().map(&file)? };
-
-        Ok(Self { mmap })
-    }
-}
-
-impl Content for MappedFile {
-    fn data(&self) -> &[u8] {
-        self.mmap.as_ref()
-    }
+    Ok(Arc::new(mmap))
 }
 
 #[derive(Debug)]
-pub(crate) struct MappedFileSlice {
-    file: Arc<MappedFile>,
+pub struct MappedFileReader {
+    mmap: Arc<Mmap>,
     from: usize,
-    to: usize,
+    size: usize,
+    cursor: usize,
 }
 
-impl MappedFileSlice {
-    pub fn new(file: &Arc<MappedFile>, from: usize, size: usize) -> Self {
+impl MappedFileReader {
+    pub fn new(mmap: &Arc<Mmap>, from: usize, size: usize) -> Self {
+        let from = min(from, mmap.len());
+        let last = min(from + size, mmap.len());
+        let size = last - from;
         Self {
-            file: file.clone(),
+            mmap: mmap.clone(),
             from,
-            to: from + size,
+            size,
+            cursor: 0,
         }
     }
 }
 
-impl Content for MappedFileSlice {
-    fn data(&self) -> &[u8] {
-        &self.file.data()[self.from..self.to]
+impl Read for MappedFileReader {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let to_read = min(buf.len(), self.size - self.cursor);
+        if to_read == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "End of the file",
+            ));
+        }
+        unsafe {
+            copy_nonoverlapping(
+                self.mmap.as_ptr().add(self.cursor),
+                buf.as_mut_ptr(),
+                to_read,
+            )
+        };
+        self.cursor += to_read;
+
+        Ok(to_read)
+    }
+}
+
+impl Seek for MappedFileReader {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        todo!()
     }
 }

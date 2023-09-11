@@ -13,9 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::path::PathBuf;
+use std::{io::Read, path::PathBuf};
 
-use crate::{mmap::MappedFile, Archive, Content, VfsError};
+use crate::{
+    mmap::{map_file, MappedFileReader},
+    Archive, VfsError,
+};
 
 pub struct RawFsArchive {
     root: PathBuf,
@@ -28,10 +31,10 @@ impl RawFsArchive {
 }
 
 impl Archive for RawFsArchive {
-    fn load(&self, name: &str) -> Result<Box<dyn Content>, VfsError> {
+    fn load(&self, name: &str) -> Result<Box<dyn Read>, VfsError> {
         let path = self.root.join::<PathBuf>(name.into());
-        let file = MappedFile::open(&path)?;
+        let file = map_file(&path)?;
 
-        Ok(Box::new(file))
+        Ok(Box::new(MappedFileReader::new(&file, 0, file.len())))
     }
 }

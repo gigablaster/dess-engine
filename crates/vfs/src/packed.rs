@@ -13,33 +13,40 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fmt::Debug, io::Cursor, path::Path, sync::Arc};
+use std::{
+    fmt::Debug,
+    io::{Cursor, Read},
+    path::Path,
+    sync::Arc,
+};
+
+use memmap2::Mmap;
 
 use crate::{
     directory::{load_archive_directory, Directory},
-    mmap::{MappedFile, MappedFileSlice},
-    Archive, Content, VfsError,
+    mmap::{map_file, MappedFileReader},
+    Archive, VfsError,
 };
 
 #[derive(Debug)]
 pub struct PackedArchive {
-    file: Arc<MappedFile>,
+    file: Arc<Mmap>,
     directory: Directory,
 }
 
 impl PackedArchive {
     pub fn open(path: &Path) -> Result<Self, VfsError> {
-        let file = Arc::new(MappedFile::open(path)?);
-        let directory = load_archive_directory(&mut Cursor::new(file.data()))?;
+        let file = map_file(path)?;
+        let directory = load_archive_directory(&mut MappedFileReader::new(&file, 0, file.len()))?;
 
         Ok(Self { file, directory })
     }
 }
 
 impl Archive for PackedArchive {
-    fn load(&self, name: &str) -> Result<Box<dyn Content>, VfsError> {
+    fn load(&self, name: &str) -> Result<Box<dyn Read>, VfsError> {
         if let Some(header) = self.directory.get(name) {
-            Ok(Box::new(MappedFileSlice::new(
+            Ok(Box::new(MappedFileReader::new(
                 &self.file,
                 header.offset as _,
                 header.size as _,

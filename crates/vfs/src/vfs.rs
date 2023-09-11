@@ -15,12 +15,13 @@
 
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
 use log::{error, info};
 
-use crate::{packed::PackedArchive, raw_fs::RawFsArchive, Archive, Content, VfsError};
+use crate::{packed::PackedArchive, raw_fs::RawFsArchive, Archive, VfsError};
 
 #[derive(Default)]
 pub struct Vfs {
@@ -59,7 +60,7 @@ impl Vfs {
         Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Result<Box<dyn Content>, VfsError> {
+    pub fn get(&self, name: &str) -> Result<Box<dyn Read>, VfsError> {
         for archive in &self.archives {
             match archive.load(name) {
                 Ok(content) => return Ok(content),

@@ -24,7 +24,7 @@ pub use directory::DirectoryBaker;
 pub use error::*;
 use lazy_static::lazy_static;
 
-use std::{path::PathBuf, sync::Mutex};
+use std::{io::Read, path::PathBuf, sync::Mutex};
 
 use crate::vfs::Vfs;
 
@@ -32,18 +32,14 @@ lazy_static! {
     static ref VFS: Mutex<Vfs> = Mutex::new(Vfs::default());
 }
 
-pub trait Content {
-    fn data(&self) -> &[u8];
-}
-
 pub trait Archive: Send + Sync {
-    fn load(&self, name: &str) -> Result<Box<dyn Content>, VfsError>;
+    fn load(&self, name: &str) -> Result<Box<dyn Read>, VfsError>;
 }
 
 pub fn scan(root: impl Into<PathBuf>) -> Result<(), VfsError> {
     VFS.lock().unwrap().scan(root)
 }
 
-pub fn get(name: &str) -> Result<Box<dyn Content>, VfsError> {
+pub fn get(name: &str) -> Result<Box<dyn Read>, VfsError> {
     VFS.lock().unwrap().get(name)
 }
