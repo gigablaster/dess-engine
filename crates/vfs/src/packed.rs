@@ -66,8 +66,8 @@ impl Loader for PackedFile {
 }
 
 impl Archive for PackedArchive {
-    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
-        if let Some(header) = self.directory.get(name) {
+    fn open(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError> {
+        if let Some(header) = self.directory.get(name.to_str().unwrap()) {
             match header.size {
                 FileSize::Raw(size) => Ok(Box::new(MappedFileReader::new(
                     &self.file,

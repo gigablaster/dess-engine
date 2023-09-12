@@ -57,7 +57,7 @@ impl Vfs {
         Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
+    pub fn get(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError> {
         for archive in &self.archives {
             match archive.open(name) {
                 Ok(content) => return Ok(content),
@@ -66,7 +66,7 @@ impl Vfs {
             }
         }
 
-        Err(VfsError::NotFound(name.into()))
+        Err(VfsError::NotFound(name.to_path_buf()))
     }
 
     fn add_archive(&mut self, path: &Path) -> Result<(), VfsError> {

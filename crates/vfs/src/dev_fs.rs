@@ -17,7 +17,7 @@ impl DevFsArchive {
 }
 
 impl Archive for DevFsArchive {
-    fn open(&self, name: &str) -> Result<Box<dyn crate::Loader>, crate::VfsError> {
+    fn open(&self, name: &Path) -> Result<Box<dyn crate::Loader>, crate::VfsError> {
         self.cache.open(name).or_else(|_| self.data.open(name))
     }
 }

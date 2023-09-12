@@ -16,7 +16,7 @@
 use std::{
     fs::{metadata, File},
     io,
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::SystemTime,
 };
 
@@ -36,8 +36,8 @@ impl RawFsArchive {
 }
 
 impl Archive for RawFsArchive {
-    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
-        let path = self.root.join::<PathBuf>(name.into());
+    fn open(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError> {
+        let path = self.root.join(name);
         let file = map_file(&path)?;
 
         Ok(Box::new(MappedFileReader::new(&file, 0, file.len())))

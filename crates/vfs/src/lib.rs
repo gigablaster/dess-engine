@@ -27,7 +27,7 @@ use lazy_static::lazy_static;
 
 use std::{
     io::{self, Read},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::Mutex,
 };
 
@@ -48,13 +48,13 @@ pub trait Loader: Read {
 }
 
 pub trait Archive: Send + Sync {
-    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError>;
+    fn open(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError>;
 }
 
 pub fn scan(root: impl Into<PathBuf>) -> Result<(), VfsError> {
     VFS.lock().unwrap().scan(root)
 }
 
-pub fn get(name: &str) -> Result<Box<dyn Loader>, VfsError> {
-    VFS.lock().unwrap().get(name)
+pub fn get(name: impl Into<PathBuf>) -> Result<Box<dyn Loader>, VfsError> {
+    VFS.lock().unwrap().get(&name.into())
 }
