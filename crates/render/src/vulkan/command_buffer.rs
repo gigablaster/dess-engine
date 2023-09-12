@@ -196,6 +196,40 @@ impl<'a> RenderPassAttachment<'a> {
             store_op: vk::AttachmentStoreOp::STORE,
         }
     }
+
+    pub fn garbage_input(mut self) -> Self {
+        self.load_op = vk::AttachmentLoadOp::DONT_CARE;
+        self.clear = None;
+        self
+    }
+
+    pub fn clear_color(mut self, color: glam::Vec4) -> Self {
+        self.load_op = vk::AttachmentLoadOp::CLEAR;
+        self.clear = Some(vk::ClearValue {
+            color: vk::ClearColorValue {
+                float32: [color.x, color.y, color.z, color.w],
+            },
+        });
+        self
+    }
+
+    pub fn clear_depth(mut self, depth: f32) -> Self {
+        self.load_op = vk::AttachmentLoadOp::CLEAR;
+        self.clear = Some(vk::ClearValue {
+            depth_stencil: vk::ClearDepthStencilValue { depth, stencil: 0 },
+        });
+        self
+    }
+
+    pub fn garbage_output(mut self) -> Self {
+        self.store_op = vk::AttachmentStoreOp::DONT_CARE;
+        self
+    }
+
+    pub fn store_output(mut self) -> Self {
+        self.store_op = vk::AttachmentStoreOp::STORE;
+        self
+    }
 }
 
 pub struct CommandBufferRecorder<'a> {
@@ -245,7 +279,8 @@ impl<'a> CommandBufferRecorder<'a> {
                     height: dims[1] as _,
                 },
             })
-            .color_attachments(&color_attachments);
+            .color_attachments(&color_attachments)
+            .layer_count(1);
 
         if !depth_attachment.is_empty() {
             render_info.p_depth_attachment = depth_attachment.as_ptr();
