@@ -20,9 +20,7 @@ use std::{
 
 use log::{error, info};
 
-use crate::{
-    dev_fs::DevFsArchive, packed::PackedArchive, Archive, Loader, VfsError,
-};
+use crate::{dev_fs::DevFsArchive, packed::PackedArchive, Archive, Loader, VfsError};
 
 #[derive(Default)]
 pub struct Vfs {
