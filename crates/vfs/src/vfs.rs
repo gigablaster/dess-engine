@@ -21,7 +21,9 @@ use std::{
 
 use log::{error, info};
 
-use crate::{packed::PackedArchive, raw_fs::RawFsArchive, Archive, Loader, VfsError};
+use crate::{
+    dev_fs::DevFsArchive, packed::PackedArchive, raw_fs::RawFsArchive, Archive, Loader, VfsError,
+};
 
 #[derive(Default)]
 pub struct Vfs {
@@ -31,18 +33,13 @@ pub struct Vfs {
 impl Vfs {
     pub fn scan(&mut self, root: impl Into<PathBuf>) -> Result<(), VfsError> {
         let root = root.into();
-        let raw_data_path = root.join("data");
-        if raw_data_path.is_dir() {
-            info!("Adding data at path {:?}", &raw_data_path);
-            self.archives
-                .push(Box::new(RawFsArchive::new(raw_data_path)));
-        }
+        self.archives.push(Box::new(DevFsArchive::new(&root)));
         let paths = fs::read_dir(root)?;
         for path in paths {
             let path = path?.path();
             let extension = if let Some(ext) = path.extension() {
                 if let Some(ext) = ext.to_str() {
-                    ext == "dess"
+                    ext == "pak"
                 } else {
                     false
                 }

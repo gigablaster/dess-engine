@@ -13,7 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{io::Read, path::PathBuf};
+use std::{
+    fs::{metadata, File},
+    io,
+    path::PathBuf,
+    time::SystemTime,
+};
 
 use crate::{
     mmap::{map_file, MappedFileReader},
