@@ -14,10 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    fs::{metadata, File},
-    io,
     path::{Path, PathBuf},
-    time::SystemTime,
 };
 
 use crate::{

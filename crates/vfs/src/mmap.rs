@@ -16,7 +16,7 @@
 use std::{
     cmp::min,
     fs::File,
-    io::{self, Error, Read, Seek},
+    io::{self, Read, Seek},
     path::Path,
     ptr::copy_nonoverlapping,
     sync::Arc,
@@ -62,7 +62,7 @@ impl Read for MappedFileReader {
         }
         unsafe {
             copy_nonoverlapping(
-                self.mmap.as_ptr().add(self.cursor),
+                self.mmap.as_ptr().add(self.from + self.cursor),
                 buf.as_mut_ptr(),
                 to_read,
             )
@@ -80,7 +80,7 @@ impl Loader for MappedFileReader {
 }
 
 impl Seek for MappedFileReader {
-    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+    fn seek(&mut self, _pos: io::SeekFrom) -> io::Result<u64> {
         todo!()
     }
 }

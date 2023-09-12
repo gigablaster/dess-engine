@@ -16,7 +16,7 @@
 use std::{
     collections::HashMap,
     io::{self, Read, Seek, Write},
-    mem::{size_of, transmute},
+    mem::{size_of},
     slice,
 };
 

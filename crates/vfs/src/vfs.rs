@@ -15,14 +15,13 @@
 
 use std::{
     fs,
-    io::Read,
     path::{Path, PathBuf},
 };
 
 use log::{error, info};
 
 use crate::{
-    dev_fs::DevFsArchive, packed::PackedArchive, raw_fs::RawFsArchive, Archive, Loader, VfsError,
+    dev_fs::DevFsArchive, packed::PackedArchive, Archive, Loader, VfsError,
 };
 
 #[derive(Default)]
