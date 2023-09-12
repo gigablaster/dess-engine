@@ -67,7 +67,7 @@ impl Drop for Surface {
 }
 struct SwapchainInner {
     pub raw: vk::SwapchainKHR,
-    pub images: Vec<Image>,
+    pub images: Vec<Arc<Image>>,
     pub loader: khr::Swapchain,
     pub acquire_semaphore: Vec<Semaphore>,
     pub rendering_finished_semaphore: Vec<Semaphore>,
@@ -177,6 +177,7 @@ impl SwapchainInner {
                     },
                 )
             })
+            .map(Arc::new)
             .collect::<Vec<_>>();
 
         images.iter().enumerate().for_each(|(index, image)| {
@@ -249,8 +250,8 @@ pub struct Swapchain {
     inner: SwapchainInner,
 }
 
-pub struct SwapchainImage<'a> {
-    pub image: &'a Image,
+pub struct SwapchainImage {
+    pub image: Arc<Image>,
     pub image_index: u32,
     pub acquire_semaphore: Semaphore,
     pub presentation_finished: Semaphore,
@@ -288,14 +289,14 @@ impl Swapchain {
 
         self.inner.next_semaphore = (self.inner.next_semaphore + 1) % self.inner.images.len();
         Ok(SwapchainImage {
-            image: &self.inner.images[present_index as usize],
+            image: self.inner.images[present_index as usize].clone(),
             image_index: present_index,
             acquire_semaphore,
             presentation_finished: rendering_finished_semaphore,
         })
     }
 
-    pub fn present_image(&self, device: &Device, image: SwapchainImage) {
+    pub fn present_image(&self, image: SwapchainImage) {
         puffin::profile_scope!("present");
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(slice::from_ref(&image.presentation_finished.raw))
@@ -306,7 +307,7 @@ impl Swapchain {
         match unsafe {
             self.inner
                 .loader
-                .queue_present(device.queue().raw, &present_info)
+                .queue_present(self.device.queue().raw, &present_info)
         } {
             Ok(_) => (),
             Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}

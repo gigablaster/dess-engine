@@ -87,6 +87,10 @@ impl FrameContext {
             .expect("Command buffer must be recycled from same thread it was allocated from")
             .retire(cb);
     }
+
+    pub fn main_cb(&self) -> &CommandBuffer {
+        &self.main_cb
+    }
 }
 
 pub struct CommandBufferGuard<'a> {

@@ -155,7 +155,7 @@ impl GpuResource for CommandBuffer {
 }
 
 pub struct RenderPassAttachment<'a> {
-    pub image: &'a Arc<Image>,
+    pub image: &'a Image,
     pub layout: vk::ImageLayout,
     pub load_op: vk::AttachmentLoadOp,
     pub store_op: vk::AttachmentStoreOp,
@@ -163,7 +163,7 @@ pub struct RenderPassAttachment<'a> {
 }
 
 impl<'a> RenderPassAttachment<'a> {
-    pub fn color_target(image: &'a Arc<Image>, color: Option<glam::Vec4>) -> Self {
+    pub fn color_target(image: &'a Image, color: Option<glam::Vec4>) -> Self {
         Self {
             image,
             clear: color.map(|color| vk::ClearValue {
@@ -319,6 +319,7 @@ impl<'a> CommandBufferRecorder<'a> {
 
         info.build()
     }
+
     pub fn barrier(
         &self,
         global: Option<GlobalBarrier>,
