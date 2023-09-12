@@ -99,7 +99,12 @@ impl Device {
             return Err(DeviceCreateError::NoSuitableQueues);
         };
 
-        let device_extension_names = vec![khr::Swapchain::name().as_ptr()];
+        let device_extension_names = vec![
+            khr::Swapchain::name().as_ptr(),
+            khr::BufferDeviceAddress::name().as_ptr(),
+            vk::ExtDescriptorIndexingFn::name().as_ptr(),
+            vk::KhrDynamicRenderingFn::name().as_ptr(),
+        ];
 
         for ext in &device_extension_names {
             let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
@@ -114,7 +119,16 @@ impl Device {
             )
             .ok_or(DeviceCreateError::NoSuitableQueues)?;
 
-        let mut features = vk::PhysicalDeviceFeatures2::builder().build();
+        let mut get_buffer_device_address_features =
+            ash::vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeaturesEXT::default();
+        let mut dynamic_rendering = vk::PhysicalDeviceDynamicRenderingFeatures::default();
+
+        let mut features = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut get_buffer_device_address_features)
+            .push_next(&mut descriptor_indexing)
+            .push_next(&mut dynamic_rendering)
+            .build();
 
         unsafe {
             instance
