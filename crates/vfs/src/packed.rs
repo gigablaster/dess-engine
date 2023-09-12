@@ -13,12 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fmt::Debug, path::Path, sync::Arc};
+use std::{fmt::Debug, io::Read, path::Path, sync::Arc};
 
 use memmap2::Mmap;
 
 use crate::{
-    directory::{load_archive_directory, Directory},
+    directory::{load_archive_directory, Directory, FileSize},
     mmap::{map_file, MappedFileReader},
     Archive, Loader, VfsError,
 };
@@ -38,14 +38,47 @@ impl PackedArchive {
     }
 }
 
+#[derive(Debug)]
+pub struct PackedFile {
+    size: usize,
+    decoder: lz4_flex::frame::FrameDecoder<MappedFileReader>,
+}
+
+impl PackedFile {
+    pub fn new(file: MappedFileReader, size: usize) -> Self {
+        Self {
+            size,
+            decoder: lz4_flex::frame::FrameDecoder::new(file),
+        }
+    }
+}
+
+impl Read for PackedFile {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        self.decoder.read(buf)
+    }
+}
+
+impl Loader for PackedFile {
+    fn size(&self) -> usize {
+        self.size
+    }
+}
+
 impl Archive for PackedArchive {
     fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
         if let Some(header) = self.directory.get(name) {
-            Ok(Box::new(MappedFileReader::new(
-                &self.file,
-                header.offset as _,
-                header.size as _,
-            )))
+            match header.size {
+                FileSize::Raw(size) => Ok(Box::new(MappedFileReader::new(
+                    &self.file,
+                    header.offset as _,
+                    size as _,
+                ))),
+                FileSize::Compressed(unpacked, packed) => Ok(Box::new(PackedFile::new(
+                    MappedFileReader::new(&self.file, header.offset as _, packed as _),
+                    unpacked as _,
+                ))),
+            }
         } else {
             Err(VfsError::NotFound(name.into()))
         }

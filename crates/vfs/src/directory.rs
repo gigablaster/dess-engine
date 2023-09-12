@@ -29,17 +29,55 @@ const MAGICK: FourCC = FourCC(*b"dess");
 const VERSION: u32 = 1;
 const FILE_ALIGN: u64 = 4096;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FileSize {
+    Compressed(u32, u32),
+    Raw(u32),
+}
+
+impl BinaryDeserialization for FileSize {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let ty = r.read_u8()?;
+        match ty {
+            0 => Ok(FileSize::Raw(r.read_u32::<LittleEndian>()?)),
+            1 => {
+                let unpacked = r.read_u32::<LittleEndian>()?;
+                let packed = r.read_u32::<LittleEndian>()?;
+                Ok(FileSize::Compressed(unpacked, packed))
+            }
+            _ => panic!("Unknown file size type"),
+        }
+    }
+}
+
+impl BinarySerialization for FileSize {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        match self {
+            FileSize::Raw(size) => {
+                w.write_u8(0)?;
+                w.write_u32::<LittleEndian>(*size)?;
+            }
+            FileSize::Compressed(unpacked, packed) => {
+                w.write_u8(1)?;
+                w.write_u32::<LittleEndian>(*unpacked)?;
+                w.write_u32::<LittleEndian>(*packed)?;
+            }
+        }
+
+        Ok(())
+    }
+}
 #[derive(Debug, Clone)]
 pub struct FileHeader {
     pub offset: u64,
-    pub size: u32,
+    pub size: FileSize,
 }
 
 impl BinaryDeserialization for FileHeader {
     fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         Ok(Self {
             offset: r.read_u64::<LittleEndian>()?,
-            size: r.read_u32::<LittleEndian>()?,
+            size: FileSize::deserialize(r)?,
         })
     }
 }
@@ -47,7 +85,7 @@ impl BinaryDeserialization for FileHeader {
 impl BinarySerialization for FileHeader {
     fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
         w.write_u64::<LittleEndian>(self.offset)?;
-        w.write_u32::<LittleEndian>(self.size)?;
+        self.size.serialize(w)?;
 
         Ok(())
     }
@@ -124,16 +162,32 @@ impl<W: Write + Seek> DirectoryBaker<W> {
 
     pub fn write(&mut self, name: &str, data: &[u8]) -> Result<(), VfsError> {
         let name = name.replace('\\', "/").to_ascii_lowercase();
-        let offset = self.try_align()?;
-        self.w.write_all(data)?;
+        if data.len() <= FILE_ALIGN as _ {
+            let offset = self.try_align()?;
+            self.w.write_all(data)?;
 
-        self.files.insert(
-            name,
-            FileHeader {
-                offset,
-                size: data.len() as _,
-            },
-        );
+            self.files.insert(
+                name,
+                FileHeader {
+                    offset,
+                    size: FileSize::Raw(data.len() as _),
+                },
+            );
+        } else {
+            let offset = self.try_align()?;
+            let mut writer = lz4_flex::frame::FrameEncoder::new(&mut self.w);
+            writer.write_all(data)?;
+            writer.finish().unwrap();
+            let end = self.w.stream_position()?;
+
+            self.files.insert(
+                name,
+                FileHeader {
+                    offset,
+                    size: FileSize::Compressed(data.len() as _, (end - offset) as _),
+                },
+            );
+        }
 
         Ok(())
     }
@@ -163,7 +217,7 @@ impl<W: Write + Seek> DirectoryBaker<W> {
 mod test {
     use std::io::Cursor;
 
-    use crate::DirectoryBaker;
+    use crate::{directory::FileSize, DirectoryBaker};
 
     use super::load_archive_directory;
 
@@ -187,8 +241,8 @@ mod test {
         let dir = load_archive_directory(&mut Cursor::new(&data)).unwrap();
         assert_eq!(2, dir.len());
         let file1 = dir.get("file1").unwrap();
-        assert_eq!(data1.len() as u32, file1.size);
+        assert_eq!(FileSize::Raw(data1.len() as u32), file1.size);
         let file2 = dir.get("file2").unwrap();
-        assert_eq!(data2.len() as u32, file2.size);
+        assert_eq!(FileSize::Raw(data2.len() as u32), file2.size);
     }
 }
