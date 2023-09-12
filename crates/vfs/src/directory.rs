@@ -16,7 +16,8 @@
 use std::{
     collections::HashMap,
     io::{self, Read, Seek, Write},
-    mem::size_of,
+    mem::{size_of, transmute},
+    slice,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -160,7 +161,9 @@ impl<W: Write + Seek> DirectoryBaker<W> {
         })
     }
 
-    pub fn write(&mut self, name: &str, data: &[u8]) -> Result<(), VfsError> {
+    pub fn write<T: Sized>(&mut self, name: &str, data: &[T]) -> Result<(), VfsError> {
+        let raw = data.as_ptr() as *const u8;
+        let data = unsafe { slice::from_raw_parts(raw, std::mem::size_of_val(data)) };
         let name = name.replace('\\', "/").to_ascii_lowercase();
         if data.len() <= FILE_ALIGN as _ {
             let offset = self.try_align()?;
@@ -215,7 +218,7 @@ impl<W: Write + Seek> DirectoryBaker<W> {
 
 #[cfg(test)]
 mod test {
-    use std::io::Cursor;
+    use std::{io::Cursor, mem::size_of};
 
     use crate::{directory::FileSize, DirectoryBaker};
 
@@ -244,5 +247,22 @@ mod test {
         assert_eq!(FileSize::Raw(data1.len() as u32), file1.size);
         let file2 = dir.get("file2").unwrap();
         assert_eq!(FileSize::Raw(data2.len() as u32), file2.size);
+    }
+
+    #[test]
+    fn write_read_compressed() {
+        let mut data = Vec::new();
+        let mut builder = DirectoryBaker::new(Cursor::new(&mut data)).unwrap();
+        let test_data = (0..9001u32).collect::<Vec<_>>();
+        builder.write("file", &test_data).unwrap();
+        builder.finish().unwrap();
+        let dir = load_archive_directory(&mut Cursor::new(&data)).unwrap();
+        let file = dir.get("file").unwrap();
+        match file.size {
+            FileSize::Compressed(size, _) => {
+                assert_eq!(size_of::<u32>() * test_data.len(), size as usize)
+            }
+            _ => panic!("Wrong compression"),
+        }
     }
 }
