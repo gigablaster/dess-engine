@@ -50,12 +50,11 @@ fn main() {
         .unwrap();
     let device = Device::create(&instance, physical_device).unwrap();
     let _swapchain = Swapchain::new(&device, surface, [1280, 720]).unwrap();
-    let vertex = dess_vfs::get("shaders/unlit.vert.spv").unwrap();
-    let fragment = dess_vfs::get("shaders/unlit.frag.spv").unwrap();
-    let shaders = [
-        ShaderDesc::vertex(vertex.data()),
-        ShaderDesc::fragment(fragment.data()),
-    ];
+    let mut vertex = dess_vfs::get("shaders/unlit.vert.spv").unwrap();
+    let mut fragment = dess_vfs::get("shaders/unlit.frag.spv").unwrap();
+    let vertex = vertex.load().unwrap();
+    let fragment = fragment.load().unwrap();
+    let shaders = [ShaderDesc::vertex(&vertex), ShaderDesc::fragment(&fragment)];
     let program = Program::new(&device, &shaders).unwrap();
     let _staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
     let mut desciptors = DescriptorCache::new(&device).unwrap();

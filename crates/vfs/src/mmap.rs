@@ -24,6 +24,8 @@ use std::{
 
 use memmap2::{Mmap, MmapOptions};
 
+use crate::Loader;
+
 pub fn map_file(path: &Path) -> io::Result<Arc<Mmap>> {
     let mmap = unsafe { MmapOptions::new().map(&File::open(path)?) }?;
 
@@ -56,10 +58,7 @@ impl Read for MappedFileReader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let to_read = min(buf.len(), self.size - self.cursor);
         if to_read == 0 {
-            return Err(io::Error::new(
-                io::ErrorKind::UnexpectedEof,
-                "End of the file",
-            ));
+            return Ok(0);
         }
         unsafe {
             copy_nonoverlapping(
@@ -71,6 +70,12 @@ impl Read for MappedFileReader {
         self.cursor += to_read;
 
         Ok(to_read)
+    }
+}
+
+impl Loader for MappedFileReader {
+    fn size(&self) -> usize {
+        self.mmap.len()
     }
 }
 

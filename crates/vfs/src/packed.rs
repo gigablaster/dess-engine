@@ -13,19 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    fmt::Debug,
-    io::{Cursor, Read},
-    path::Path,
-    sync::Arc,
-};
+use std::{fmt::Debug, path::Path, sync::Arc};
 
 use memmap2::Mmap;
 
 use crate::{
     directory::{load_archive_directory, Directory},
     mmap::{map_file, MappedFileReader},
-    Archive, VfsError,
+    Archive, Loader, VfsError,
 };
 
 #[derive(Debug)]
@@ -44,7 +39,7 @@ impl PackedArchive {
 }
 
 impl Archive for PackedArchive {
-    fn load(&self, name: &str) -> Result<Box<dyn Read>, VfsError> {
+    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
         if let Some(header) = self.directory.get(name) {
             Ok(Box::new(MappedFileReader::new(
                 &self.file,

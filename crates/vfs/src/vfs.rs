@@ -21,7 +21,7 @@ use std::{
 
 use log::{error, info};
 
-use crate::{packed::PackedArchive, raw_fs::RawFsArchive, Archive, VfsError};
+use crate::{packed::PackedArchive, raw_fs::RawFsArchive, Archive, Loader, VfsError};
 
 #[derive(Default)]
 pub struct Vfs {
@@ -60,9 +60,9 @@ impl Vfs {
         Ok(())
     }
 
-    pub fn get(&self, name: &str) -> Result<Box<dyn Read>, VfsError> {
+    pub fn get(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
         for archive in &self.archives {
-            match archive.load(name) {
+            match archive.open(name) {
                 Ok(content) => return Ok(content),
                 Err(VfsError::NotFound(_)) => {}
                 Err(err) => return Err(err),

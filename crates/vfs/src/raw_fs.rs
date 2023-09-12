@@ -17,7 +17,7 @@ use std::{io::Read, path::PathBuf};
 
 use crate::{
     mmap::{map_file, MappedFileReader},
-    Archive, VfsError,
+    Archive, Loader, VfsError,
 };
 
 pub struct RawFsArchive {
@@ -31,7 +31,7 @@ impl RawFsArchive {
 }
 
 impl Archive for RawFsArchive {
-    fn load(&self, name: &str) -> Result<Box<dyn Read>, VfsError> {
+    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
         let path = self.root.join::<PathBuf>(name.into());
         let file = map_file(&path)?;
 
