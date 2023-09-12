@@ -250,6 +250,14 @@ impl<'a> ShaderDesc<'a> {
         }
     }
 
+    pub fn compute(code: &'a [u8]) -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::COMPUTE,
+            entry: "main",
+            code,
+        }
+    }
+
     pub fn entry(mut self, entry: &'a str) -> Self {
         self.entry = entry;
         self

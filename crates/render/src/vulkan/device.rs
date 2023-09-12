@@ -93,7 +93,9 @@ impl Device {
         instance: &Arc<Instance>,
         pdevice: PhysicalDevice,
     ) -> Result<Arc<Self>, DeviceCreateError> {
-        if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER) {
+        if !pdevice.is_queue_flag_supported(
+            vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
+        ) {
             return Err(DeviceCreateError::NoSuitableQueues);
         };
 
@@ -107,7 +109,9 @@ impl Device {
         }
 
         let universal_queue = pdevice
-            .get_queue(vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER)
+            .get_queue(
+                vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
+            )
             .ok_or(DeviceCreateError::NoSuitableQueues)?;
 
         let mut features = vk::PhysicalDeviceFeatures2::builder().build();
