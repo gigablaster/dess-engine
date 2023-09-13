@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    cmp::min,
+    cmp::{max, min},
     fs::File,
     io::{self, Read, Seek},
     path::Path,
@@ -80,7 +80,15 @@ impl Loader for MappedFileReader {
 }
 
 impl Seek for MappedFileReader {
-    fn seek(&mut self, _pos: io::SeekFrom) -> io::Result<u64> {
-        todo!()
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        let size = self.size as i64;
+        let cursor = self.cursor as i64;
+        self.cursor = match pos {
+            io::SeekFrom::Current(offset) => max(0, min(size, cursor + offset)),
+            io::SeekFrom::End(offset) => max(0, min(size, size + offset)),
+            io::SeekFrom::Start(offset) => max(0, min(size, offset as _)),
+        } as _;
+
+        Ok(self.cursor as _)
     }
 }
