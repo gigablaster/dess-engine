@@ -21,7 +21,7 @@ use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier}
 
 use crate::GpuResource;
 
-use super::{CreateError, Image, ImageViewDesc, ResetError, WaitError};
+use super::{CreateError, Image, ImageViewDesc, ResetError, SubmitWait, WaitError};
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 

@@ -1,15 +1,24 @@
-use ash::vk;
+use std::borrow::BorrowMut;
+
+use ash::vk::{self};
 use dess_render::{
     vulkan::{
-        Buffer, BufferDesc, Device, Image, ImageDesc, ImageType, InstanceBuilder,
-        PhysicalDeviceList, Program, ShaderDesc, Surface, Swapchain,
+        AcquireError, Buffer, BufferDesc, Device, Image, ImageDesc, ImageType, InstanceBuilder,
+        PhysicalDeviceList, Program, RenderPassAttachment, ShaderDesc, SubImage, SubmitWait,
+        Surface, Swapchain,
     },
     DescriptorCache, Staging,
 };
 use glam::Mat4;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
-use winit::{dpi::PhysicalSize, event_loop::EventLoop, window::WindowBuilder};
+use vk_sync::{AccessType, ImageBarrier, ImageLayout};
+use winit::{
+    dpi::PhysicalSize,
+    event::{Event, WindowEvent},
+    event_loop::{ControlFlow, EventLoop},
+    window::WindowBuilder,
+};
 
 #[allow(dead_code)]
 struct Camera {
@@ -49,7 +58,7 @@ fn main() {
         )
         .unwrap();
     let device = Device::create(&instance, physical_device).unwrap();
-    let _swapchain = Swapchain::new(&device, surface, [1280, 720]).unwrap();
+    let mut swapchain = Swapchain::new(&device, surface, [1280, 720]).unwrap();
     let mut vertex = dess_vfs::get("shaders/unlit.vert.spv").unwrap();
     let mut fragment = dess_vfs::get("shaders/unlit.frag.spv").unwrap();
     let vertex = vertex.load().unwrap();
@@ -96,4 +105,66 @@ fn main() {
     desciptors.update_descriptors().unwrap();
     desciptors.remove(handle1);
     desciptors.remove(handle2);
+
+    event_loop.run(move |event, _, control_flow| {
+        *control_flow = ControlFlow::Poll;
+        let mut need_recreate = false;
+        match event {
+            Event::WindowEvent { event, .. } => match event {
+                WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
+                WindowEvent::Resized(_) => need_recreate = true,
+                _ => {}
+            },
+            Event::RedrawRequested(_) => {
+                let backbuffer = swapchain.acquire_next_image().unwrap();
+                let frame = device.begin_frame().unwrap();
+                frame
+                    .main_cb()
+                    .record(device.raw(), |recorder| {
+                        {
+                            let backbuffer = RenderPassAttachment::color_target(
+                                &backbuffer.image,
+                                Some(glam::Vec4::new(0.01, 0.01, 0.222, 1.0)),
+                            );
+
+                            recorder.render_pass(&[backbuffer], None, |_| {}).unwrap();
+                        }
+
+                        recorder.barrier(
+                            None,
+                            &[],
+                            &[ImageBarrier {
+                                previous_accesses: &[AccessType::Nothing],
+                                next_accesses: &[AccessType::Present],
+                                previous_layout: ImageLayout::Optimal,
+                                next_layout: ImageLayout::Optimal,
+                                discard_contents: false,
+                                src_queue_family_index: device.queue_index(),
+                                dst_queue_family_index: device.queue_index(),
+                                image: backbuffer.image.raw(),
+                                range: backbuffer.image.subresource_range(
+                                    SubImage::LayerAndMip(0, 0),
+                                    vk::ImageAspectFlags::COLOR,
+                                ),
+                            }],
+                        )
+                    })
+                    .unwrap();
+
+                device
+                    .submit(
+                        frame.main_cb(),
+                        &[SubmitWait::ColorAttachmentOutput(
+                            &backbuffer.acquire_semaphore,
+                        )],
+                        &[backbuffer.rendering_finished],
+                    )
+                    .unwrap();
+
+                device.end_frame(frame);
+                swapchain.present_image(backbuffer);
+            }
+            _ => {}
+        }
+    });
 }

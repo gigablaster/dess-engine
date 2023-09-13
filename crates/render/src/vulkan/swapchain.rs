@@ -185,11 +185,19 @@ impl SwapchainInner {
         });
 
         let acquire_semaphore = (0..images.len())
-            .map(|_| Semaphore::new(device.raw()).unwrap())
+            .map(|index| {
+                let semaphore = Semaphore::new(device.raw()).unwrap();
+                device.set_object_name(semaphore.raw, &format!("Acquire semaphore #{}", index));
+                semaphore
+            })
             .collect();
 
         let rendering_finished_semaphore = (0..images.len())
-            .map(|_| Semaphore::new(device.raw()).unwrap())
+            .map(|index| {
+                let semaphore = Semaphore::new(device.raw()).unwrap();
+                device.set_object_name(semaphore.raw, &format!("Rendering semaphore #{}", index));
+                semaphore
+            })
             .collect();
 
         Ok(Self {
@@ -231,6 +239,7 @@ impl SwapchainInner {
     }
 
     pub fn cleanup(&mut self, device: &Device) {
+        device.wait();
         unsafe { self.loader.destroy_swapchain(self.raw, None) };
         for semaphore in &mut self.acquire_semaphore {
             semaphore.free(device.raw())
@@ -254,7 +263,7 @@ pub struct SwapchainImage {
     pub image: Arc<Image>,
     pub image_index: u32,
     pub acquire_semaphore: Semaphore,
-    pub presentation_finished: Semaphore,
+    pub rendering_finished: Semaphore,
 }
 
 impl Swapchain {
@@ -292,14 +301,14 @@ impl Swapchain {
             image: self.inner.images[present_index as usize].clone(),
             image_index: present_index,
             acquire_semaphore,
-            presentation_finished: rendering_finished_semaphore,
+            rendering_finished: rendering_finished_semaphore,
         })
     }
 
     pub fn present_image(&self, image: SwapchainImage) {
         puffin::profile_scope!("present");
         let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(slice::from_ref(&image.presentation_finished.raw))
+            .wait_semaphores(slice::from_ref(&image.rendering_finished.raw))
             .swapchains(slice::from_ref(&self.inner.raw))
             .image_indices(slice::from_ref(&image.image_index))
             .build();

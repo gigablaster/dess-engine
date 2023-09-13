@@ -161,6 +161,28 @@ impl Device {
             Mutex::new(Arc::new(FrameContext::new(&device, universal_queue.index)?)),
         ];
 
+        frames.iter().enumerate().for_each(|(index, frame)| {
+            let frame = frame.lock().unwrap();
+            Self::set_object_name_impl(
+                instance,
+                &device,
+                frame.main_cb.raw(),
+                &format!("MainCB #{}", index),
+            );
+            Self::set_object_name_impl(
+                instance,
+                &device,
+                frame.presentation_cb.raw(),
+                &format!("PresentCB #{}", index),
+            );
+            Self::set_object_name_impl(
+                instance,
+                &device,
+                frame.render_finished.raw,
+                &format!("RenderFinished Semaphore #{}", index),
+            );
+        });
+
         let drop_lists = [
             Mutex::new(DropList::default()),
             Mutex::new(DropList::default()),
