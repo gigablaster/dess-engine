@@ -32,6 +32,18 @@ pub struct RenderPassLayout<'a> {
     pub depth_attachment: Option<RenderPassAttachmentDesc>,
 }
 
+impl<'a> RenderPassLayout<'a> {
+    pub fn new(
+        color_attachments: &'a [RenderPassAttachmentDesc],
+        depth_attachment: Option<RenderPassAttachmentDesc>,
+    ) -> Self {
+        Self {
+            color_attachments,
+            depth_attachment,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct RenderPassAttachmentDesc {
     format: vk::Format,
@@ -65,7 +77,12 @@ impl RenderPassAttachmentDesc {
         self
     }
 
-    pub fn build(
+    pub fn multisampling(mut self, value: vk::SampleCountFlags) -> Self {
+        self.samples = value;
+        self
+    }
+
+    pub(self) fn build(
         self,
         initial_layout: vk::ImageLayout,
         final_layout: vk::ImageLayout,

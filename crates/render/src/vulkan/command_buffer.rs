@@ -161,8 +161,22 @@ pub struct RenderPassAttachment<'a> {
 }
 
 impl<'a> RenderPassAttachment<'a> {
-    pub fn new(image: &'a Arc<Image>, clear: vk::ClearValue) -> Self {
-        Self { image, clear }
+    pub fn color(image: &'a Arc<Image>, clear: [f32; 4]) -> Self {
+        Self {
+            image,
+            clear: vk::ClearValue {
+                color: vk::ClearColorValue { float32: clear },
+            },
+        }
+    }
+
+    pub fn depth(image: &'a Arc<Image>, depth: f32) -> Self {
+        Self {
+            image,
+            clear: vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue { depth, stencil: 0 },
+            },
+        }
     }
 }
 

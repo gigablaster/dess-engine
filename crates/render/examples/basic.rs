@@ -2,8 +2,8 @@ use ash::vk::{self};
 use dess_render::{
     vulkan::{
         AcquireError, Buffer, BufferDesc, Device, Image, ImageDesc, ImageType, InstanceBuilder,
-        PhysicalDeviceList, Program, RenderPassAttachment, ShaderDesc, SubImage, SubmitWait,
-        Surface, Swapchain,
+        PhysicalDeviceList, Program, RenderPass, RenderPassAttachment, RenderPassAttachmentDesc,
+        RenderPassLayout, ShaderDesc, SubImage, SubmitWait, Surface, Swapchain,
     },
     DescriptorCache, Staging,
 };
@@ -109,6 +109,15 @@ fn main() {
     desciptors.remove(handle1);
     desciptors.remove(handle2);
 
+    let render_pass = RenderPass::new(
+        &device,
+        RenderPassLayout::new(
+            &[RenderPassAttachmentDesc::new(swapchain.backbuffer_format()).clear_input()],
+            None,
+        ),
+    )
+    .unwrap();
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         let mut need_recreate = false;
@@ -127,13 +136,33 @@ fn main() {
                     frame
                         .main_cb()
                         .record(device.raw(), |recorder| {
+                            recorder.barrier(
+                                None,
+                                &[],
+                                &[ImageBarrier {
+                                    previous_accesses: &[AccessType::Nothing],
+                                    next_accesses: &[AccessType::ColorAttachmentWrite],
+                                    previous_layout: ImageLayout::Optimal,
+                                    next_layout: ImageLayout::Optimal,
+                                    discard_contents: true,
+                                    src_queue_family_index: device.queue_index(),
+                                    dst_queue_family_index: device.queue_index(),
+                                    image: backbuffer.image.raw(),
+                                    range: backbuffer.image.subresource_range(
+                                        SubImage::LayerAndMip(0, 0),
+                                        vk::ImageAspectFlags::COLOR,
+                                    ),
+                                }],
+                            );
                             {
-                                let backbuffer = RenderPassAttachment::color_target(
+                                let backbuffer = RenderPassAttachment::color(
                                     &backbuffer.image,
-                                    Some(glam::Vec4::new(0.01, 0.01, 0.222, 1.0)),
+                                    [0.01, 0.01, 0.222, 1.0],
                                 );
 
-                                recorder.render_pass(&[backbuffer], None, |_| {}).unwrap();
+                                recorder
+                                    .render_pass(&render_pass, &[backbuffer], None, |_| {})
+                                    .unwrap();
                             }
 
                             recorder.barrier(
