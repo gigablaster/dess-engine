@@ -1,5 +1,3 @@
-use std::borrow::BorrowMut;
-
 use ash::vk::{self};
 use dess_render::{
     vulkan::{
@@ -115,56 +113,72 @@ fn main() {
                 WindowEvent::Resized(_) => need_recreate = true,
                 _ => {}
             },
-            Event::RedrawRequested(_) => {
-                let backbuffer = swapchain.acquire_next_image().unwrap();
-                let frame = device.begin_frame().unwrap();
-                frame
-                    .main_cb()
-                    .record(device.raw(), |recorder| {
-                        {
-                            let backbuffer = RenderPassAttachment::color_target(
-                                &backbuffer.image,
-                                Some(glam::Vec4::new(0.01, 0.01, 0.222, 1.0)),
-                            );
+            Event::RedrawRequested(_) => match swapchain.acquire_next_image() {
+                Err(AcquireError::Suboptimal) | Err(AcquireError::OutOfDate) => {
+                    need_recreate = true;
+                }
+                Ok(backbuffer) => {
+                    let frame = device.begin_frame().unwrap();
+                    frame
+                        .main_cb()
+                        .record(device.raw(), |recorder| {
+                            {
+                                let backbuffer = RenderPassAttachment::color_target(
+                                    &backbuffer.image,
+                                    Some(glam::Vec4::new(0.01, 0.01, 0.222, 1.0)),
+                                );
 
-                            recorder.render_pass(&[backbuffer], None, |_| {}).unwrap();
-                        }
+                                recorder.render_pass(&[backbuffer], None, |_| {}).unwrap();
+                            }
 
-                        recorder.barrier(
-                            None,
-                            &[],
-                            &[ImageBarrier {
-                                previous_accesses: &[AccessType::Nothing],
-                                next_accesses: &[AccessType::Present],
-                                previous_layout: ImageLayout::Optimal,
-                                next_layout: ImageLayout::Optimal,
-                                discard_contents: false,
-                                src_queue_family_index: device.queue_index(),
-                                dst_queue_family_index: device.queue_index(),
-                                image: backbuffer.image.raw(),
-                                range: backbuffer.image.subresource_range(
-                                    SubImage::LayerAndMip(0, 0),
-                                    vk::ImageAspectFlags::COLOR,
-                                ),
-                            }],
+                            recorder.barrier(
+                                None,
+                                &[],
+                                &[ImageBarrier {
+                                    previous_accesses: &[AccessType::Nothing],
+                                    next_accesses: &[AccessType::Present],
+                                    previous_layout: ImageLayout::Optimal,
+                                    next_layout: ImageLayout::Optimal,
+                                    discard_contents: false,
+                                    src_queue_family_index: device.queue_index(),
+                                    dst_queue_family_index: device.queue_index(),
+                                    image: backbuffer.image.raw(),
+                                    range: backbuffer.image.subresource_range(
+                                        SubImage::LayerAndMip(0, 0),
+                                        vk::ImageAspectFlags::COLOR,
+                                    ),
+                                }],
+                            )
+                        })
+                        .unwrap();
+
+                    device
+                        .submit(
+                            frame.main_cb(),
+                            &[SubmitWait::ColorAttachmentOutput(
+                                &backbuffer.acquire_semaphore,
+                            )],
+                            &[backbuffer.rendering_finished],
                         )
-                    })
-                    .unwrap();
+                        .unwrap();
 
-                device
-                    .submit(
-                        frame.main_cb(),
-                        &[SubmitWait::ColorAttachmentOutput(
-                            &backbuffer.acquire_semaphore,
-                        )],
-                        &[backbuffer.rendering_finished],
+                    device.end_frame(frame);
+                    swapchain.present_image(backbuffer);
+                }
+                Err(err) => panic!("Error: {:?}", err),
+            },
+            _ => {}
+        }
+        if need_recreate {
+            let inner_size = window.inner_size();
+            if inner_size.width > 0 && inner_size.height > 0 {
+                swapchain
+                    .recreate(
+                        &device,
+                        [window.inner_size().width, window.inner_size().height],
                     )
                     .unwrap();
-
-                device.end_frame(frame);
-                swapchain.present_image(backbuffer);
             }
-            _ => {}
         }
     });
 }

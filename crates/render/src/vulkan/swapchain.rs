@@ -82,6 +82,10 @@ impl SwapchainInner {
         surface: &Surface,
         resolution: [u32; 2],
     ) -> Result<Self, SwapchainError> {
+        info!(
+            "Create swapchain for resolution {} x {}",
+            resolution[0], resolution[1]
+        );
         let surface_capabilities = unsafe {
             surface.loader.get_physical_device_surface_capabilities(
                 device.physical_device().raw(),
