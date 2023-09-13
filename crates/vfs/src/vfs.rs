@@ -14,26 +14,32 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    fs,
-    path::{Path, PathBuf},
+    fs::{self},
+    io::Write,
+    path::PathBuf,
 };
 
+use directories::ProjectDirs;
 use log::{error, info};
 
-use crate::{dev_fs::DevFsArchive, packed::PackedArchive, Archive, Loader, VfsError};
+use crate::{
+    dev_fs::DevFsArchive, packed::PackedArchive, raw_fs::RawFsArchive, Archive, AssetPath, Loader,
+    VfsError,
+};
 
-#[derive(Default)]
 pub struct Vfs {
-    archives: Vec<Box<dyn Archive>>,
+    content: Vec<Box<dyn Archive>>,
+    cache: Box<dyn Archive>,
+    save: Box<dyn Archive>,
 }
 
 impl Vfs {
-    pub fn scan(&mut self, root: impl Into<PathBuf>) -> Result<(), VfsError> {
-        let root = root.into();
-        self.archives.push(Box::new(DevFsArchive::new(&root)));
-        let paths = fs::read_dir(root)?;
-        for path in paths {
-            let path = path?.path();
+    pub fn new(organization: &str, application: &str) -> Self {
+        let mut content = Vec::<Box<dyn Archive>>::new();
+        content.push(Box::new(DevFsArchive::new(&PathBuf::from("."))));
+        let dir = fs::read_dir(".").unwrap();
+        for path in dir {
+            let path = path.unwrap().path();
             let extension = if let Some(ext) = path.extension() {
                 if let Some(ext) = ext.to_str() {
                     ext == "pak"
@@ -45,31 +51,56 @@ impl Vfs {
             };
             if path.is_file() && extension {
                 info!("Adding archive {:?}", path);
-                if let Err(err) = self.add_archive(&path) {
-                    error!("Failed to add archive {:?} - {:?}", path, err);
+                match PackedArchive::new(&path) {
+                    Err(err) => error!("Failed to add archive {:?} - {:?}", path, err),
+                    Ok(archive) => content.push(Box::new(archive)),
                 }
             }
         }
+        let project_dirs = ProjectDirs::from("com", organization, application).unwrap();
+        let cache = Box::new(RawFsArchive::new(project_dirs.cache_dir()));
+        let save = Box::new(RawFsArchive::new(project_dirs.data_dir()));
 
-        Ok(())
+        Self {
+            content,
+            cache,
+            save,
+        }
     }
 
-    pub fn get(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError> {
-        for archive in &self.archives {
-            match archive.open(name) {
-                Ok(content) => return Ok(content),
-                Err(VfsError::NotFound(_)) => {}
-                Err(err) => return Err(err),
+    pub fn load(&self, name: AssetPath) -> Result<Box<dyn Loader>, VfsError> {
+        match name {
+            AssetPath::Content(name) => {
+                for archive in &self.content {
+                    match archive.open(name) {
+                        Ok(content) => return Ok(content),
+                        Err(VfsError::NotFound(_)) => {}
+                        Err(err) => return Err(err),
+                    }
+                }
             }
+            AssetPath::Cache(name) => return self.cache.open(name),
+            AssetPath::Save(name) => return self.save.open(name),
         }
 
-        Err(VfsError::NotFound(name.to_path_buf()))
+        Err(VfsError::NotFound(name.to_string()))
     }
 
-    fn add_archive(&mut self, path: &Path) -> Result<(), VfsError> {
-        let archive = Box::new(PackedArchive::open(path)?);
-        self.archives.push(archive);
+    pub fn create(&self, name: AssetPath) -> Result<Box<dyn Write>, VfsError> {
+        match name {
+            AssetPath::Content(name) => {
+                for archive in &self.content {
+                    match archive.create(name) {
+                        Ok(content) => return Ok(content),
+                        Err(VfsError::ReadOnly) => {}
+                        Err(err) => return Err(err),
+                    }
+                }
+            }
+            AssetPath::Cache(name) => return self.cache.create(name),
+            AssetPath::Save(name) => return self.save.create(name),
+        }
 
-        Ok(())
+        Err(VfsError::ReadOnly)
     }
 }

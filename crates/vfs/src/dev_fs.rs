@@ -32,7 +32,13 @@ impl DevFsArchive {
 }
 
 impl Archive for DevFsArchive {
-    fn open(&self, name: &Path) -> Result<Box<dyn crate::Loader>, crate::VfsError> {
+    fn open(&self, name: &str) -> Result<Box<dyn crate::Loader>, crate::VfsError> {
+        // Open first from cache, second from data
         self.cache.open(name).or_else(|_| self.data.open(name))
+    }
+
+    fn create(&self, name: &str) -> Result<Box<dyn std::io::Write>, crate::VfsError> {
+        // Create new files only in cache
+        self.cache.create(name)
     }
 }

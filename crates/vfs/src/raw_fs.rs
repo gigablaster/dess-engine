@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::path::{Path, PathBuf};
+use std::{fs::File, io::Write, path::PathBuf};
 
 use crate::{
     mmap::{map_file, MappedFileReader},
@@ -31,10 +31,15 @@ impl RawFsArchive {
 }
 
 impl Archive for RawFsArchive {
-    fn open(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError> {
+    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
         let path = self.root.join(name);
         let file = map_file(&path)?;
 
         Ok(Box::new(MappedFileReader::new(&file, 0, file.len())))
+    }
+
+    fn create(&self, name: &str) -> Result<Box<dyn Write>, VfsError> {
+        let path = self.root.join(name);
+        Ok(Box::new(File::create(path)?))
     }
 }

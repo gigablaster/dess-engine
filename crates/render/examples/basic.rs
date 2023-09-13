@@ -7,6 +7,7 @@ use dess_render::{
     },
     DescriptorCache, Staging,
 };
+use dess_vfs::{AssetPath, Vfs};
 use glam::Mat4;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
@@ -26,7 +27,7 @@ struct Camera {
 
 fn main() {
     SimpleLogger::new().init().unwrap();
-    dess_vfs::scan(".").unwrap();
+    let vfs = Vfs::new("gigablaster", "engine basic example");
     let event_loop = EventLoop::new();
     let window = WindowBuilder::new()
         .with_resizable(false)
@@ -57,8 +58,12 @@ fn main() {
         .unwrap();
     let device = Device::create(&instance, physical_device).unwrap();
     let mut swapchain = Swapchain::new(&device, surface, [1280, 720]).unwrap();
-    let mut vertex = dess_vfs::get("shaders/unlit.vert.spv").unwrap();
-    let mut fragment = dess_vfs::get("shaders/unlit.frag.spv").unwrap();
+    let mut vertex = vfs
+        .load(AssetPath::Content("shaders/unlit.vert.spv"))
+        .unwrap();
+    let mut fragment = vfs
+        .load(AssetPath::Content("shaders/unlit.frag.spv"))
+        .unwrap();
     let vertex = vertex.load().unwrap();
     let fragment = fragment.load().unwrap();
     let shaders = [ShaderDesc::vertex(&vertex), ShaderDesc::fragment(&fragment)];

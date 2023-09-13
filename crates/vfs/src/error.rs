@@ -13,14 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{io, path::PathBuf};
+use std::io;
 
 #[derive(Debug)]
 pub enum VfsError {
     IO(io::Error),
     InvalidVersiom,
     InvalidFormat,
-    NotFound(PathBuf),
+    NotFound(String),
+    ReadOnly,
 }
 
 impl From<io::Error> for VfsError {

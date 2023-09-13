@@ -23,19 +23,9 @@ mod vfs;
 
 pub use directory::DirectoryBaker;
 pub use error::*;
-use lazy_static::lazy_static;
+pub use vfs::*;
 
-use std::{
-    io::{self, Read},
-    path::{Path, PathBuf},
-    sync::Mutex,
-};
-
-use crate::vfs::Vfs;
-
-lazy_static! {
-    static ref VFS: Mutex<Vfs> = Mutex::new(Vfs::default());
-}
+use std::io::{self, Read, Write};
 
 pub trait Loader: Read {
     fn size(&self) -> usize;
@@ -47,14 +37,23 @@ pub trait Loader: Read {
     }
 }
 
+pub enum AssetPath<'a> {
+    Content(&'a str),
+    Cache(&'a str),
+    Save(&'a str),
+}
+
+impl<'a> ToString for AssetPath<'a> {
+    fn to_string(&self) -> String {
+        match self {
+            AssetPath::Cache(name) => name.to_string(),
+            AssetPath::Content(name) => name.to_string(),
+            AssetPath::Save(name) => name.to_string(),
+        }
+    }
+}
+
 pub trait Archive: Send + Sync {
-    fn open(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError>;
-}
-
-pub fn scan(root: impl Into<PathBuf>) -> Result<(), VfsError> {
-    VFS.lock().unwrap().scan(root)
-}
-
-pub fn get(name: impl Into<PathBuf>) -> Result<Box<dyn Loader>, VfsError> {
-    VFS.lock().unwrap().get(&name.into())
+    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError>;
+    fn create(&self, name: &str) -> Result<Box<dyn Write>, VfsError>;
 }

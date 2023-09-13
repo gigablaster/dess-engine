@@ -13,7 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fmt::Debug, io::Read, path::Path, sync::Arc};
+use std::{
+    fmt::Debug,
+    io::{Read, Write},
+    path::Path,
+    sync::Arc,
+};
 
 use memmap2::Mmap;
 
@@ -30,7 +35,7 @@ pub struct PackedArchive {
 }
 
 impl PackedArchive {
-    pub fn open(path: &Path) -> Result<Self, VfsError> {
+    pub fn new(path: &Path) -> Result<Self, VfsError> {
         let file = map_file(path)?;
         let directory = load_archive_directory(&mut MappedFileReader::new(&file, 0, file.len()))?;
 
@@ -66,8 +71,8 @@ impl Loader for PackedFile {
 }
 
 impl Archive for PackedArchive {
-    fn open(&self, name: &Path) -> Result<Box<dyn Loader>, VfsError> {
-        if let Some(header) = self.directory.get(name.to_str().unwrap()) {
+    fn open(&self, name: &str) -> Result<Box<dyn Loader>, VfsError> {
+        if let Some(header) = self.directory.get(name) {
             match header.size {
                 FileSize::Raw(size) => Ok(Box::new(MappedFileReader::new(
                     &self.file,
@@ -82,5 +87,9 @@ impl Archive for PackedArchive {
         } else {
             Err(VfsError::NotFound(name.into()))
         }
+    }
+
+    fn create(&self, _name: &str) -> Result<Box<dyn Write>, VfsError> {
+        Err(VfsError::ReadOnly)
     }
 }
