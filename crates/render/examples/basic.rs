@@ -121,6 +121,7 @@ fn main() {
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         let mut need_recreate = false;
+
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
@@ -205,7 +206,12 @@ fn main() {
         }
         if need_recreate {
             let inner_size = window.inner_size();
-            if inner_size.width > 0 && inner_size.height > 0 {
+            let current_size = swapchain.render_area();
+            if inner_size.width > 0
+                && inner_size.height > 0
+                && current_size.extent.width != inner_size.width
+                && current_size.extent.height != inner_size.height
+            {
                 swapchain
                     .recreate(
                         &device,
