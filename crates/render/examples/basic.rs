@@ -3,7 +3,7 @@ use dess_render::{
     vulkan::{
         AcquireError, Buffer, BufferDesc, Device, Image, ImageDesc, ImageType, InstanceBuilder,
         PhysicalDeviceList, Program, RenderPass, RenderPassAttachment, RenderPassAttachmentDesc,
-        RenderPassLayout, ShaderDesc, SubImage, SubmitWait, Surface, Swapchain,
+        RenderPassLayout, ShaderDesc, SubmitWait, Surface, Swapchain,
     },
     DescriptorCache, Staging,
 };
@@ -11,7 +11,6 @@ use dess_vfs::{AssetPath, Vfs};
 use glam::Mat4;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
-use vk_sync::{AccessType, ImageBarrier, ImageLayout};
 use winit::{
     dpi::PhysicalSize,
     event::{Event, WindowEvent},
@@ -70,13 +69,9 @@ fn main() {
     let program = Program::new(&device, &shaders).unwrap();
     let _staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
     let mut desciptors = DescriptorCache::new(&device).unwrap();
-    let handle1 = desciptors.create(program.descriptor_set(0)).unwrap();
-    let handle2 = desciptors.create(program.descriptor_set(1)).unwrap();
-    let camera = Camera {
-        view: Mat4::IDENTITY,
-        projection: Mat4::IDENTITY,
-    };
-    let image = Image::texture(
+    let _handle1 = desciptors.create(program.descriptor_set(0)).unwrap();
+    let _handle2 = desciptors.create(program.descriptor_set(1)).unwrap();
+    let _image = Image::texture(
         &device,
         ImageDesc::new(
             vk::Format::A8B8G8R8_UNORM_PACK32,
@@ -94,25 +89,14 @@ fn main() {
         ),
     )
     .unwrap();
-    desciptors.set_uniform(handle1, 0, &camera).unwrap();
-    desciptors.set_uniform(handle2, 0, &Mat4::IDENTITY).unwrap();
-    desciptors
-        .set_image(
-            handle2,
-            1,
-            &image,
-            vk::ImageAspectFlags::COLOR,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        )
-        .unwrap();
-    desciptors.update_descriptors().unwrap();
-    desciptors.remove(handle1);
-    desciptors.remove(handle2);
 
     let render_pass = RenderPass::new(
         &device,
         RenderPassLayout::new(
-            &[RenderPassAttachmentDesc::new(swapchain.backbuffer_format()).clear_input()],
+            &[RenderPassAttachmentDesc::new(swapchain.backbuffer_format())
+                .clear_input()
+                .initial_layout(vk::ImageLayout::UNDEFINED)
+                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)],
             None,
         ),
     )
@@ -133,57 +117,19 @@ fn main() {
                     need_recreate = true;
                 }
                 Ok(backbuffer) => {
+                    desciptors.update_descriptors().unwrap();
                     let frame = device.begin_frame().unwrap();
                     frame
                         .main_cb()
                         .record(device.raw(), |recorder| {
-                            recorder.barrier(
-                                None,
-                                &[],
-                                &[ImageBarrier {
-                                    previous_accesses: &[AccessType::Nothing],
-                                    next_accesses: &[AccessType::ColorAttachmentWrite],
-                                    previous_layout: ImageLayout::Optimal,
-                                    next_layout: ImageLayout::Optimal,
-                                    discard_contents: true,
-                                    src_queue_family_index: device.queue_index(),
-                                    dst_queue_family_index: device.queue_index(),
-                                    image: backbuffer.image.raw(),
-                                    range: backbuffer.image.subresource_range(
-                                        SubImage::LayerAndMip(0, 0),
-                                        vk::ImageAspectFlags::COLOR,
-                                    ),
-                                }],
+                            let backbuffer = RenderPassAttachment::color(
+                                &backbuffer.image,
+                                [0.01, 0.01, 0.222, 1.0],
                             );
-                            {
-                                let backbuffer = RenderPassAttachment::color(
-                                    &backbuffer.image,
-                                    [0.01, 0.01, 0.222, 1.0],
-                                );
 
-                                recorder
-                                    .render_pass(&render_pass, &[backbuffer], None, |_| {})
-                                    .unwrap();
-                            }
-
-                            recorder.barrier(
-                                None,
-                                &[],
-                                &[ImageBarrier {
-                                    previous_accesses: &[AccessType::Nothing],
-                                    next_accesses: &[AccessType::Present],
-                                    previous_layout: ImageLayout::Optimal,
-                                    next_layout: ImageLayout::Optimal,
-                                    discard_contents: false,
-                                    src_queue_family_index: device.queue_index(),
-                                    dst_queue_family_index: device.queue_index(),
-                                    image: backbuffer.image.raw(),
-                                    range: backbuffer.image.subresource_range(
-                                        SubImage::LayerAndMip(0, 0),
-                                        vk::ImageAspectFlags::COLOR,
-                                    ),
-                                }],
-                            )
+                            recorder
+                                .render_pass(&render_pass, &[backbuffer], None, |_| {})
+                                .unwrap();
                         })
                         .unwrap();
 

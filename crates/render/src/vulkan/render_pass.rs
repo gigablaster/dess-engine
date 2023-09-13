@@ -50,6 +50,8 @@ pub struct RenderPassAttachmentDesc {
     load_op: vk::AttachmentLoadOp,
     store_op: vk::AttachmentStoreOp,
     samples: vk::SampleCountFlags,
+    initial_layout: vk::ImageLayout,
+    final_layout: vk::ImageLayout,
 }
 
 impl RenderPassAttachmentDesc {
@@ -59,6 +61,8 @@ impl RenderPassAttachmentDesc {
             load_op: vk::AttachmentLoadOp::LOAD,
             store_op: vk::AttachmentStoreOp::STORE,
             samples: vk::SampleCountFlags::TYPE_1,
+            initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         }
     }
 
@@ -82,18 +86,24 @@ impl RenderPassAttachmentDesc {
         self
     }
 
-    pub(self) fn build(
-        self,
-        initial_layout: vk::ImageLayout,
-        final_layout: vk::ImageLayout,
-    ) -> vk::AttachmentDescription {
+    pub fn initial_layout(mut self, value: vk::ImageLayout) -> Self {
+        self.initial_layout = value;
+        self
+    }
+
+    pub fn final_layout(mut self, value: vk::ImageLayout) -> Self {
+        self.final_layout = value;
+        self
+    }
+
+    pub(self) fn build(self) -> vk::AttachmentDescription {
         vk::AttachmentDescription {
             format: self.format,
             samples: self.samples,
             load_op: self.load_op,
             store_op: self.store_op,
-            initial_layout,
-            final_layout,
+            initial_layout: self.initial_layout,
+            final_layout: self.final_layout,
             ..Default::default()
         }
     }
@@ -239,18 +249,8 @@ impl RenderPass {
         let attachments = layout
             .color_attachments
             .iter()
-            .map(|desc| {
-                desc.build(
-                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                )
-            })
-            .chain(layout.depth_attachment.iter().map(|desc| {
-                desc.build(
-                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                    vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-                )
-            }))
+            .map(|desc| desc.build())
+            .chain(layout.depth_attachment.iter().map(|desc| desc.build()))
             .collect::<Vec<_>>();
 
         let color_attacmnet_refs = (0..layout.color_attachments.len())
