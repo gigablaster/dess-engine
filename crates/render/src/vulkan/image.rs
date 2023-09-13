@@ -65,16 +65,6 @@ impl Default for ImageViewDesc {
 }
 
 impl ImageViewDesc {
-    pub fn new(image: &Image, aspect_mask: vk::ImageAspectFlags) -> Self {
-        Self {
-            view_type: None,
-            format: Some(image.desc().format),
-            aspect_mask,
-            base_mip_level: 0,
-            level_count: None,
-        }
-    }
-
     pub fn view_type(mut self, view_type: vk::ImageViewType) -> Self {
         self.view_type = Some(view_type);
         self

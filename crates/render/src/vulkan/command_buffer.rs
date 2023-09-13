@@ -21,9 +21,10 @@ use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier}
 
 use crate::GpuResource;
 
-use super::{CreateError, Image, ImageViewDesc, ResetError, WaitError};
-
-pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
+use super::{
+    CreateError, FboCacheKey, Image, RenderPass, ResetError, WaitError, MAX_ATTACHMENTS,
+    MAX_COLOR_ATTACHMENTS,
+};
 
 pub(crate) struct CommandPool {
     pool: vk::CommandPool,
@@ -155,80 +156,13 @@ impl GpuResource for CommandBuffer {
 }
 
 pub struct RenderPassAttachment<'a> {
-    pub image: &'a Image,
-    pub layout: vk::ImageLayout,
-    pub load_op: vk::AttachmentLoadOp,
-    pub store_op: vk::AttachmentStoreOp,
-    pub clear: Option<vk::ClearValue>,
+    pub image: &'a Arc<Image>,
+    pub clear: vk::ClearValue,
 }
 
 impl<'a> RenderPassAttachment<'a> {
-    pub fn color_target(image: &'a Image, color: Option<glam::Vec4>) -> Self {
-        Self {
-            image,
-            clear: color.map(|color| vk::ClearValue {
-                color: vk::ClearColorValue {
-                    float32: [color.x, color.y, color.z, color.w],
-                },
-            }),
-            layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            load_op: if color.is_some() {
-                vk::AttachmentLoadOp::CLEAR
-            } else {
-                vk::AttachmentLoadOp::DONT_CARE
-            },
-            store_op: vk::AttachmentStoreOp::STORE,
-        }
-    }
-
-    pub fn depth_target(image: &'a Arc<Image>, depth: Option<f32>) -> Self {
-        Self {
-            image,
-            clear: depth.map(|depth| vk::ClearValue {
-                depth_stencil: vk::ClearDepthStencilValue { depth, stencil: 0 },
-            }),
-            layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
-            load_op: if depth.is_some() {
-                vk::AttachmentLoadOp::CLEAR
-            } else {
-                vk::AttachmentLoadOp::DONT_CARE
-            },
-            store_op: vk::AttachmentStoreOp::STORE,
-        }
-    }
-
-    pub fn garbage_input(mut self) -> Self {
-        self.load_op = vk::AttachmentLoadOp::DONT_CARE;
-        self.clear = None;
-        self
-    }
-
-    pub fn clear_color(mut self, color: glam::Vec4) -> Self {
-        self.load_op = vk::AttachmentLoadOp::CLEAR;
-        self.clear = Some(vk::ClearValue {
-            color: vk::ClearColorValue {
-                float32: [color.x, color.y, color.z, color.w],
-            },
-        });
-        self
-    }
-
-    pub fn clear_depth(mut self, depth: f32) -> Self {
-        self.load_op = vk::AttachmentLoadOp::CLEAR;
-        self.clear = Some(vk::ClearValue {
-            depth_stencil: vk::ClearDepthStencilValue { depth, stencil: 0 },
-        });
-        self
-    }
-
-    pub fn garbage_output(mut self) -> Self {
-        self.store_op = vk::AttachmentStoreOp::DONT_CARE;
-        self
-    }
-
-    pub fn store_output(mut self) -> Self {
-        self.store_op = vk::AttachmentStoreOp::STORE;
-        self
+    pub fn new(image: &'a Arc<Image>, clear: vk::ClearValue) -> Self {
+        Self { image, clear }
     }
 }
 
@@ -251,27 +185,38 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn render_pass<F: FnOnce(RenderPassRecorder)>(
         &self,
+        render_pass: &RenderPass,
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<RenderPassAttachment>,
         cb: F,
     ) -> Result<(), CreateError> {
-        let dims = color_attachments
+        let clear_values = color_attachments
             .iter()
             .chain(depth_attachment.iter())
-            .map(|image| image.image.desc().extent)
-            .next()
-            .expect("Render pass needs at least one attachment");
-
+            .map(|attachment| attachment.clear)
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
         let color_attachments = color_attachments
             .iter()
-            .map(Self::create_render_attachment)
+            .map(|attachment| attachment.image)
             .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
         let depth_attachment = depth_attachment
             .iter()
-            .map(Self::create_render_attachment)
-            .collect::<ArrayVec<_, 1>>();
+            .map(|attachment| attachment.image)
+            .next();
+        let dims = color_attachments
+            .iter()
+            .chain(depth_attachment.iter())
+            .map(|image| image.desc().extent)
+            .next()
+            .expect("Render pass needs at least one attachment");
 
-        let mut render_info = vk::RenderingInfo::builder()
+        let key = FboCacheKey::new(&color_attachments, depth_attachment);
+        let framebuffer = render_pass.get_or_create_fbo(key)?;
+
+        let begin_pass_info = vk::RenderPassBeginInfo::builder()
+            .render_pass(render_pass.raw())
+            .framebuffer(framebuffer)
+            .clear_values(&clear_values)
             .render_area(vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
                 extent: vk::Extent2D {
@@ -279,16 +224,15 @@ impl<'a> CommandBufferRecorder<'a> {
                     height: dims[1] as _,
                 },
             })
-            .color_attachments(&color_attachments)
-            .layer_count(1);
+            .build();
 
-        if !depth_attachment.is_empty() {
-            render_info.p_depth_attachment = depth_attachment.as_ptr();
-        }
-
-        let render_info = render_info.build();
-
-        unsafe { self.device.cmd_begin_rendering(*self.cb, &render_info) };
+        unsafe {
+            self.device.cmd_begin_render_pass(
+                *self.cb,
+                &begin_pass_info,
+                vk::SubpassContents::INLINE,
+            )
+        };
 
         cb(RenderPassRecorder {
             device: self.device,
@@ -296,28 +240,6 @@ impl<'a> CommandBufferRecorder<'a> {
         });
 
         Ok(())
-    }
-
-    fn create_render_attachment(attachment: &RenderPassAttachment) -> vk::RenderingAttachmentInfo {
-        let mut info = vk::RenderingAttachmentInfo::builder()
-            .image_view(
-                attachment
-                    .image
-                    .get_or_create_view(ImageViewDesc::new(
-                        attachment.image,
-                        vk::ImageAspectFlags::COLOR,
-                    ))
-                    .unwrap(),
-            )
-            .image_layout(attachment.layout)
-            .load_op(attachment.load_op)
-            .store_op(attachment.store_op);
-
-        if let Some(clear) = attachment.clear {
-            info.clear_value = clear;
-        }
-
-        info.build()
     }
 
     pub fn barrier(
@@ -399,7 +321,7 @@ impl<'a> RenderPassRecorder<'a> {
 
 impl<'a> Drop for RenderPassRecorder<'a> {
     fn drop(&mut self) {
-        unsafe { self.device.cmd_end_rendering(*self.cb) };
+        unsafe { self.device.cmd_end_render_pass(*self.cb) };
     }
 }
 

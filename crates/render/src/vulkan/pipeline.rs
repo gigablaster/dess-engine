@@ -15,10 +15,9 @@
 
 use std::{mem::size_of, slice, sync::Arc};
 
-use arrayvec::ArrayVec;
 use ash::vk;
 
-use super::{CreateError, Program, MAX_COLOR_ATTACHMENTS};
+use super::{CreateError, Program, RenderPass};
 
 pub struct PipelineState {
     program: Arc<Program>,
@@ -36,16 +35,32 @@ pub trait PipelineVertex: Sized {
     fn attribute_description() -> &'static [vk::VertexInputAttributeDescription];
 }
 
-pub struct PipelineStateDesc {
+pub struct PipelineStateDesc<'a> {
+    pub render_pass: &'a RenderPass,
+    pub subpass: u32,
     pub depth_write: bool,
     pub depth_test: bool,
     pub face_cull: bool,
     pub blend: PipelineBlendState,
-    pub color_attachments_format: ArrayVec<vk::Format, MAX_COLOR_ATTACHMENTS>,
-    pub depth_attachment_format: Option<vk::Format>,
 }
 
-impl PipelineStateDesc {
+impl<'a> PipelineStateDesc<'a> {
+    pub fn new(render_pass: &'a RenderPass) -> Self {
+        Self {
+            render_pass,
+            subpass: 0,
+            depth_write: true,
+            depth_test: true,
+            face_cull: true,
+            blend: PipelineBlendState::Opaque,
+        }
+    }
+
+    pub fn subpass(mut self, value: u32) -> Self {
+        self.subpass = value;
+        self
+    }
+
     pub fn depth_write(mut self, value: bool) -> Self {
         self.depth_write = value;
         self
@@ -54,31 +69,6 @@ impl PipelineStateDesc {
     pub fn face_cull(mut self, value: bool) -> Self {
         self.face_cull = value;
         self
-    }
-
-    pub fn color_attachments(mut self, formats: &[vk::Format]) -> Self {
-        self.color_attachments_format
-            .try_extend_from_slice(formats)
-            .unwrap();
-        self
-    }
-
-    pub fn depth_attachment(mut self, format: vk::Format) -> Self {
-        self.depth_attachment_format = Some(format);
-        self
-    }
-}
-
-impl Default for PipelineStateDesc {
-    fn default() -> Self {
-        Self {
-            depth_write: true,
-            depth_test: true,
-            face_cull: true,
-            blend: PipelineBlendState::Opaque,
-            color_attachments_format: ArrayVec::new(),
-            depth_attachment_format: None,
-        }
     }
 }
 
@@ -201,16 +191,11 @@ impl PipelineState {
             .logic_op_enable(false)
             .build();
 
-        let mut pipelline_rendering_create_info = vk::PipelineRenderingCreateInfo::builder()
-            .color_attachment_formats(&desc.color_attachments_format);
-
-        if let Some(format) = desc.depth_attachment_format {
-            pipelline_rendering_create_info.depth_attachment_format = format;
-        };
-
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
+            .render_pass(desc.render_pass.raw())
             .layout(program.pipeline_layout())
             .stages(&shader_create_info)
+            .subpass(desc.subpass)
             .dynamic_state(&dynamic_state_create_info)
             .viewport_state(&viewport_state)
             .multisample_state(&multisample_state)
@@ -219,7 +204,6 @@ impl PipelineState {
             .input_assembly_state(&assembly_state_create_info)
             .rasterization_state(&rasterizer_state)
             .depth_stencil_state(&depthstencil_state)
-            .push_next(&mut pipelline_rendering_create_info)
             .build();
 
         let pipeline = unsafe {
