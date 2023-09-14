@@ -90,6 +90,17 @@ fn main() {
     )
     .unwrap();
 
+    let mut depth = Image::texture(
+        &device,
+        ImageDesc::new(
+            vk::Format::D24_UNORM_S8_UINT,
+            ImageType::Tex2D,
+            [window.inner_size().width, window.inner_size().height],
+        )
+        .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT),
+    )
+    .unwrap();
+    depth.name("Depth");
     let render_pass = RenderPass::new(
         &device,
         RenderPassLayout::new(
@@ -97,7 +108,13 @@ fn main() {
                 .clear_input()
                 .initial_layout(vk::ImageLayout::UNDEFINED)
                 .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)],
-            None,
+            Some(
+                RenderPassAttachmentDesc::new(depth.desc().format)
+                    .clear_input()
+                    .initial_layout(vk::ImageLayout::UNDEFINED)
+                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                    .discard_output(),
+            ),
         ),
     )
     .unwrap();
@@ -127,8 +144,10 @@ fn main() {
                                 [0.01, 0.01, 0.222, 1.0],
                             );
 
+                            let depth = RenderPassAttachment::depth(&depth, 1.0);
+
                             recorder
-                                .render_pass(&render_pass, &[backbuffer], None, |_| {})
+                                .render_pass(&render_pass, &[backbuffer], Some(depth), |_| {})
                                 .unwrap();
                         })
                         .unwrap();
@@ -164,6 +183,17 @@ fn main() {
                         [window.inner_size().width, window.inner_size().height],
                     )
                     .unwrap();
+                depth = Image::texture(
+                    &device,
+                    ImageDesc::new(
+                        vk::Format::D24_UNORM_S8_UINT,
+                        ImageType::Tex2D,
+                        [window.inner_size().width, window.inner_size().height],
+                    )
+                    .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT),
+                )
+                .unwrap();
+                depth.name("Depth");
             }
         }
     });

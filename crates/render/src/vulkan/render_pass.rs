@@ -104,6 +104,8 @@ impl RenderPassAttachmentDesc {
             store_op: self.store_op,
             initial_layout: self.initial_layout,
             final_layout: self.final_layout,
+            stencil_load_op: vk::AttachmentLoadOp::DONT_CARE,
+            stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
             ..Default::default()
         }
     }
@@ -267,7 +269,7 @@ impl RenderPass {
         let depth_attachment_ref = if layout.depth_attachment.is_some() {
             Some(vk::AttachmentReference {
                 attachment: color_attacmnet_refs.len() as _,
-                layout: vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL,
+                layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             })
         } else {
             None
