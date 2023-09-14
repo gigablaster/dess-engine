@@ -13,9 +13,9 @@ use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
 use winit::{
     dpi::PhysicalSize,
-    event::{Event, WindowEvent},
+    event::{ElementState, Event, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
-    window::WindowBuilder,
+    window::{Fullscreen, WindowBuilder},
 };
 
 #[allow(dead_code)]
@@ -118,6 +118,7 @@ fn main() {
     )
     .unwrap();
 
+    let mut alt_pressed = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         let mut need_recreate = false;
@@ -126,6 +127,20 @@ fn main() {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => *control_flow = ControlFlow::Exit,
                 WindowEvent::Resized(_) => need_recreate = true,
+                WindowEvent::KeyboardInput { input, .. } => {
+                    if let Some(vk) = input.virtual_keycode {
+                        if vk == VirtualKeyCode::Return
+                            && input.state == ElementState::Pressed
+                            && alt_pressed
+                        {
+                            match window.fullscreen() {
+                                None => window.set_fullscreen(Some(Fullscreen::Borderless(None))),
+                                Some(_) => window.set_fullscreen(None),
+                            }
+                        }
+                    }
+                }
+                WindowEvent::ModifiersChanged(modifier) => alt_pressed = modifier.alt(),
                 _ => {}
             },
             Event::RedrawRequested(_) => match swapchain.acquire_next_image() {
