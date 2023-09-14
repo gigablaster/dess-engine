@@ -104,16 +104,15 @@ fn main() {
     let render_pass = RenderPass::new(
         &device,
         RenderPassLayout::new(
-            &[RenderPassAttachmentDesc::new(swapchain.backbuffer_format())
-                .clear_input()
-                .initial_layout(vk::ImageLayout::UNDEFINED)
-                .final_layout(vk::ImageLayout::PRESENT_SRC_KHR)],
-            Some(
-                RenderPassAttachmentDesc::new(depth.desc().format)
+            &[
+                RenderPassAttachmentDesc::color(swapchain.backbuffer_format())
                     .clear_input()
                     .initial_layout(vk::ImageLayout::UNDEFINED)
-                    .final_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .discard_output(),
+                    .final_layout(vk::ImageLayout::PRESENT_SRC_KHR),
+            ],
+            Some(
+                RenderPassAttachmentDesc::depth(depth.desc().format)
+                    .initial_layout(vk::ImageLayout::UNDEFINED),
             ),
         ),
     )

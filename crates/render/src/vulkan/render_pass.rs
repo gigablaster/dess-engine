@@ -55,7 +55,7 @@ pub struct RenderPassAttachmentDesc {
 }
 
 impl RenderPassAttachmentDesc {
-    pub fn new(format: vk::Format) -> Self {
+    pub fn color(format: vk::Format) -> Self {
         Self {
             format,
             load_op: vk::AttachmentLoadOp::LOAD,
@@ -63,6 +63,17 @@ impl RenderPassAttachmentDesc {
             samples: vk::SampleCountFlags::TYPE_1,
             initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        }
+    }
+
+    pub fn depth(format: vk::Format) -> Self {
+        Self {
+            format,
+            load_op: vk::AttachmentLoadOp::DONT_CARE,
+            store_op: vk::AttachmentStoreOp::DONT_CARE,
+            samples: vk::SampleCountFlags::TYPE_1,
+            initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         }
     }
 
