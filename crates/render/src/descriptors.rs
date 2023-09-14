@@ -213,7 +213,7 @@ impl DescriptorCache {
     }
 
     pub fn update_descriptors(&mut self) -> Result<(), DescriptorError> {
-        puffin::profile_scope!("update descriptors");
+        puffin::profile_scope!("Update descriptors");
         let drop_list = &mut self.device.drop_list();
         let allocator = &mut self.device.descriptor_allocator();
         // Free uniforms from last update
@@ -222,34 +222,44 @@ impl DescriptorCache {
             .for_each(|x| self.uniforms.dealloc(x));
 
         let device = self.device.raw();
-        // Then update all dirty descriptors
-        for handle in self.dirty.iter() {
-            if let Some(desc) = self.container.get_mut(*handle) {
-                if let Some(old) = desc.data.descriptor.take() {
-                    drop_list.free_descriptor_set(old);
+        {
+            puffin::profile_scope!("Allocate new descriptors");
+
+            // Then update all dirty descriptors
+            for handle in self.dirty.iter() {
+                if let Some(desc) = self.container.get_mut(*handle) {
+                    if let Some(old) = desc.data.descriptor.take() {
+                        drop_list.free_descriptor_set(old);
+                    }
+                    desc.data.descriptor = Some(
+                        unsafe {
+                            allocator.allocate(
+                                AshDescriptorDevice::wrap(self.device.raw()),
+                                &desc.data.layout,
+                                DescriptorSetLayoutCreateFlags::empty(),
+                                &desc.data.count,
+                                1,
+                            )
+                        }?
+                        .remove(0),
+                    );
                 }
-                desc.data.descriptor = Some(
-                    unsafe {
-                        allocator.allocate(
-                            AshDescriptorDevice::wrap(self.device.raw()),
-                            &desc.data.layout,
-                            DescriptorSetLayoutCreateFlags::empty(),
-                            &desc.data.count,
-                            1,
-                        )
-                    }?
-                    .remove(0),
-                );
             }
         }
-        let mut buffers = TempList::new();
-        let mut images = TempList::new();
-        let mut writes = Vec::with_capacity(1024);
-        self.dirty
-            .iter()
-            .for_each(|desc| self.update_descriptor(&mut writes, &mut images, &mut buffers, *desc));
-        unsafe { device.update_descriptor_sets(&writes, &[]) };
-        // Made dirty descriptors valid if they have eveything
+        let mut writes = Vec::with_capacity(4096);
+        {
+            puffin::profile_scope!("Prepare new descriptors");
+            let mut buffers = TempList::new();
+            let mut images = TempList::new();
+            self.dirty.iter().for_each(|desc| {
+                self.prepare_descriptor(&mut writes, &mut images, &mut buffers, *desc)
+            });
+        }
+        {
+            puffin::profile_scope!("Submit descriptors to device");
+            unsafe { device.update_descriptor_sets(&writes, &[]) };
+        }
+        // Make dirty descriptors valid if they have eveything
         self.dirty.iter().for_each(|desc| {
             if let Some(desc) = self.container.get_mut(*desc) {
                 if desc.data.is_valid() {
@@ -269,7 +279,7 @@ impl DescriptorCache {
         Ok(())
     }
 
-    fn update_descriptor(
+    fn prepare_descriptor(
         &self,
         writes: &mut Vec<vk::WriteDescriptorSet>,
         images: &mut TempList<vk::DescriptorImageInfo>,
