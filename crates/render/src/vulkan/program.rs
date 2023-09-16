@@ -26,9 +26,9 @@ use byte_slice_cast::AsSliceOf;
 use gpu_descriptor::DescriptorTotalCount;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
-use crate::GpuResource;
+use crate::{GpuResource, RenderError};
 
-use super::{CreateError, Device, SamplerDesc, ShaderCreateError};
+use super::{Device, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
@@ -56,7 +56,7 @@ impl DescriptorSetInfo {
         stage: vk::ShaderStageFlags,
         set: &BTreeMap<u32, DescriptorInfo>,
         expected_count: u32,
-    ) -> Result<Self, CreateError> {
+    ) -> Result<Self, RenderError> {
         let mut uniform_buffers_count = 0;
         let mut combined_samplers_count = 0;
         let mut sampled_images_count = 0;
@@ -273,7 +273,7 @@ pub struct Shader {
 }
 
 impl Shader {
-    pub fn new(device: &ash::Device, desc: &ShaderDesc) -> Result<Self, ShaderCreateError> {
+    pub fn new(device: &ash::Device, desc: &ShaderDesc) -> Result<Self, RenderError> {
         let shader_create_info = vk::ShaderModuleCreateInfo::builder()
             .code(desc.code.as_slice_of::<u32>().unwrap())
             .build();
@@ -306,7 +306,7 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new(device: &Arc<Device>, shaders: &[ShaderDesc]) -> Result<Arc<Self>, CreateError> {
+    pub fn new(device: &Arc<Device>, shaders: &[ShaderDesc]) -> Result<Arc<Self>, RenderError> {
         let shaders = shaders
             .iter()
             .map(|desc| Shader::new(device.raw(), desc).unwrap())
@@ -345,7 +345,7 @@ impl Program {
         device: &Device,
         stages: vk::ShaderStageFlags,
         shaders: &[Shader],
-    ) -> Result<ArrayVec<DescriptorSetInfo, MAX_SETS>, CreateError> {
+    ) -> Result<ArrayVec<DescriptorSetInfo, MAX_SETS>, RenderError> {
         let sets = shaders
             .iter()
             .map(|shader| shader.descriptor_sets.clone())

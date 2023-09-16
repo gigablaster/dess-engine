@@ -20,6 +20,7 @@ mod uniforms;
 pub mod vulkan;
 
 pub use descriptors::*;
+pub use error::*;
 pub use staging::*;
 
 pub type Index = u16;

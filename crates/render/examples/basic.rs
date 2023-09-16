@@ -4,7 +4,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use dess_render::{
     vulkan::{
-        create_pipeline_cache, AcquireError, Buffer, BufferDesc, Device, Image, ImageDesc,
+        create_pipeline_cache, AcquiredSurface, Buffer, BufferDesc, Device, Image, ImageDesc,
         ImageType, InstanceBuilder, PhysicalDeviceList, PipelineState, PipelineStateDesc,
         PipelineVertex, Program, RenderPass, RenderPassAttachment, RenderPassAttachmentDesc,
         RenderPassLayout, ShaderDesc, SubmitWait, Surface, Swapchain,
@@ -269,10 +269,7 @@ fn main() {
             },
             Event::MainEventsCleared => window.request_redraw(),
             Event::RedrawRequested(_) => match swapchain.acquire_next_image() {
-                Err(AcquireError::Suboptimal) | Err(AcquireError::OutOfDate) => {
-                    need_recreate = true;
-                }
-                Ok(backbuffer) => {
+                Ok(AcquiredSurface::Image(backbuffer)) => {
                     desciptors
                         .update_descriptors()
                         .unwrap()
@@ -337,6 +334,7 @@ fn main() {
                     device.end_frame(frame);
                     swapchain.present_image(backbuffer);
                 }
+                Ok(AcquiredSurface::NeedRecreate) => need_recreate = true,
                 Err(err) => panic!("Error: {:?}", err),
             },
             _ => {}

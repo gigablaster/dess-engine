@@ -24,9 +24,8 @@ use ash::vk;
 use dess_common::memory::BlockAllocator;
 
 use crate::{
-    error::{UniformAllocateError, UniformCreateError, UniformSyncError},
     vulkan::{Buffer, BufferDesc, CommandBuffer, CommandPool, Device, Semaphore, SubmitWait},
-    GpuResource,
+    GpuResource, RenderError,
 };
 
 const BUCKET_SIZE: u32 = 0xFFFF;
@@ -115,7 +114,7 @@ pub struct Uniforms {
 }
 
 impl Uniforms {
-    pub fn new(device: &Arc<Device>) -> Result<Self, UniformCreateError> {
+    pub fn new(device: &Arc<Device>) -> Result<Self, RenderError> {
         let buffer = Buffer::new(
             device,
             BufferDesc::gpu_only(
@@ -152,7 +151,7 @@ impl Uniforms {
         })
     }
 
-    pub fn push<T: Sized>(&mut self, data: &T) -> Result<u32, UniformAllocateError> {
+    pub fn push<T: Sized>(&mut self, data: &T) -> Result<u32, RenderError> {
         let size = size_of::<T>() as u32;
         let mut index = self.find_bucket_index(size);
         if index.is_none() {
@@ -180,7 +179,7 @@ impl Uniforms {
                 return Ok(offset);
             }
         }
-        Err(UniformAllocateError::OutOfSpace)
+        Err(RenderError::OutOfUnifromsSpace)
     }
 
     pub fn dealloc(&mut self, offset: u32) {
@@ -197,7 +196,7 @@ impl Uniforms {
         self.buffer.raw()
     }
 
-    pub fn flush(&mut self) -> Result<Option<SubmitWait>, UniformSyncError> {
+    pub fn flush(&mut self) -> Result<Option<SubmitWait>, RenderError> {
         self.cb.wait(self.device.raw())?;
         self.cb.reset(self.device.raw())?;
         if self.writes.is_empty() {

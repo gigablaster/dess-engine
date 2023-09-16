@@ -21,7 +21,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::{CreateError, Device, ResourceCreateError};
+use crate::RenderError;
+
+use super::Device;
 
 #[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
 pub enum ImageType {
@@ -145,10 +147,7 @@ pub struct Image {
 unsafe impl Send for Image {}
 
 impl Image {
-    pub fn texture(
-        device: &Arc<Device>,
-        desc: ImageDesc,
-    ) -> Result<Arc<Self>, ResourceCreateError> {
+    pub fn texture(device: &Arc<Device>, desc: ImageDesc) -> Result<Arc<Self>, RenderError> {
         let image = unsafe { device.raw().create_image(&desc.build(), None) }?;
         let requirement = unsafe { device.raw().get_image_memory_requirements(image) };
         let allocation = unsafe {
@@ -177,7 +176,7 @@ impl Image {
         }))
     }
 
-    pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, CreateError> {
+    pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, RenderError> {
         let mut views = self.views.lock().unwrap();
         if let Some(view) = views.get(&desc) {
             Ok(*view)

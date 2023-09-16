@@ -19,7 +19,9 @@ use ash::vk::{self, BufferCreateInfo};
 use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
-use super::{Device, MapError, ResourceCreateError};
+use crate::RenderError;
+
+use super::Device;
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
@@ -83,7 +85,7 @@ pub struct Buffer {
 unsafe impl Send for Buffer {}
 
 impl Buffer {
-    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Arc<Self>, ResourceCreateError> {
+    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Arc<Self>, RenderError> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
             .usage(desc.usage)
@@ -132,7 +134,7 @@ impl Buffer {
         }))
     }
 
-    pub fn map(&mut self) -> Result<NonNull<u8>, MapError> {
+    pub fn map(&mut self) -> Result<NonNull<u8>, RenderError> {
         if let Some(allocation) = &mut self.allocation {
             let ptr = unsafe {
                 allocation.map(AshMemoryDevice::wrap(self.device.raw()), 0, self.desc.size)

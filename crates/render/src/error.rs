@@ -13,236 +13,55 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use crate::vulkan::{CreateError, MapError, ResetError, ResourceCreateError, WaitError};
+use ash::vk;
 
 #[derive(Debug)]
-pub enum StagingError {
-    OutOfHostMemory,
-    OutOfDeviceMemory,
-    NoCompatibleMemory,
-    TooManyObjects,
-    DeviceLost,
-    MapFailed,
+pub enum RenderError {
+    Vulkan(vk::Result),
+    Loading(ash::LoadingError),
+    MemoryAllocation(gpu_alloc::AllocationError),
+    MemoryMap(gpu_alloc::MapError),
+    DescriptorAllocation(gpu_descriptor::AllocationError),
+    NoSuitableDevice,
+    ExtensionNotFound(String),
+    NoSuitableQueue,
+    Reflection(rspirv_reflect::ReflectError),
+    NoSuitableFormat,
+    OutOfUnifromsSpace,
 }
 
-impl From<ResourceCreateError> for StagingError {
-    fn from(value: ResourceCreateError) -> Self {
-        match value {
-            ResourceCreateError::NoCompatibleMemory => Self::NoCompatibleMemory,
-            ResourceCreateError::OutOfDeviceMemory => Self::OutOfHostMemory,
-            ResourceCreateError::OutOfHostMemory => Self::OutOfHostMemory,
-            ResourceCreateError::TooManyObjects => Self::TooManyObjects,
-        }
+impl From<vk::Result> for RenderError {
+    fn from(value: vk::Result) -> Self {
+        RenderError::Vulkan(value)
     }
 }
 
-impl From<CreateError> for StagingError {
-    fn from(value: CreateError) -> Self {
-        match value {
-            CreateError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
-            CreateError::OutOfHostMemory => Self::OutOfHostMemory,
-        }
+impl From<gpu_alloc::AllocationError> for RenderError {
+    fn from(value: gpu_alloc::AllocationError) -> Self {
+        RenderError::MemoryAllocation(value)
     }
 }
 
-impl From<WaitError> for StagingError {
-    fn from(value: WaitError) -> Self {
-        match value {
-            WaitError::OutOfHostMemory => Self::OutOfHostMemory,
-            WaitError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
-            WaitError::DeviceLost => Self::DeviceLost,
-        }
+impl From<gpu_alloc::MapError> for RenderError {
+    fn from(value: gpu_alloc::MapError) -> Self {
+        RenderError::MemoryMap(value)
     }
 }
 
-impl From<ResetError> for StagingError {
-    fn from(value: ResetError) -> Self {
-        match value {
-            ResetError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
-        }
+impl From<ash::LoadingError> for RenderError {
+    fn from(value: ash::LoadingError) -> Self {
+        RenderError::Loading(value)
     }
 }
 
-impl From<MapError> for StagingError {
-    fn from(value: MapError) -> Self {
-        match value {
-            gpu_alloc::MapError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
-            gpu_alloc::MapError::OutOfHostMemory => Self::OutOfHostMemory,
-            gpu_alloc::MapError::MapFailed => Self::MapFailed,
-            _ => panic!("Unexpected error {}", value),
-        }
+impl From<rspirv_reflect::ReflectError> for RenderError {
+    fn from(value: rspirv_reflect::ReflectError) -> Self {
+        RenderError::Reflection(value)
     }
 }
 
-#[derive(Debug)]
-pub enum DescriptorError {
-    OutOfDeviceMemory,
-    OutOfHostMemory,
-    OutOfPoolMemory,
-    Fragmentation,
-    OutOfUniformSpace,
-    MapFailed,
-    NoCompatibleMemory,
-    TooManyObjects,
-    DeviceLost,
-}
-
-impl From<gpu_descriptor::AllocationError> for DescriptorError {
+impl From<gpu_descriptor::AllocationError> for RenderError {
     fn from(value: gpu_descriptor::AllocationError) -> Self {
-        match value {
-            gpu_descriptor::AllocationError::Fragmentation => DescriptorError::Fragmentation,
-            gpu_descriptor::AllocationError::OutOfDeviceMemory => {
-                DescriptorError::OutOfDeviceMemory
-            }
-            gpu_descriptor::AllocationError::OutOfHostMemory => DescriptorError::OutOfHostMemory,
-        }
-    }
-}
-
-impl From<gpu_descriptor::CreatePoolError> for DescriptorError {
-    fn from(value: gpu_descriptor::CreatePoolError) -> Self {
-        match value {
-            gpu_descriptor::CreatePoolError::Fragmentation => DescriptorError::Fragmentation,
-            gpu_descriptor::CreatePoolError::OutOfDeviceMemory => {
-                DescriptorError::OutOfDeviceMemory
-            }
-            gpu_descriptor::CreatePoolError::OutOfHostMemory => DescriptorError::OutOfHostMemory,
-        }
-    }
-}
-
-impl From<gpu_descriptor::DeviceAllocationError> for DescriptorError {
-    fn from(value: gpu_descriptor::DeviceAllocationError) -> Self {
-        match value {
-            gpu_descriptor::DeviceAllocationError::FragmentedPool => DescriptorError::Fragmentation,
-            gpu_descriptor::DeviceAllocationError::OutOfDeviceMemory => {
-                DescriptorError::OutOfDeviceMemory
-            }
-            gpu_descriptor::DeviceAllocationError::OutOfHostMemory => {
-                DescriptorError::OutOfHostMemory
-            }
-            gpu_descriptor::DeviceAllocationError::OutOfPoolMemory => {
-                DescriptorError::OutOfPoolMemory
-            }
-        }
-    }
-}
-
-impl From<CreateError> for DescriptorError {
-    fn from(value: CreateError) -> Self {
-        match value {
-            CreateError::OutOfDeviceMemory => DescriptorError::OutOfDeviceMemory,
-            CreateError::OutOfHostMemory => DescriptorError::OutOfHostMemory,
-        }
-    }
-}
-
-impl From<UniformAllocateError> for DescriptorError {
-    fn from(value: UniformAllocateError) -> Self {
-        match value {
-            UniformAllocateError::OutOfSpace => DescriptorError::OutOfUniformSpace,
-        }
-    }
-}
-
-impl From<UniformCreateError> for DescriptorError {
-    fn from(value: UniformCreateError) -> Self {
-        match value {
-            UniformCreateError::OutOfDeviceMemory => DescriptorError::OutOfHostMemory,
-            UniformCreateError::MapFailed => DescriptorError::MapFailed,
-            UniformCreateError::NoCompatibleMemory => DescriptorError::NoCompatibleMemory,
-            UniformCreateError::OutOfHostMemory => DescriptorError::OutOfHostMemory,
-            UniformCreateError::TooManyObjects => DescriptorError::TooManyObjects,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum UniformCreateError {
-    OutOfHostMemory,
-    OutOfDeviceMemory,
-    NoCompatibleMemory,
-    TooManyObjects,
-    MapFailed,
-}
-
-#[derive(Debug)]
-
-pub enum UniformAllocateError {
-    OutOfSpace,
-}
-
-impl From<ResourceCreateError> for UniformCreateError {
-    fn from(value: ResourceCreateError) -> Self {
-        match value {
-            ResourceCreateError::NoCompatibleMemory => UniformCreateError::NoCompatibleMemory,
-            ResourceCreateError::OutOfDeviceMemory => UniformCreateError::OutOfDeviceMemory,
-            ResourceCreateError::OutOfHostMemory => UniformCreateError::OutOfHostMemory,
-            ResourceCreateError::TooManyObjects => UniformCreateError::TooManyObjects,
-        }
-    }
-}
-
-impl From<MapError> for UniformCreateError {
-    fn from(value: MapError) -> Self {
-        match value {
-            gpu_alloc::MapError::MapFailed => UniformCreateError::MapFailed,
-            gpu_alloc::MapError::OutOfHostMemory => UniformCreateError::OutOfHostMemory,
-            gpu_alloc::MapError::OutOfDeviceMemory => UniformCreateError::OutOfDeviceMemory,
-            _ => panic!("Unexpected error {}", value),
-        }
-    }
-}
-
-impl From<CreateError> for UniformCreateError {
-    fn from(value: CreateError) -> Self {
-        match value {
-            CreateError::OutOfHostMemory => UniformCreateError::OutOfHostMemory,
-            CreateError::OutOfDeviceMemory => UniformCreateError::OutOfDeviceMemory,
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum UniformSyncError {
-    OufOfHostMemory,
-    OutOfDeviceMemory,
-    DeviceLost,
-}
-
-impl From<CreateError> for UniformSyncError {
-    fn from(value: CreateError) -> Self {
-        match value {
-            CreateError::OutOfDeviceMemory => UniformSyncError::OutOfDeviceMemory,
-            CreateError::OutOfHostMemory => UniformSyncError::OufOfHostMemory,
-        }
-    }
-}
-
-impl From<WaitError> for UniformSyncError {
-    fn from(value: WaitError) -> Self {
-        match value {
-            WaitError::DeviceLost => UniformSyncError::DeviceLost,
-            WaitError::OutOfDeviceMemory => UniformSyncError::OutOfDeviceMemory,
-            WaitError::OutOfHostMemory => UniformSyncError::OufOfHostMemory,
-        }
-    }
-}
-
-impl From<UniformSyncError> for DescriptorError {
-    fn from(value: UniformSyncError) -> Self {
-        match value {
-            UniformSyncError::DeviceLost => DescriptorError::DeviceLost,
-            UniformSyncError::OufOfHostMemory => DescriptorError::OutOfHostMemory,
-            UniformSyncError::OutOfDeviceMemory => DescriptorError::OutOfDeviceMemory,
-        }
-    }
-}
-
-impl From<ResetError> for UniformSyncError {
-    fn from(value: ResetError) -> Self {
-        match value {
-            ResetError::OutOfDeviceMemory => UniformSyncError::OutOfDeviceMemory,
-        }
+        RenderError::DescriptorAllocation(value)
     }
 }

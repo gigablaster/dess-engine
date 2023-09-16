@@ -25,7 +25,7 @@ use ash::{
 use log::{info, log, Level};
 use raw_window_handle::RawDisplayHandle;
 
-use super::InstanceCreateError;
+use crate::RenderError;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,
@@ -57,10 +57,7 @@ impl InstanceBuilder {
         self
     }
 
-    pub fn build(
-        self,
-        display_handle: RawDisplayHandle,
-    ) -> Result<Arc<Instance>, InstanceCreateError> {
+    pub fn build(self, display_handle: RawDisplayHandle) -> Result<Arc<Instance>, RenderError> {
         Instance::create(&self, display_handle)
     }
 }
@@ -108,7 +105,7 @@ impl Instance {
     fn create(
         builder: &InstanceBuilder,
         display_handle: RawDisplayHandle,
-    ) -> Result<Arc<Self>, InstanceCreateError> {
+    ) -> Result<Arc<Self>, RenderError> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(builder);

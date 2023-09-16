@@ -19,7 +19,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use super::{CreateError, Device, Image, ImageViewDesc};
+use crate::RenderError;
+
+use super::{Device, Image, ImageViewDesc};
 use arrayvec::ArrayVec;
 use ash::vk;
 
@@ -210,7 +212,7 @@ impl FboCache {
         &self,
         device: &Device,
         key: FboCacheKey,
-    ) -> Result<vk::Framebuffer, CreateError> {
+    ) -> Result<vk::Framebuffer, RenderError> {
         let mut entries = self.entries.lock().unwrap();
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
@@ -225,7 +227,7 @@ impl FboCache {
         &self,
         device: &Device,
         key: &FboCacheKey,
-    ) -> Result<vk::Framebuffer, CreateError> {
+    ) -> Result<vk::Framebuffer, RenderError> {
         let attachments = key
             .attachments
             .iter()
@@ -258,7 +260,7 @@ pub struct RenderPass {
 }
 
 impl RenderPass {
-    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> Result<Arc<Self>, CreateError> {
+    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> Result<Arc<Self>, RenderError> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -313,7 +315,7 @@ impl RenderPass {
         self.raw
     }
 
-    pub fn get_or_create_fbo(&self, key: FboCacheKey) -> Result<vk::Framebuffer, CreateError> {
+    pub fn get_or_create_fbo(&self, key: FboCacheKey) -> Result<vk::Framebuffer, RenderError> {
         self.fbo_cache.get_or_create(&self.device, key)
     }
 }

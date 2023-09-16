@@ -31,11 +31,11 @@ use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use log::info;
 
-use crate::{vulkan::DeviceCreateError, GpuResource};
+use crate::{GpuResource, RenderError};
 
 use super::{
     droplist::DropList, CommandBuffer, DescriptorAllocator, FrameContext, GpuAllocator, Instance,
-    PhysicalDevice, QueueFamily, Semaphore, WaitError,
+    PhysicalDevice, QueueFamily, Semaphore,
 };
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -92,11 +92,11 @@ impl Device {
     pub fn create(
         instance: &Arc<Instance>,
         pdevice: PhysicalDevice,
-    ) -> Result<Arc<Self>, DeviceCreateError> {
+    ) -> Result<Arc<Self>, RenderError> {
         if !pdevice.is_queue_flag_supported(
             vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
         ) {
-            return Err(DeviceCreateError::NoSuitableQueues);
+            return Err(RenderError::NoSuitableDevice);
         };
 
         let device_extension_names = vec![khr::Swapchain::name().as_ptr()];
@@ -104,7 +104,7 @@ impl Device {
         for ext in &device_extension_names {
             let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
             if !pdevice.is_extensions_sipported(ext) {
-                return Err(DeviceCreateError::NoExtension(ext.into()));
+                return Err(RenderError::ExtensionNotFound(ext.into()));
             }
         }
 
@@ -112,7 +112,7 @@ impl Device {
             .get_queue(
                 vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
             )
-            .ok_or(DeviceCreateError::NoSuitableQueues)?;
+            .ok_or(RenderError::NoSuitableQueue)?;
 
         let mut features = vk::PhysicalDeviceFeatures2::builder().build();
 
@@ -260,7 +260,7 @@ impl Device {
         }
     }
 
-    pub fn begin_frame(&self) -> Result<Arc<FrameContext>, WaitError> {
+    pub fn begin_frame(&self) -> Result<Arc<FrameContext>, RenderError> {
         puffin::profile_scope!("begin frame");
         let mut frame0 = self.frames[0].lock().unwrap();
         {
@@ -309,7 +309,7 @@ impl Device {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), WaitError> {
+    ) -> Result<(), RenderError> {
         let masks = wait
             .iter()
             .map(|x| x.stage_flags())

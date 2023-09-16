@@ -24,10 +24,10 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
     vulkan::{ImageDesc, ImageType},
-    GpuResource,
+    GpuResource, RenderError,
 };
 
-use super::{AcquireError, CreateError, Device, Image, Instance, Semaphore, SwapchainError};
+use super::{Device, Image, Instance, Semaphore};
 
 pub struct Surface {
     _instance: Arc<Instance>,
@@ -40,7 +40,7 @@ impl Surface {
         instance: &Arc<Instance>,
         display_handle: RawDisplayHandle,
         window_handle: RawWindowHandle,
-    ) -> Result<Self, CreateError> {
+    ) -> Result<Self, RenderError> {
         let surface = unsafe {
             ash_window::create_surface(
                 &instance.entry,
@@ -81,7 +81,7 @@ impl SwapchainInner {
         device: &Arc<Device>,
         surface: &Surface,
         resolution: [u32; 2],
-    ) -> Result<Self, SwapchainError> {
+    ) -> Result<Self, RenderError> {
         info!(
             "Create swapchain for resolution {} x {}",
             resolution[0], resolution[1]
@@ -96,7 +96,7 @@ impl SwapchainInner {
         let formats = Self::enumerate_surface_formats(device, surface)?;
         let format = match Self::select_surface_format(&formats) {
             Some(format) => format,
-            None => return Err(SwapchainError::NoSuitableSurfaceFormat),
+            None => return Err(RenderError::NoSuitableFormat),
         };
 
         let mut desired_image_count = 3.max(surface_capabilities.min_image_count);
@@ -115,7 +115,7 @@ impl SwapchainInner {
         };
 
         if surface_resolution.width == 0 || surface_resolution.height == 0 {
-            return Err(SwapchainError::WaitForSurface);
+            panic!("Can't create swachain for surface with zero size");
         }
 
         let present_mode_preferences = [vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO];
@@ -219,7 +219,7 @@ impl SwapchainInner {
     fn enumerate_surface_formats(
         device: &Device,
         surface: &Surface,
-    ) -> Result<Vec<vk::SurfaceFormatKHR>, SwapchainError> {
+    ) -> Result<Vec<vk::SurfaceFormatKHR>, RenderError> {
         Ok(unsafe {
             surface
                 .loader
@@ -270,12 +270,17 @@ pub struct SwapchainImage {
     pub rendering_finished: Semaphore,
 }
 
+pub enum AcquiredSurface {
+    NeedRecreate,
+    Image(SwapchainImage),
+}
+
 impl Swapchain {
     pub fn new(
         device: &Arc<Device>,
         surface: Surface,
         resolution: [u32; 2],
-    ) -> Result<Self, SwapchainError> {
+    ) -> Result<Self, RenderError> {
         Ok(Self {
             device: device.clone(),
             inner: SwapchainInner::new(device, &surface, resolution)?,
@@ -283,30 +288,36 @@ impl Swapchain {
         })
     }
 
-    pub fn acquire_next_image(&mut self) -> Result<SwapchainImage, AcquireError> {
+    pub fn acquire_next_image(&mut self) -> Result<AcquiredSurface, RenderError> {
         puffin::profile_scope!("wait for swapchain");
         let acquire_semaphore = self.inner.acquire_semaphore[self.inner.next_semaphore];
         let rendering_finished_semaphore =
             self.inner.rendering_finished_semaphore[self.inner.next_semaphore];
 
-        let (present_index, _) = unsafe {
+        let present_index = match unsafe {
             self.inner.loader.acquire_next_image(
                 self.inner.raw,
                 u64::MAX,
                 acquire_semaphore.raw,
                 vk::Fence::null(),
             )
-        }?;
+        } {
+            Ok((present_index, _)) => present_index,
+            Err(vk::Result::SUBOPTIMAL_KHR | vk::Result::ERROR_OUT_OF_DATE_KHR) => {
+                return Ok(AcquiredSurface::NeedRecreate)
+            }
+            Err(err) => return Err(RenderError::from(err)),
+        };
 
         assert_eq!(present_index as usize, self.inner.next_semaphore);
 
         self.inner.next_semaphore = (self.inner.next_semaphore + 1) % self.inner.images.len();
-        Ok(SwapchainImage {
+        Ok(AcquiredSurface::Image(SwapchainImage {
             image: self.inner.images[present_index as usize].clone(),
             image_index: present_index,
             acquire_semaphore,
             rendering_finished: rendering_finished_semaphore,
-        })
+        }))
     }
 
     pub fn present_image(&self, image: SwapchainImage) {
@@ -332,7 +343,7 @@ impl Swapchain {
         &mut self,
         device: &Arc<Device>,
         resolution: [u32; 2],
-    ) -> Result<(), SwapchainError> {
+    ) -> Result<(), RenderError> {
         device.wait();
         info!("Recreate swapchain");
         self.inner.cleanup(device);

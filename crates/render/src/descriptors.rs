@@ -21,9 +21,9 @@ use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 
 use crate::{
-    error::DescriptorError,
     uniforms::Uniforms,
     vulkan::{DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc, SubmitWait},
+    RenderError,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -87,7 +87,7 @@ pub struct DescriptorCache {
 unsafe impl Sync for DescriptorCache {}
 
 impl DescriptorCache {
-    pub fn new(device: &Arc<Device>) -> Result<Self, DescriptorError> {
+    pub fn new(device: &Arc<Device>) -> Result<Self, RenderError> {
         Ok(Self {
             device: device.clone(),
             container: HandleContainer::new(),
@@ -98,7 +98,7 @@ impl DescriptorCache {
         })
     }
 
-    pub fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, DescriptorError> {
+    pub fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, RenderError> {
         let buffers = set
             .types
             .iter()
@@ -170,7 +170,7 @@ impl DescriptorCache {
         value: &Arc<Image>,
         aspect: vk::ImageAspectFlags,
         layout: vk::ImageLayout,
-    ) -> Result<(), DescriptorError> {
+    ) -> Result<(), RenderError> {
         if let Some(desc) = self.container.get_mut(handle) {
             let image = desc
                 .data
@@ -192,7 +192,7 @@ impl DescriptorCache {
         handle: DescriptorHandle,
         binding: u32,
         data: &T,
-    ) -> Result<(), DescriptorError> {
+    ) -> Result<(), RenderError> {
         if let Some(desc) = self.container.get_mut(handle) {
             let buffer = desc
                 .data
@@ -212,7 +212,7 @@ impl DescriptorCache {
         Ok(())
     }
 
-    pub fn update_descriptors(&mut self) -> Result<Option<SubmitWait>, DescriptorError> {
+    pub fn update_descriptors(&mut self) -> Result<Option<SubmitWait>, RenderError> {
         puffin::profile_scope!("Update descriptors");
         let drop_list = &mut self.device.drop_list();
         let allocator = &mut self.device.descriptor_allocator();
@@ -276,7 +276,7 @@ impl DescriptorCache {
             .filter_map(|x| x.data.descriptor)
             .for_each(|x| drop_list.free_descriptor_set(x));
 
-        Ok(self.uniforms.flush()?)
+        self.uniforms.flush()
     }
 
     fn prepare_descriptor(

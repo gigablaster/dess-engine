@@ -27,12 +27,11 @@ use dess_common::memory::BumpAllocator;
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::{
-    error::StagingError,
     vulkan::{
         Buffer, BufferDesc, CommandBuffer, CommandBufferRecorder, CommandPool, Device, Image,
         Semaphore, SubImage, SubmitWait,
     },
-    GpuResource,
+    GpuResource, RenderError,
 };
 
 const STAGES: usize = 4;
@@ -67,7 +66,7 @@ pub struct Staging {
 }
 
 impl Staging {
-    pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, StagingError> {
+    pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, RenderError> {
         let mut pool = CommandPool::new(
             device.raw(),
             device.queue_index(),
@@ -148,7 +147,7 @@ impl Staging {
         buffer: &Buffer,
         offset: u64,
         data: &[T],
-    ) -> Result<(), StagingError> {
+    ) -> Result<(), RenderError> {
         let size = size_of_val(data);
         assert!(size as u64 <= self.size);
         if !self.try_push_buffer(buffer.raw(), offset, size, data.as_ptr() as *const u8) {
@@ -167,7 +166,7 @@ impl Staging {
         &mut self,
         image: &Image,
         data: &[&ImageSubresourceData],
-    ) -> Result<(), StagingError> {
+    ) -> Result<(), RenderError> {
         for (mip, data) in data.iter().enumerate() {
             if !self.try_push_image_mip(image, mip as _, data) {
                 self.upload()?;
@@ -252,7 +251,7 @@ impl Staging {
         self.upload_buffers.is_empty() && self.upload_images.is_empty()
     }
 
-    pub fn upload(&mut self) -> Result<Option<SubmitWait>, StagingError> {
+    pub fn upload(&mut self) -> Result<Option<SubmitWait>, RenderError> {
         if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
             return Ok(None);
         }

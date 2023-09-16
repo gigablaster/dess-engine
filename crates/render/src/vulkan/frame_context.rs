@@ -21,9 +21,9 @@ use std::{
 
 use ash::vk;
 
-use crate::GpuResource;
+use crate::{GpuResource, RenderError};
 
-use super::{CommandBuffer, CommandPool, CreateError, ResetError, Semaphore};
+use super::{CommandBuffer, CommandPool, Semaphore};
 
 pub struct FrameContext {
     pub(crate) main_cb: CommandBuffer,
@@ -37,7 +37,7 @@ pub struct FrameContext {
 unsafe impl Sync for FrameContext {}
 
 impl FrameContext {
-    pub(crate) fn new(device: &ash::Device, query: u32) -> Result<Self, CreateError> {
+    pub(crate) fn new(device: &ash::Device, query: u32) -> Result<Self, RenderError> {
         let render_finished = Semaphore::new(device)?;
         let command_pools = Mutex::new(HashMap::new());
         let mut main_pool = CommandPool::new(device, query, vk::CommandPoolCreateFlags::TRANSIENT)?;
@@ -54,7 +54,7 @@ impl FrameContext {
         })
     }
 
-    pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), ResetError> {
+    pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), RenderError> {
         let mut pools = self.command_pools.lock().unwrap();
         pools.iter_mut().for_each(|(_, pool)| {
             pool.recycle();
@@ -66,7 +66,7 @@ impl FrameContext {
     pub fn get_or_create_command_buffer(
         &self,
         device: &ash::Device,
-    ) -> Result<CommandBufferGuard, CreateError> {
+    ) -> Result<CommandBufferGuard, RenderError> {
         let thread_id = thread::current().id();
         let mut pools = self.command_pools.lock().unwrap();
         if let Entry::Vacant(e) = pools.entry(thread_id) {

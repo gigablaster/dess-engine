@@ -17,7 +17,9 @@ use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use super::{Instance, PhysicalDeviceError, Surface};
+use crate::RenderError;
+
+use super::{Instance, Surface};
 
 #[derive(Debug, Clone, Copy)]
 pub struct QueueFamily {
@@ -79,7 +81,7 @@ impl Debug for PhysicalDevice {
 }
 
 impl Instance {
-    pub fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, PhysicalDeviceError> {
+    pub fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, RenderError> {
         unsafe {
             Ok(self
                 .raw

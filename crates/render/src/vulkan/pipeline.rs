@@ -17,7 +17,9 @@ use std::{mem::size_of, slice, sync::Arc};
 
 use ash::vk;
 
-use super::{CreateError, Program, RenderPass};
+use crate::RenderError;
+
+use super::{Program, RenderPass};
 
 pub struct PipelineState {
     program: Arc<Program>,
@@ -72,7 +74,7 @@ impl<'a> PipelineStateDesc<'a> {
     }
 }
 
-pub fn create_pipeline_cache(device: &ash::Device) -> Result<vk::PipelineCache, CreateError> {
+pub fn create_pipeline_cache(device: &ash::Device) -> Result<vk::PipelineCache, RenderError> {
     let cache_create_info = vk::PipelineCacheCreateInfo::builder().build();
 
     let cache = unsafe { device.create_pipeline_cache(&cache_create_info, None) }?;
@@ -85,7 +87,7 @@ impl PipelineState {
         program: &Arc<Program>,
         desc: PipelineStateDesc,
         cache: &vk::PipelineCache,
-    ) -> Result<Self, CreateError> {
+    ) -> Result<Self, RenderError> {
         let shader_create_info = program
             .shaders()
             .iter()
@@ -213,7 +215,7 @@ impl PipelineState {
                 None,
             )
         }
-        .map_err(|(_, error)| CreateError::from(error))?[0];
+        .map_err(|(_, error)| RenderError::from(error))?[0];
 
         Ok(Self {
             program: program.clone(),
