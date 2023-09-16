@@ -21,7 +21,9 @@ use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier}
 
 use crate::{GpuResource, RenderError};
 
-use super::{FboCacheKey, Image, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS};
+use super::{
+    FboCacheKey, Image, ImageViewDesc, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
+};
 
 pub(crate) struct CommandPool {
     pool: vk::CommandPool,
@@ -198,12 +200,12 @@ impl<'a> CommandBufferRecorder<'a> {
         &self,
         render_pass: &RenderPass,
         color_attachments: &[RenderPassAttachment],
-        depth_attachment: Option<RenderPassAttachment>,
+        depth_attachment: Option<&RenderPassAttachment>,
         cb: F,
     ) -> Result<(), RenderError> {
         let clear_values = color_attachments
             .iter()
-            .chain(depth_attachment.iter())
+            .chain(depth_attachment)
             .map(|attachment| attachment.clear)
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
         let color_attachments = color_attachments
@@ -221,8 +223,35 @@ impl<'a> CommandBufferRecorder<'a> {
             .next()
             .expect("Render pass needs at least one attachment");
 
-        let key = FboCacheKey::new(&color_attachments, depth_attachment);
+        let color_attachment_descs = color_attachments
+            .iter()
+            .map(|image| image.desc())
+            .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
+
+        let depth_attachment_desc = depth_attachment.map(|image| image.desc());
+
+        let key = FboCacheKey::new(dims, &color_attachment_descs, depth_attachment_desc);
         let framebuffer = render_pass.get_or_create_fbo(key)?;
+
+        let views = color_attachments
+            .into_iter()
+            .map(|attachment| {
+                attachment
+                    .get_or_create_view(ImageViewDesc::default())
+                    .unwrap()
+            })
+            .chain(depth_attachment.iter().map(|attachment| {
+                attachment
+                    .get_or_create_view(
+                        ImageViewDesc::default().aspect_mask(vk::ImageAspectFlags::DEPTH),
+                    )
+                    .unwrap()
+            }))
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+
+        let mut render_pass_attachment_desc = vk::RenderPassAttachmentBeginInfo::builder()
+            .attachments(&views)
+            .build();
 
         let begin_pass_info = vk::RenderPassBeginInfo::builder()
             .render_pass(render_pass.raw())
@@ -235,6 +264,7 @@ impl<'a> CommandBufferRecorder<'a> {
                     height: dims[1] as _,
                 },
             })
+            .push_next(&mut render_pass_attachment_desc)
             .build();
 
         unsafe {

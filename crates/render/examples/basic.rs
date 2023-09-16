@@ -127,7 +127,7 @@ fn main() {
                     .final_layout(vk::ImageLayout::PRESENT_SRC_KHR),
             ],
             Some(
-                RenderPassAttachmentDesc::depth(depth.desc().format)
+                &RenderPassAttachmentDesc::depth(depth.desc().format)
                     .clear_input()
                     .initial_layout(vk::ImageLayout::UNDEFINED),
             ),
@@ -287,7 +287,7 @@ fn main() {
                             let depth = RenderPassAttachment::depth(&depth, 1.0);
 
                             recorder
-                                .render_pass(&render_pass, &[backbuffer], Some(depth), |cb| {
+                                .render_pass(&render_pass, &[backbuffer], Some(&depth), |cb| {
                                     cb.bind_pipeline(pipeline.pipeline());
                                     cb.bind_descriptor_set(
                                         0,
