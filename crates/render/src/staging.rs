@@ -24,7 +24,7 @@ use std::{
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 
-use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
+use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
 
 use crate::{
     vulkan::{
@@ -264,10 +264,10 @@ impl Staging {
                 &format!("Sending staging queue #{}", self.index),
             );
 
-            self.barrier_pre(&recorder, &self.upload_buffers, &self.upload_images);
+            self.barrier_pre(&recorder, &self.upload_images);
             self.copy_buffers(&recorder, &self.upload_buffers);
             self.copy_images(&recorder, &self.upload_images);
-            self.barrier_after(&recorder, &self.upload_buffers, &self.upload_images);
+            self.barrier_after(&recorder, &self.upload_images);
 
             self.device
                 .cmd_end_label(self.tranfser_cbs[self.current].raw());
@@ -300,36 +300,7 @@ impl Staging {
         Ok(Some(SubmitWait::Transfer(render_semaphore)))
     }
 
-    fn barrier_pre(
-        &self,
-        recorder: &CommandBufferRecorder,
-        buffers: &HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
-        images: &[ImageUploadRequest],
-    ) {
-        let mut buffer_barriers = Vec::with_capacity(128);
-        buffers.iter().for_each(|(buffer, requests)| {
-            requests.iter().for_each(|request| {
-                buffer_barriers.push(BufferBarrier {
-                    previous_accesses: &[AccessType::Nothing],
-                    next_accesses: &[AccessType::TransferWrite],
-                    src_queue_family_index: self.device.queue_index(),
-                    dst_queue_family_index: self.device.queue_index(),
-                    buffer: *buffer,
-                    offset: request.dst_offset as _,
-                    size: request.size as _,
-                })
-            })
-        });
-        buffer_barriers.push(BufferBarrier {
-            previous_accesses: &[AccessType::Nothing],
-            next_accesses: &[AccessType::TransferRead],
-            src_queue_family_index: self.device.queue_index(),
-            dst_queue_family_index: self.device.queue_index(),
-            buffer: self.buffers[self.current].raw(),
-            offset: 0,
-            size: self.buffers[self.current].desc().size,
-        });
-
+    fn barrier_pre(&self, recorder: &CommandBufferRecorder, images: &[ImageUploadRequest]) {
         let image_barriers = images
             .iter()
             .map(|request| ImageBarrier {
@@ -345,35 +316,10 @@ impl Staging {
             })
             .collect::<Vec<_>>();
 
-        pipeline_barrier(
-            recorder.device,
-            *recorder.cb,
-            None,
-            &buffer_barriers,
-            &image_barriers,
-        );
+        pipeline_barrier(recorder.device, *recorder.cb, None, &[], &image_barriers);
     }
 
-    fn barrier_after(
-        &self,
-        recorder: &CommandBufferRecorder,
-        buffers: &HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
-        images: &[ImageUploadRequest],
-    ) {
-        let mut buffer_barriers = Vec::with_capacity(128);
-        buffers.iter().for_each(|(buffer, requests)| {
-            requests.iter().for_each(|request| {
-                buffer_barriers.push(BufferBarrier {
-                    previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: &[AccessType::VertexBuffer, AccessType::IndexBuffer],
-                    src_queue_family_index: self.device.queue_index(),
-                    dst_queue_family_index: self.device.queue_index(),
-                    buffer: *buffer,
-                    offset: request.dst_offset as _,
-                    size: request.size as _,
-                })
-            })
-        });
+    fn barrier_after(&self, recorder: &CommandBufferRecorder, images: &[ImageUploadRequest]) {
         let image_barriers = images
             .iter()
             .map(|request| ImageBarrier {
@@ -389,13 +335,7 @@ impl Staging {
             })
             .collect::<Vec<_>>();
 
-        pipeline_barrier(
-            recorder.device,
-            *recorder.cb,
-            None,
-            &buffer_barriers,
-            &image_barriers,
-        );
+        pipeline_barrier(recorder.device, *recorder.cb, None, &[], &image_barriers);
     }
 
     fn copy_buffers(
