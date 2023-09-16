@@ -1,14 +1,19 @@
+use std::{io::Cursor, mem::size_of_val};
+
+use arrayvec::ArrayVec;
 use ash::vk::{self};
 use dess_render::{
     vulkan::{
-        AcquireError, Buffer, BufferDesc, Device, Image, ImageDesc, ImageType, InstanceBuilder,
-        PhysicalDeviceList, Program, RenderPass, RenderPassAttachment, RenderPassAttachmentDesc,
+        create_pipeline_cache, AcquireError, Buffer, BufferDesc, Device, Image, ImageDesc,
+        ImageType, InstanceBuilder, PhysicalDeviceList, PipelineState, PipelineStateDesc,
+        PipelineVertex, Program, RenderPass, RenderPassAttachment, RenderPassAttachmentDesc,
         RenderPassLayout, ShaderDesc, SubmitWait, Surface, Swapchain,
     },
-    DescriptorCache, Staging,
+    DescriptorCache, ImageSubresourceData, Staging,
 };
 use dess_vfs::{AssetPath, Vfs};
 use glam::Mat4;
+use image::io::Reader;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use simple_logger::SimpleLogger;
 use winit::{
@@ -19,9 +24,38 @@ use winit::{
 };
 
 #[allow(dead_code)]
+#[repr(C, packed)]
+#[derive(Debug)]
 struct Camera {
     view: Mat4,
     projection: Mat4,
+}
+
+#[repr(C, packed)]
+struct Vertex {
+    pub pos: glam::Vec3,
+    pub uv: glam::Vec2,
+}
+
+const VERTEX_FORMAT: [vk::VertexInputAttributeDescription; 2] = [
+    vk::VertexInputAttributeDescription {
+        location: 0,
+        binding: 0,
+        format: vk::Format::R32G32B32_SFLOAT,
+        offset: 0,
+    },
+    vk::VertexInputAttributeDescription {
+        location: 1,
+        binding: 0,
+        format: vk::Format::R32G32_SFLOAT,
+        offset: 12,
+    },
+];
+
+impl PipelineVertex for Vertex {
+    fn attribute_description() -> &'static [vk::VertexInputAttributeDescription] {
+        &VERTEX_FORMAT
+    }
 }
 
 fn main() {
@@ -67,28 +101,10 @@ fn main() {
     let fragment = fragment.load().unwrap();
     let shaders = [ShaderDesc::vertex(&vertex), ShaderDesc::fragment(&fragment)];
     let program = Program::new(&device, &shaders).unwrap();
-    let _staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
+    let mut staging = Staging::new(&device, 32 * 1024 * 1024).unwrap();
     let mut desciptors = DescriptorCache::new(&device).unwrap();
-    let _handle1 = desciptors.create(program.descriptor_set(0)).unwrap();
-    let _handle2 = desciptors.create(program.descriptor_set(1)).unwrap();
-    let _image = Image::texture(
-        &device,
-        ImageDesc::new(
-            vk::Format::A8B8G8R8_UNORM_PACK32,
-            ImageType::Tex2D,
-            [512, 512],
-        )
-        .usage(vk::ImageUsageFlags::SAMPLED),
-    )
-    .unwrap();
-    let _buffer = Buffer::new(
-        &device,
-        BufferDesc::gpu_only(
-            1024,
-            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
-        ),
-    )
-    .unwrap();
+    let handle1 = desciptors.create(program.descriptor_set(0)).unwrap();
+    let handle2 = desciptors.create(program.descriptor_set(1)).unwrap();
 
     let mut depth = Image::texture(
         &device,
@@ -112,16 +128,124 @@ fn main() {
             ],
             Some(
                 RenderPassAttachmentDesc::depth(depth.desc().format)
+                    .clear_input()
                     .initial_layout(vk::ImageLayout::UNDEFINED),
             ),
         ),
     )
     .unwrap();
 
+    let cache = create_pipeline_cache(device.raw()).unwrap();
+    let pipeline = PipelineState::new::<Vertex>(
+        &program,
+        PipelineStateDesc::new(&render_pass)
+            .face_cull(false)
+            .depth_write(false)
+            .subpass(0),
+        &cache,
+    )
+    .unwrap();
+
+    let vertices = [
+        Vertex {
+            pos: glam::Vec3::new(-0.5, 0.5, 0.0),
+            uv: glam::Vec2::new(0.0, 1.0),
+        },
+        Vertex {
+            pos: glam::Vec3::new(0.5, 0.5, 0.0),
+            uv: glam::Vec2::new(1.0, 1.0),
+        },
+        Vertex {
+            pos: glam::Vec3::new(0.5, -0.5, 0.0),
+            uv: glam::Vec2::new(1.0, 0.0),
+        },
+        Vertex {
+            pos: glam::Vec3::new(-0.5, -0.5, 0.0),
+            uv: glam::Vec2::new(0.0, 0.0),
+        },
+    ];
+
+    let indices = [0u16, 1u16, 2u16, 0u16, 3u16, 2u16];
+
+    let vbo = Buffer::new(
+        &device,
+        BufferDesc::gpu_only(
+            size_of_val(&vertices),
+            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        ),
+    )
+    .unwrap();
+
+    let ibo = Buffer::new(
+        &device,
+        BufferDesc::gpu_only(
+            size_of_val(&indices),
+            vk::BufferUsageFlags::INDEX_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+        ),
+    )
+    .unwrap();
+
+    staging.upload_buffer(&vbo, 0, &vertices).unwrap();
+    staging.upload_buffer(&ibo, 0, &indices).unwrap();
+
+    desciptors
+        .set_uniform(
+            handle1,
+            0,
+            &Camera {
+                projection: Mat4::IDENTITY,
+                view: Mat4::IDENTITY,
+            },
+        )
+        .unwrap();
+
+    desciptors.set_uniform(handle2, 0, &Mat4::IDENTITY).unwrap();
+
+    let image_data = vfs
+        .load(AssetPath::Content("images/test.png"))
+        .unwrap()
+        .load()
+        .unwrap();
+    let loaded_image = Reader::new(Cursor::new(image_data))
+        .with_guessed_format()
+        .unwrap()
+        .decode()
+        .unwrap()
+        .to_rgba8();
+    let image_desc = ImageDesc::new(
+        vk::Format::R8G8B8A8_UNORM,
+        ImageType::Tex2D,
+        [loaded_image.width(), loaded_image.height()],
+    )
+    .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST);
+    let image = Image::texture(&device, image_desc).unwrap();
+
+    desciptors
+        .set_image(
+            handle2,
+            1,
+            &image,
+            vk::ImageAspectFlags::COLOR,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        )
+        .unwrap();
+    let pixels = loaded_image.as_flat_samples();
+    staging
+        .upload_image(
+            &image,
+            &[&ImageSubresourceData {
+                data: pixels.samples,
+                row_pitch: loaded_image.width() as usize,
+            }],
+        )
+        .unwrap();
+
     let mut alt_pressed = false;
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Poll;
         let mut need_recreate = false;
+
+        let mut wait = ArrayVec::<SubmitWait, 3>::new();
 
         match event {
             Event::WindowEvent { event, .. } => match event {
@@ -143,12 +267,17 @@ fn main() {
                 WindowEvent::ModifiersChanged(modifier) => alt_pressed = modifier.alt(),
                 _ => {}
             },
+            Event::MainEventsCleared => window.request_redraw(),
             Event::RedrawRequested(_) => match swapchain.acquire_next_image() {
                 Err(AcquireError::Suboptimal) | Err(AcquireError::OutOfDate) => {
                     need_recreate = true;
                 }
                 Ok(backbuffer) => {
-                    desciptors.update_descriptors().unwrap();
+                    desciptors
+                        .update_descriptors()
+                        .unwrap()
+                        .into_iter()
+                        .for_each(|x| wait.push(x));
                     let frame = device.begin_frame().unwrap();
                     frame
                         .main_cb()
@@ -161,19 +290,48 @@ fn main() {
                             let depth = RenderPassAttachment::depth(&depth, 1.0);
 
                             recorder
-                                .render_pass(&render_pass, &[backbuffer], Some(depth), |_| {})
+                                .render_pass(&render_pass, &[backbuffer], Some(depth), |cb| {
+                                    cb.bind_pipeline(pipeline.pipeline());
+                                    cb.bind_descriptor_set(
+                                        0,
+                                        vk::PipelineBindPoint::GRAPHICS,
+                                        program.pipeline_layout(),
+                                        desciptors.get(handle1).unwrap().raw,
+                                    );
+                                    cb.bind_descriptor_set(
+                                        1,
+                                        vk::PipelineBindPoint::GRAPHICS,
+                                        program.pipeline_layout(),
+                                        desciptors.get(handle2).unwrap().raw,
+                                    );
+                                    cb.bind_vertex_buffer(vbo.raw(), 0);
+                                    cb.bind_index_buffer(ibo.raw(), 0);
+                                    let render_area = swapchain.render_area();
+                                    cb.set_scissor(render_area);
+                                    cb.set_viewport(vk::Viewport {
+                                        x: 0.0,
+                                        y: 0.0,
+                                        width: render_area.extent.width as _,
+                                        height: render_area.extent.height as _,
+                                        min_depth: 0.0,
+                                        max_depth: 1.0,
+                                    });
+                                    cb.draw(6, 1, 0, 0);
+                                })
                                 .unwrap();
                         })
                         .unwrap();
+                    staging
+                        .upload()
+                        .unwrap()
+                        .into_iter()
+                        .for_each(|x| wait.push(x));
 
+                    wait.push(SubmitWait::ColorAttachmentOutput(
+                        backbuffer.acquire_semaphore,
+                    ));
                     device
-                        .submit(
-                            frame.main_cb(),
-                            &[SubmitWait::ColorAttachmentOutput(
-                                &backbuffer.acquire_semaphore,
-                            )],
-                            &[backbuffer.rendering_finished],
-                        )
+                        .submit(frame.main_cb(), &wait, &[backbuffer.rendering_finished])
                         .unwrap();
 
                     device.end_frame(frame);

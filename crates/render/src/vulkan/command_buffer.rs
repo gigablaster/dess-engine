@@ -313,6 +313,19 @@ impl<'a> RenderPassRecorder<'a> {
         };
     }
 
+    pub fn bind_descriptor_set(
+        &self,
+        slot: u32,
+        bind_point: vk::PipelineBindPoint,
+        layout: vk::PipelineLayout,
+        set: vk::DescriptorSet,
+    ) {
+        unsafe {
+            self.device
+                .cmd_bind_descriptor_sets(*self.cb, bind_point, layout, slot, &[set], &[])
+        }
+    }
+
     pub fn draw(
         &self,
         index_count: u32,

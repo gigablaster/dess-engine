@@ -51,12 +51,12 @@ pub struct Queue {
 }
 
 #[derive(Debug)]
-pub enum SubmitWait<'a> {
-    Transfer(&'a Semaphore),
-    ColorAttachmentOutput(&'a Semaphore),
+pub enum SubmitWait {
+    Transfer(Semaphore),
+    ColorAttachmentOutput(Semaphore),
 }
 
-impl<'a> SubmitWait<'a> {
+impl SubmitWait {
     pub fn stage_flags(&self) -> vk::PipelineStageFlags {
         match self {
             SubmitWait::ColorAttachmentOutput(_) => vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,

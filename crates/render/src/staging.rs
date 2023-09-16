@@ -252,7 +252,7 @@ impl Staging {
         self.upload_buffers.is_empty() && self.upload_images.is_empty()
     }
 
-    pub fn upload(&mut self) -> Result<Option<Semaphore>, StagingError> {
+    pub fn upload(&mut self) -> Result<Option<SubmitWait>, StagingError> {
         if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
             return Ok(None);
         }
@@ -279,7 +279,7 @@ impl Staging {
         if let Some(last) = self.last {
             self.device.submit(
                 &self.tranfser_cbs[self.current],
-                &[SubmitWait::Transfer(&self.semaphores[last])],
+                &[SubmitWait::Transfer(self.semaphores[last])],
                 &[semaphore, render_semaphore],
             )?;
         } else {
@@ -298,7 +298,7 @@ impl Staging {
         self.current += 1;
         self.current %= STAGES;
 
-        Ok(Some(render_semaphore))
+        Ok(Some(SubmitWait::Transfer(render_semaphore)))
     }
 
     fn barrier_pre(

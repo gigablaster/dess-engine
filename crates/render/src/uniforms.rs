@@ -15,7 +15,8 @@
 
 use std::{
     mem::size_of,
-    ptr::{self, copy_nonoverlapping, NonNull},
+    ptr::{copy_nonoverlapping, NonNull},
+    slice,
     sync::Arc,
 };
 
@@ -23,8 +24,9 @@ use ash::vk;
 use dess_common::memory::BlockAllocator;
 
 use crate::{
-    error::{UniformAllocateError, UniformCreateError},
-    vulkan::{Buffer, BufferDesc, Device},
+    error::{UniformAllocateError, UniformCreateError, UniformSyncError},
+    vulkan::{Buffer, BufferDesc, CommandBuffer, CommandPool, Device, Semaphore, SubmitWait},
+    GpuResource,
 };
 
 const BUCKET_SIZE: u32 = 0xFFFF;
@@ -98,8 +100,15 @@ impl Bucket {
         self.from = 0;
     }
 }
+
 pub struct Uniforms {
+    device: Arc<Device>,
     buffer: Arc<Buffer>,
+    staging: Arc<Buffer>,
+    pool: CommandPool,
+    cb: CommandBuffer,
+    semaphore: Semaphore,
+    writes: Vec<vk::BufferCopy>,
     mapping: NonNull<u8>,
     buckets: Vec<Bucket>,
     free_buckets: Vec<usize>,
@@ -107,21 +116,39 @@ pub struct Uniforms {
 
 impl Uniforms {
     pub fn new(device: &Arc<Device>) -> Result<Self, UniformCreateError> {
-        let mut buffer = Buffer::new(
+        let buffer = Buffer::new(
             device,
-            BufferDesc::upload(
+            BufferDesc::gpu_only(
                 UNIFORM_BUFFER_SIZE as _,
-                vk::BufferUsageFlags::UNIFORM_BUFFER,
+                vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
             )
             .dedicated(true),
         )?;
+        let mut staging = Buffer::new(
+            device,
+            BufferDesc::host_only(UNIFORM_BUFFER_SIZE as _, vk::BufferUsageFlags::TRANSFER_SRC),
+        )?;
         buffer.name("Unified uniform buffer");
-        let mapping = Arc::get_mut(&mut buffer).unwrap().map()?;
+        staging.name("Uniform buffer staging");
+        let mapping = Arc::get_mut(&mut staging).unwrap().map()?;
+        let mut pool = CommandPool::new(
+            device.raw(),
+            device.queue_index(),
+            vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+        )
+        .unwrap();
+        let cb = pool.get_or_create(device.raw()).unwrap();
         Ok(Self {
+            device: device.clone(),
             buffer,
+            staging,
+            writes: Vec::with_capacity(1024),
+            cb,
+            pool,
             mapping,
             buckets: Vec::new(),
             free_buckets: Vec::new(),
+            semaphore: Semaphore::new(device.raw())?,
         })
     }
 
@@ -137,18 +164,23 @@ impl Uniforms {
                 let offset = base_offset + offset;
                 unsafe {
                     copy_nonoverlapping(
-                        ptr::addr_of!(data) as *const u8,
+                        slice::from_ref(data).as_ptr() as *const u8,
                         self.mapping.as_ptr().add(offset as usize),
                         size as usize,
                     )
                 }
-                Ok(offset)
-            } else {
-                Err(UniformAllocateError::OutOfSpace)
+                self.writes.push(
+                    vk::BufferCopy::builder()
+                        .src_offset(offset as _)
+                        .dst_offset(offset as _)
+                        .size(size as _)
+                        .build(),
+                );
+
+                return Ok(offset);
             }
-        } else {
-            Err(UniformAllocateError::OutOfSpace)
         }
+        Err(UniformAllocateError::OutOfSpace)
     }
 
     pub fn dealloc(&mut self, offset: u32) {
@@ -163,6 +195,29 @@ impl Uniforms {
 
     pub fn raw(&self) -> vk::Buffer {
         self.buffer.raw()
+    }
+
+    pub fn flush(&mut self) -> Result<Option<SubmitWait>, UniformSyncError> {
+        self.cb.wait(self.device.raw())?;
+        self.cb.reset(self.device.raw())?;
+        if self.writes.is_empty() {
+            return Ok(None);
+        }
+        self.cb.record(self.device.raw(), |recorder| {
+            unsafe {
+                let _label = self.device.scoped_label(*recorder.cb, "Submiting uniforms");
+                recorder.device.cmd_copy_buffer(
+                    *recorder.cb,
+                    self.staging.raw(),
+                    self.buffer.raw(),
+                    &self.writes,
+                )
+            };
+        })?;
+        self.device.submit(&self.cb, &[], &[self.semaphore])?;
+        self.writes.clear();
+
+        Ok(Some(SubmitWait::Transfer(self.semaphore)))
     }
 
     fn find_bucket_index(&self, size: u32) -> Option<usize> {
@@ -191,5 +246,12 @@ impl Uniforms {
             .find(|(min, max)| size > *min && size <= *max)
             .copied()
             .unwrap()
+    }
+}
+
+impl Drop for Uniforms {
+    fn drop(&mut self) {
+        self.cb.free(self.device.raw());
+        self.pool.free(self.device.raw());
     }
 }

@@ -84,6 +84,7 @@ pub enum DescriptorError {
     MapFailed,
     NoCompatibleMemory,
     TooManyObjects,
+    DeviceLost,
 }
 
 impl From<gpu_descriptor::AllocationError> for DescriptorError {
@@ -189,6 +190,59 @@ impl From<MapError> for UniformCreateError {
             gpu_alloc::MapError::OutOfHostMemory => UniformCreateError::OutOfHostMemory,
             gpu_alloc::MapError::OutOfDeviceMemory => UniformCreateError::OutOfDeviceMemory,
             _ => panic!("Unexpected error {}", value),
+        }
+    }
+}
+
+impl From<CreateError> for UniformCreateError {
+    fn from(value: CreateError) -> Self {
+        match value {
+            CreateError::OutOfHostMemory => UniformCreateError::OutOfHostMemory,
+            CreateError::OutOfDeviceMemory => UniformCreateError::OutOfDeviceMemory,
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum UniformSyncError {
+    OufOfHostMemory,
+    OutOfDeviceMemory,
+    DeviceLost,
+}
+
+impl From<CreateError> for UniformSyncError {
+    fn from(value: CreateError) -> Self {
+        match value {
+            CreateError::OutOfDeviceMemory => UniformSyncError::OutOfDeviceMemory,
+            CreateError::OutOfHostMemory => UniformSyncError::OufOfHostMemory,
+        }
+    }
+}
+
+impl From<WaitError> for UniformSyncError {
+    fn from(value: WaitError) -> Self {
+        match value {
+            WaitError::DeviceLost => UniformSyncError::DeviceLost,
+            WaitError::OutOfDeviceMemory => UniformSyncError::OutOfDeviceMemory,
+            WaitError::OutOfHostMemory => UniformSyncError::OufOfHostMemory,
+        }
+    }
+}
+
+impl From<UniformSyncError> for DescriptorError {
+    fn from(value: UniformSyncError) -> Self {
+        match value {
+            UniformSyncError::DeviceLost => DescriptorError::DeviceLost,
+            UniformSyncError::OufOfHostMemory => DescriptorError::OutOfHostMemory,
+            UniformSyncError::OutOfDeviceMemory => DescriptorError::OutOfDeviceMemory,
+        }
+    }
+}
+
+impl From<ResetError> for UniformSyncError {
+    fn from(value: ResetError) -> Self {
+        match value {
+            ResetError::OutOfDeviceMemory => UniformSyncError::OutOfDeviceMemory,
         }
     }
 }

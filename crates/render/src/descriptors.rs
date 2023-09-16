@@ -23,7 +23,7 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 use crate::{
     error::DescriptorError,
     uniforms::Uniforms,
-    vulkan::{DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc},
+    vulkan::{DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc, SubmitWait},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -212,7 +212,7 @@ impl DescriptorCache {
         Ok(())
     }
 
-    pub fn update_descriptors(&mut self) -> Result<(), DescriptorError> {
+    pub fn update_descriptors(&mut self) -> Result<Option<SubmitWait>, DescriptorError> {
         puffin::profile_scope!("Update descriptors");
         let drop_list = &mut self.device.drop_list();
         let allocator = &mut self.device.descriptor_allocator();
@@ -247,10 +247,10 @@ impl DescriptorCache {
             }
         }
         let mut writes = Vec::with_capacity(4096);
+        let mut buffers = TempList::new();
+        let mut images = TempList::new();
         {
             puffin::profile_scope!("Prepare new descriptors");
-            let mut buffers = TempList::new();
-            let mut images = TempList::new();
             self.dirty.iter().for_each(|desc| {
                 self.prepare_descriptor(&mut writes, &mut images, &mut buffers, *desc)
             });
@@ -276,7 +276,7 @@ impl DescriptorCache {
             .filter_map(|x| x.data.descriptor)
             .for_each(|x| drop_list.free_descriptor_set(x));
 
-        Ok(())
+        Ok(self.uniforms.flush()?)
     }
 
     fn prepare_descriptor(
