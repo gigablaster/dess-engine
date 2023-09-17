@@ -468,8 +468,18 @@ dependencies = [
  "byteorder",
  "four-cc",
  "log",
- "simple_logger",
  "uuid",
+]
+
+[[package]]
+name = "dess-content"
+version = "0.1.0"
+dependencies = [
+ "byteorder",
+ "crc",
+ "dess-common",
+ "four-cc",
+ "log",
 ]
 
 [[package]]
@@ -503,11 +513,9 @@ name = "dess-vfs"
 version = "0.1.0"
 dependencies = [
  "byteorder",
- "crc",
  "dess-common",
  "directories",
  "four-cc",
- "lazy_static",
  "log",
  "lz4_flex",
  "memmap2 0.7.1",
