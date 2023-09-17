@@ -25,7 +25,7 @@ pub struct DevFsArchive {
 impl DevFsArchive {
     pub fn new(root: &Path) -> Self {
         Self {
-            cache: RawFsArchive::new(root.join("cache")),
+            cache: RawFsArchive::new(root.join(".cache")),
             data: RawFsArchive::new(root.join("data")),
         }
     }

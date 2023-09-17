@@ -1,0 +1,16 @@
+[package]
+name = "dess-content"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dess-common = { path = "../common" }
+log = "0.4.20"
+byteorder = "1.4"
+four-cc = "0.3.0"
+uuid = "1.4.1"
+image = "0.24.7"
+texpresso = "2.0.1"
+ddsfile = "0.5.1"

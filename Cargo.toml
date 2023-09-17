@@ -3,7 +3,9 @@ members=[
     "crates/common",
     "crates/vfs",
     "crates/render",
-    "tools/packer"
+    "crates/content",
+    "tools/packer",
+    "tools/transformer"
 ]
 
 resolver = "2"
