@@ -15,11 +15,11 @@
 
 mod chunky_list;
 mod client;
+mod handle;
 pub mod memory;
+pub mod mesh;
 mod serialization;
 mod time;
-
-mod handle;
 pub mod traits;
 
 pub use chunky_list::*;

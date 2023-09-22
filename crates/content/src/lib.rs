@@ -20,10 +20,13 @@ use std::{
 
 use image::ImageError;
 
-pub mod texture;
+mod mesh;
+mod texture;
+
+pub use mesh::GltfMeshImporter;
+pub use texture::TextureImporter;
 
 pub trait Content {
-    fn dependencies(&self) -> &[PathBuf];
     fn save(&self, path: &Path) -> io::Result<()>;
 }
 
@@ -48,8 +51,20 @@ impl From<ImageError> for ImportError {
         }
     }
 }
+
+impl From<gltf::Error> for ImportError {
+    fn from(value: gltf::Error) -> Self {
+        Self::ImportFailed(value.to_string())
+    }
+}
 pub trait ContentImporter: Sync {
     fn can_handle(&self, path: &Path) -> bool;
-    fn import(&self, path: &Path) -> Result<Box<dyn Content>, ImportError>;
+    fn import(&self, path: &Path, context: &ImportContext)
+        -> Result<Box<dyn Content>, ImportError>;
     fn target_name(&self, path: &Path) -> PathBuf;
+}
+
+pub struct ImportContext<'a> {
+    pub source_dir: &'a Path,
+    pub destination_dir: &'a Path,
 }

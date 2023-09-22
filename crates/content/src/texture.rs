@@ -9,7 +9,7 @@ use ddsfile::{AlphaMode, D3D10ResourceDimension, Dds, DxgiFormat, NewDxgiParams}
 use image::io::Reader;
 use texpresso::{Format, Params, COLOUR_WEIGHTS_UNIFORM};
 
-use crate::{Content, ContentImporter, ImportError};
+use crate::{Content, ContentImporter, ImportContext, ImportError};
 
 const MIN_MIP_SIZE: u32 = 4;
 
@@ -194,10 +194,6 @@ impl TextureContent {
 }
 
 impl Content for TextureContent {
-    fn dependencies(&self) -> &[std::path::PathBuf] {
-        &[]
-    }
-
     fn save(&self, path: &Path) -> std::io::Result<()> {
         let mut dds = Dds::new_dxgi(self.dxgi()).unwrap();
         self.layers.iter().enumerate().for_each(|(index, layer)| {
@@ -234,7 +230,18 @@ impl TextureImporter {
     }
 
     fn is_color(path: &Path) -> bool {
-        Self::has_suffix(path, &["_d", "_diffuse", "_color", "_c", "_albedo"])
+        Self::has_suffix(
+            path,
+            &[
+                "_d",
+                "_diffuse",
+                "_color",
+                "_c",
+                "_albedo",
+                "_base",
+                "_basecolor",
+            ],
+        )
     }
 
     fn is_normal(path: &Path) -> bool {
@@ -258,7 +265,11 @@ impl TextureImporter {
 }
 
 impl ContentImporter for TextureImporter {
-    fn import(&self, path: &Path) -> Result<Box<dyn Content>, ImportError> {
+    fn import(
+        &self,
+        path: &Path,
+        _context: &ImportContext,
+    ) -> Result<Box<dyn Content>, ImportError> {
         let image = Reader::open(path)?.with_guessed_format()?.decode()?;
         if Self::is_color(path) {
             Ok(TextureContent::color_texture(image))

@@ -31,6 +31,31 @@ impl BinarySerialization for String {
     }
 }
 
+impl BinaryDeserialization for Option<String> {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let count = r.read_u16::<LittleEndian>()?;
+        if count != u16::MAX {
+            let mut buffer = vec![0; count as _];
+            r.read_exact(&mut buffer)?;
+
+            Ok(Some(String::from_utf8(buffer).map_err(|_| {
+                io::Error::new(io::ErrorKind::InvalidData, "UTF8 coversion failed")
+            })?))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
+impl BinarySerialization for Option<String> {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        match self {
+            Some(string) => string.serialize(w),
+            None => w.write_u16::<LittleEndian>(u16::MAX),
+        }
+    }
+}
+
 impl BinaryDeserialization for FourCC {
     fn deserialize(r: &mut impl Read) -> io::Result<Self> {
         let mut magic = [0u8; 4];
@@ -171,5 +196,80 @@ impl BinaryDeserialization for Vec<u8> {
         r.read_exact(&mut result)?;
 
         Ok(result)
+    }
+}
+
+impl BinarySerialization for Vec<u16> {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        w.write_u32::<LittleEndian>(self.len() as _)?;
+        for it in self.iter() {
+            w.write_u16::<LittleEndian>(*it)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl BinaryDeserialization for Vec<u16> {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let len = r.read_u32::<LittleEndian>()? as _;
+        let mut result = vec![0u16; len];
+        r.read_u16_into::<LittleEndian>(&mut result)?;
+
+        Ok(result)
+    }
+}
+
+impl BinarySerialization for glam::Vec2 {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        w.write_f32::<LittleEndian>(self.x)?;
+        w.write_f32::<LittleEndian>(self.y)
+    }
+}
+
+impl BinaryDeserialization for glam::Vec2 {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let x = r.read_f32::<LittleEndian>()?;
+        let y = r.read_f32::<LittleEndian>()?;
+
+        Ok(Self { x, y })
+    }
+}
+
+impl BinarySerialization for glam::Vec3 {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        w.write_f32::<LittleEndian>(self.x)?;
+        w.write_f32::<LittleEndian>(self.y)?;
+        w.write_f32::<LittleEndian>(self.z)
+    }
+}
+
+impl BinaryDeserialization for glam::Vec3 {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let x = r.read_f32::<LittleEndian>()?;
+        let y = r.read_f32::<LittleEndian>()?;
+        let z = r.read_f32::<LittleEndian>()?;
+
+        Ok(Self { x, y, z })
+    }
+}
+
+impl BinarySerialization for glam::Vec4 {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        w.write_f32::<LittleEndian>(self.x)?;
+        w.write_f32::<LittleEndian>(self.y)?;
+        w.write_f32::<LittleEndian>(self.z)?;
+        w.write_f32::<LittleEndian>(self.w)
+    }
+}
+
+impl BinaryDeserialization for glam::Vec4 {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let x = r.read_f32::<LittleEndian>()?;
+        let y = r.read_f32::<LittleEndian>()?;
+        let z = r.read_f32::<LittleEndian>()?;
+        let w = r.read_f32::<LittleEndian>()?;
+
+        Ok(Self::new(x, y, z, w))
     }
 }

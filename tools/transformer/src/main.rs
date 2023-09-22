@@ -4,7 +4,7 @@ use std::{
 };
 
 use clap::{Arg, ArgAction};
-use dess_content::{texture::TextureImporter, ContentImporter};
+use dess_content::{ContentImporter, GltfMeshImporter, ImportContext, TextureImporter};
 
 fn need_update(src: &Path, dst: &Path) -> bool {
     if !dst.exists() {
@@ -37,28 +37,40 @@ fn transform_directory(
     rayon::scope(|s| {
         dirs.iter().for_each(|path| {
             if let Some(importer) = importers.iter().find(|x| x.can_handle(path)) {
-                let target_path = if let Some(parent) = path.strip_prefix(root).unwrap().parent() {
-                    output.join(parent)
-                } else {
-                    output.into()
-                };
+                let target_path: PathBuf =
+                    if let Some(parent) = path.strip_prefix(root).unwrap().parent() {
+                        output.join(parent)
+                    } else {
+                        output.into()
+                    }
+                    .as_os_str()
+                    .to_ascii_lowercase()
+                    .into();
                 if !target_path.exists() {
                     create_dir_all(&target_path).unwrap();
                 }
                 let file_name: PathBuf = path.file_name().unwrap().into();
-                let target_path = target_path.join(importer.target_name(&file_name));
+                let target_file: PathBuf = target_path
+                    .join(importer.target_name(&file_name))
+                    .into_os_string()
+                    .to_ascii_lowercase()
+                    .into();
                 let path = path.clone();
-                if need_update(&path, &target_path) {
+                if need_update(&path, &target_file) {
                     s.spawn(move |_| {
-                        let content = match importer.import(&path) {
+                        let context = ImportContext {
+                            source_dir: path.parent().unwrap(),
+                            destination_dir: target_path.strip_prefix(output).unwrap(),
+                        };
+                        let content = match importer.import(&path, &context) {
                             Ok(content) => content,
                             Err(err) => {
                                 eprintln!("Import failed: {:?}", err);
                                 return;
                             }
                         };
-                        match content.save(&target_path) {
-                            Ok(_) => println!("Transformed {:?} into {:?}", path, target_path),
+                        match content.save(&target_file) {
+                            Ok(_) => println!("Transformed {:?} into {:?}", path, target_file),
                             Err(err) => eprintln!("Save falied: {:?} - {:?}", path, err),
                         }
                     })
@@ -94,7 +106,10 @@ fn main() {
     let out = args
         .get_one::<String>("destination")
         .expect("Need output folder");
-    let importers: Vec<Box<dyn ContentImporter>> = vec![Box::<TextureImporter>::default()];
+    let importers: Vec<Box<dyn ContentImporter>> = vec![
+        Box::<TextureImporter>::default(),
+        Box::<GltfMeshImporter>::default(),
+    ];
     transform_directory(
         &importers,
         Path::new(&root),
