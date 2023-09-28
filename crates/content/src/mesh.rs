@@ -6,7 +6,7 @@ use std::{
 
 use dess_common::{
     mesh::{
-        EffectInfo, StaticMesh, BASE_COLOR_TEXTURE, METALLIC_ROUGHNESS_TEXTURE, NORMAL_MAP_TEXTURE,
+        CpuMesh, EffectInfo, BASE_COLOR_TEXTURE, METALLIC_ROUGHNESS_TEXTURE, NORMAL_MAP_TEXTURE,
         OCCLUSION_TEXTURE,
     },
     traits::BinarySerialization,
@@ -14,13 +14,14 @@ use dess_common::{
 use gltf::{
     image,
     material::{NormalTexture, OcclusionTexture},
-    texture, Document, Gltf,
+    mesh::Mode,
+    texture, Document,
 };
 use normalize_path::NormalizePath;
 
 use crate::{Content, ContentImporter, ImportContext, ImportError};
 
-impl Content for StaticMesh {
+impl Content for CpuMesh {
     fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
         self.serialize(&mut File::create(path)?)
     }
@@ -104,6 +105,15 @@ impl GltfMeshImporter {
 
         effects
     }
+
+    fn generate_surfaces(target: &mut CpuMesh, mesh: &gltf::Mesh, buffer: &gltf::Buffer) {
+        mesh.primitives().for_each(|surface| {
+            if surface.mode() != Mode::Triangles {
+                return;
+            }
+            surface.attributes()
+        });
+    }
 }
 
 impl ContentImporter for GltfMeshImporter {
@@ -132,6 +142,6 @@ impl ContentImporter for GltfMeshImporter {
         let (document, buffers, images) = gltf::import(path)?;
 
         let effects = Self::collect_effects(&document, context);
-        Ok(Box::<StaticMesh>::default())
+        Ok(Box::<CpuMesh>::default())
     }
 }

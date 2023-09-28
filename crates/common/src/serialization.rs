@@ -220,6 +220,18 @@ impl BinaryDeserialization for Vec<u16> {
     }
 }
 
+impl BinarySerialization for f32 {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        w.write_f32::<LittleEndian>(*self)
+    }
+}
+
+impl BinaryDeserialization for f32 {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        r.read_f32::<LittleEndian>()
+    }
+}
+
 impl BinarySerialization for glam::Vec2 {
     fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
         w.write_f32::<LittleEndian>(self.x)?;
