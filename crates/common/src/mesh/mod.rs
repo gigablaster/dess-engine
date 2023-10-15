@@ -1,11 +1,13 @@
 mod builder;
 mod cpumesh;
+mod effect;
 
-use std::{collections::HashMap, io};
+use std::io;
 
 pub use builder::{MeshBuilder, MeshLayoutBuilder};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 pub use cpumesh::*;
+pub use effect::*;
 use four_cc::FourCC;
 
 use crate::traits::{BinaryDeserialization, BinarySerialization};
@@ -16,6 +18,11 @@ const VEC3_HEADER: FourCC = FourCC(*b"VF3\0");
 const VEC3_NORMALIZED_HEADER: FourCC = FourCC(*b"VF3N");
 const VEC4_HEADER: FourCC = FourCC(*b"VF4\0");
 const VEC4_NORMALIZED_HEADER: FourCC = FourCC(*b"VF4N");
+
+pub const BASE_COLOR_TEXTURE: &str = "base";
+pub const METALLIC_ROUGHNESS_TEXTURE: &str = "metal_roughness";
+pub const NORMAL_MAP_TEXTURE: &str = "normal";
+pub const OCCLUSION_TEXTURE: &str = "occlusion";
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum VertexAttribute {
@@ -73,42 +80,5 @@ impl BinaryDeserialization for (String, VertexAttribute, u32) {
         let offset = r.read_u32::<LittleEndian>()?;
 
         Ok((name, attr, offset))
-    }
-}
-
-#[derive(Debug)]
-pub struct EffectInfo {
-    pub name: String,
-    pub textures: HashMap<String, String>,
-}
-
-impl EffectInfo {
-    pub fn new(name: &str) -> Self {
-        Self {
-            name: name.into(),
-            textures: HashMap::new(),
-        }
-    }
-
-    pub fn add_texture(&mut self, slot: &str, texture: &str) {
-        self.textures.insert(slot.into(), texture.into());
-    }
-}
-
-impl BinaryDeserialization for EffectInfo {
-    fn deserialize(r: &mut impl io::Read) -> io::Result<Self> {
-        let name = String::deserialize(r)?;
-        let textures = HashMap::deserialize(r)?;
-
-        Ok(Self { name, textures })
-    }
-}
-
-impl BinarySerialization for EffectInfo {
-    fn serialize(&self, w: &mut impl io::Write) -> io::Result<()> {
-        self.name.serialize(w)?;
-        self.textures.serialize(w)?;
-
-        Ok(())
     }
 }
