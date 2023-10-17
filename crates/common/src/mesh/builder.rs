@@ -1,13 +1,4 @@
-use std::{collections::HashMap, io};
-
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use four_cc::FourCC;
-
-use crate::traits::{BinaryDeserialization, BinarySerialization};
-
 use super::{MeshLayout, VertexAttribute};
-
-pub const MAX_ATTRIBUTES: usize = 8;
 
 pub const BASE_COLOR_TEXTURE: &str = "base";
 pub const NORMAL_MAP_TEXTURE: &str = "nomrmal";
@@ -93,11 +84,6 @@ impl VertexChannel {
 
     pub fn data(&self) -> &[f32] {
         &self.values
-    }
-
-    pub fn fill<T: VertexData + Copy>(&mut self, values: &[T]) {
-        assert_eq!(self.count, T::COUNT);
-        values.iter().for_each(|x| self.push(*x));
     }
 
     pub fn to_vertices<T: VertexData>(&self) -> Vec<T> {

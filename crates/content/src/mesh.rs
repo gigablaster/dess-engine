@@ -6,8 +6,8 @@ use std::{
 
 use dess_common::{
     mesh::{
-        CpuMesh, EffectInfo, BASE_COLOR_TEXTURE, METALLIC_ROUGHNESS_TEXTURE, NORMAL_MAP_TEXTURE,
-        OCCLUSION_TEXTURE,
+        CpuMesh, CpuModel, EffectInfo, BASE_COLOR_TEXTURE, METALLIC_ROUGHNESS_TEXTURE,
+        NORMAL_MAP_TEXTURE, OCCLUSION_TEXTURE,
     },
     traits::BinarySerialization,
 };
@@ -21,7 +21,7 @@ use normalize_path::NormalizePath;
 
 use crate::{Content, ContentImporter, ImportContext, ImportError};
 
-impl Content for CpuMesh {
+impl Content for CpuModel {
     fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
         self.serialize(&mut File::create(path)?)
     }
@@ -30,9 +30,9 @@ impl Content for CpuMesh {
 const PBR_OPAQUE_EFFECT: &str = "bdrf";
 
 #[derive(Debug, Default)]
-pub struct GltfMeshImporter {}
+pub struct GltfModelImporter {}
 
-impl GltfMeshImporter {
+impl GltfModelImporter {
     fn set_texture(effect: &mut EffectInfo, root: &Path, name: &str, info: &Option<texture::Info>) {
         if let Some(texture) = info {
             Self::bind_texture(effect, root, name, texture.texture());
@@ -106,17 +106,16 @@ impl GltfMeshImporter {
         effects
     }
 
-    fn generate_surfaces(target: &mut CpuMesh, mesh: &gltf::Mesh, buffer: &gltf::Buffer) {
+    fn generate_meshes(target: &mut CpuModel, mesh: &gltf::Mesh, buffer: &gltf::Buffer) {
         mesh.primitives().for_each(|surface| {
             if surface.mode() != Mode::Triangles {
                 return;
             }
-            surface.attributes()
         });
     }
 }
 
-impl ContentImporter for GltfMeshImporter {
+impl ContentImporter for GltfModelImporter {
     fn can_handle(&self, path: &std::path::Path) -> bool {
         path.extension()
             .map(|x| {
@@ -142,6 +141,6 @@ impl ContentImporter for GltfMeshImporter {
         let (document, buffers, images) = gltf::import(path)?;
 
         let effects = Self::collect_effects(&document, context);
-        Ok(Box::<CpuMesh>::default())
+        Ok(Box::<CpuModel>::default())
     }
 }

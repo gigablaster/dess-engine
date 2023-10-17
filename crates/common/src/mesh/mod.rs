@@ -1,5 +1,6 @@
 mod builder;
 mod cpumesh;
+mod cpumodel;
 mod effect;
 
 use std::io;
@@ -7,6 +8,7 @@ use std::io;
 pub use builder::{MeshBuilder, MeshLayoutBuilder};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 pub use cpumesh::*;
+pub use cpumodel::*;
 pub use effect::*;
 use four_cc::FourCC;
 

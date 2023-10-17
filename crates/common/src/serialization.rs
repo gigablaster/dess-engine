@@ -285,3 +285,23 @@ impl BinaryDeserialization for glam::Vec4 {
         Ok(Self::new(x, y, z, w))
     }
 }
+
+impl BinarySerialization for glam::Mat4 {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        let data = self.to_cols_array();
+        for v in data {
+            w.write_f32::<LittleEndian>(v)?;
+        }
+
+        Ok(())
+    }
+}
+
+impl BinaryDeserialization for glam::Mat4 {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let mut data = [0.0; 16];
+        r.read_f32_into::<LittleEndian>(&mut data)?;
+
+        Ok(glam::Mat4::from_cols_array(&data))
+    }
+}

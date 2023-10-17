@@ -23,7 +23,7 @@ use image::ImageError;
 mod mesh;
 mod texture;
 
-pub use mesh::GltfMeshImporter;
+pub use mesh::GltfModelImporter;
 pub use texture::TextureImporter;
 
 pub trait Content {

@@ -4,7 +4,7 @@ use std::{
 };
 
 use clap::{Arg, ArgAction};
-use dess_content::{ContentImporter, GltfMeshImporter, ImportContext, TextureImporter};
+use dess_content::{ContentImporter, GltfModelImporter, ImportContext, TextureImporter};
 
 fn need_update(src: &Path, dst: &Path) -> bool {
     if !dst.exists() {
@@ -108,7 +108,7 @@ fn main() {
         .expect("Need output folder");
     let importers: Vec<Box<dyn ContentImporter>> = vec![
         Box::<TextureImporter>::default(),
-        Box::<GltfMeshImporter>::default(),
+        Box::<GltfModelImporter>::default(),
     ];
     transform_directory(
         &importers,
