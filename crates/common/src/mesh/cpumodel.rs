@@ -74,3 +74,15 @@ impl BinaryDeserialization for CpuModel {
         Ok(Self { meshes, bones })
     }
 }
+
+impl CpuModel {
+    pub fn add_mesh(&mut self, mesh: CpuMesh, name: &str, transform: &glam::Mat4) {
+        self.meshes.push(mesh);
+        self.bones.push(CpuModelBone {
+            local_tr: *transform,
+            global_tr: *transform,
+            parent: None,
+            name: name.into(),
+        });
+    }
+}

@@ -459,7 +459,7 @@ dependencies = [
  "arrayvec",
  "byteorder",
  "four-cc",
- "glam",
+ "glam 0.24.1",
  "log",
  "numquant",
  "uuid",
@@ -473,9 +473,11 @@ dependencies = [
  "ddsfile",
  "dess-common",
  "four-cc",
+ "glam 0.24.1",
  "gltf",
  "image",
  "log",
+ "mikktspace",
  "normalize-path",
  "texpresso",
  "uuid",
@@ -491,7 +493,7 @@ dependencies = [
  "byte-slice-cast",
  "dess-common",
  "dess-vfs",
- "glam",
+ "glam 0.24.1",
  "gpu-alloc",
  "gpu-alloc-ash",
  "gpu-descriptor",
@@ -710,6 +712,12 @@ dependencies = [
  "color_quant",
  "weezl",
 ]
+
+[[package]]
+name = "glam"
+version = "0.15.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3abb554f8ee44336b72d522e0a7fe86a29e09f839a36022fa869a7dfe941a54b"
 
 [[package]]
 name = "glam"
@@ -1078,6 +1086,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d61c719bcfbcf5d62b3a09efa6088de8c54bc0bfcd3ea7ae39fcc186108b8de1"
 dependencies = [
  "autocfg",
+]
+
+[[package]]
+name = "mikktspace"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d0b56b403871a8f992ca626d52cc0a690d4841baea8955dc4af6304ac62f8b0"
+dependencies = [
+ "glam 0.15.2",
 ]
 
 [[package]]

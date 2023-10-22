@@ -38,7 +38,7 @@ impl BinaryDeserialization for CpuMesh {
 }
 
 impl CpuMesh {
-    pub fn new(builder: MeshBuilder, effect: EffectInfo) -> Self {
+    pub fn build(builder: MeshBuilder, effect: EffectInfo) -> Self {
         let vertex_count = builder
             .current_vertex()
             .expect("Build must contain at least one vertex");
@@ -91,7 +91,7 @@ mod test {
         builder.push(vec3(10.0, 11.0, 12.0));
         builder.push(vec2(13.0, 14.0));
         builder.triangle([v1, v2, v3]);
-        let mesh = CpuMesh::new(builder, EffectInfo::new("test"));
+        let mesh = CpuMesh::build(builder, EffectInfo::new("test"));
         mesh.vertex_data
             .iter()
             .enumerate()

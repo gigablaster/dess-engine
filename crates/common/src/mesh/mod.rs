@@ -5,7 +5,7 @@ mod effect;
 
 use std::io;
 
-pub use builder::{MeshBuilder, MeshLayoutBuilder};
+pub use builder::*;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 pub use cpumesh::*;
 pub use cpumodel::*;

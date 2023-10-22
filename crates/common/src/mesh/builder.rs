@@ -69,6 +69,48 @@ impl VertexData for glam::Vec4 {
     }
 }
 
+impl VertexData for [f32; 2] {
+    const COUNT: usize = 2;
+
+    fn push(&self, out: &mut Vec<f32>) {
+        out.push(self[0]);
+        out.push(self[1]);
+    }
+
+    fn from_data(values: &[f32]) -> Self {
+        [values[0], values[1]]
+    }
+}
+
+impl VertexData for [f32; 3] {
+    const COUNT: usize = 3;
+
+    fn push(&self, out: &mut Vec<f32>) {
+        out.push(self[0]);
+        out.push(self[1]);
+        out.push(self[2]);
+    }
+
+    fn from_data(values: &[f32]) -> Self {
+        [values[0], values[1], values[2]]
+    }
+}
+
+impl VertexData for [f32; 4] {
+    const COUNT: usize = 4;
+
+    fn push(&self, out: &mut Vec<f32>) {
+        out.push(self[0]);
+        out.push(self[1]);
+        out.push(self[2]);
+        out.push(self[3]);
+    }
+
+    fn from_data(values: &[f32]) -> Self {
+        [values[0], values[1], values[2], values[3]]
+    }
+}
+
 impl VertexChannel {
     pub fn new(count: usize) -> Self {
         Self {
@@ -101,6 +143,11 @@ impl VertexChannel {
     pub fn clear(&mut self) {
         self.values.clear();
     }
+
+    pub fn fill<T: VertexData + Copy>(&mut self, data: &[T]) {
+        self.values.clear();
+        data.iter().for_each(|x| x.push(&mut self.values));
+    }
 }
 
 #[derive(Debug, Default)]
@@ -113,6 +160,10 @@ impl<'a> MeshLayoutBuilder<'a> {
         assert!(self.channels.iter().all(|(n, _)| &name != n));
         self.channels.push((name, attribute));
         self
+    }
+
+    pub fn has_channel(&self, name: &str) -> bool {
+        self.channels.iter().any(|x| x.0 == name)
     }
 }
 
@@ -145,6 +196,20 @@ impl MeshBuilder {
             indices,
             current_vertex: None,
             current_channel: 0,
+        }
+    }
+
+    pub fn fill_vertices<T: VertexData + Copy>(&mut self, channel: &str, data: &[T]) {
+        if let Some(index) = &self.names.iter().enumerate().find_map(|(index, name)| {
+            if name == channel {
+                Some(index)
+            } else {
+                None
+            }
+        }) {
+            self.channels[*index].fill(data);
+        } else {
+            panic!("Channel {} doesn't exist", channel);
         }
     }
 
@@ -182,6 +247,12 @@ impl MeshBuilder {
         self.indices.push(indices[0]);
         self.indices.push(indices[1]);
         self.indices.push(indices[2]);
+    }
+
+    pub fn fill_indices(&mut self, indices: &[usize]) {
+        assert_eq!(0, indices.len() % 3);
+        self.indices.clear();
+        indices.iter().for_each(|x| self.indices.push(*x));
     }
 
     pub fn clear(&mut self) {

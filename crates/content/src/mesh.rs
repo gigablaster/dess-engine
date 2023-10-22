@@ -1,13 +1,15 @@
 use std::{
     collections::HashMap,
     fs::File,
+    hash::BuildHasher,
     path::{Path, PathBuf},
 };
 
 use dess_common::{
     mesh::{
-        CpuMesh, CpuModel, EffectInfo, BASE_COLOR_TEXTURE, METALLIC_ROUGHNESS_TEXTURE,
-        NORMAL_MAP_TEXTURE, OCCLUSION_TEXTURE,
+        CpuMesh, CpuModel, EffectInfo, MeshBuilder, MeshLayoutBuilder, VertexAttribute,
+        BASE_COLOR_TEXTURE, METALLIC_ROUGHNESS_TEXTURE, NORMAL_MAP_TEXTURE, OCCLUSION_TEXTURE,
+        VERTEX_NORNAL_CHANNEL, VERTEX_POSITION_CHANNEL, VERTEX_TANGENT_CHANNEL, VERTEX_UV_CHANNEL,
     },
     traits::BinarySerialization,
 };
@@ -24,6 +26,40 @@ use crate::{Content, ContentImporter, ImportContext, ImportError};
 impl Content for CpuModel {
     fn save(&self, path: &std::path::Path) -> std::io::Result<()> {
         self.serialize(&mut File::create(path)?)
+    }
+}
+
+struct TangentCalcContext<'a> {
+    indices: &'a [u32],
+    positions: &'a [[f32; 3]],
+    normals: &'a [[f32; 3]],
+    uvs: &'a [[f32; 2]],
+    tangents: &'a mut [[f32; 4]],
+}
+
+impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
+    fn num_faces(&self) -> usize {
+        self.indices.len() / 3
+    }
+
+    fn num_vertices_of_face(&self, _face: usize) -> usize {
+        3
+    }
+
+    fn position(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.positions[self.indices[face * 3 + vert] as usize]
+    }
+
+    fn normal(&self, face: usize, vert: usize) -> [f32; 3] {
+        self.normals[self.indices[face * 3 + vert] as usize]
+    }
+
+    fn tex_coord(&self, face: usize, vert: usize) -> [f32; 2] {
+        self.uvs[self.indices[face * 3 + vert] as usize]
+    }
+
+    fn set_tangent_encoded(&mut self, tangent: [f32; 4], face: usize, vert: usize) {
+        self.tangents[self.indices[face * 3 + vert] as usize] = tangent;
     }
 }
 
@@ -106,12 +142,95 @@ impl GltfModelImporter {
         effects
     }
 
-    fn generate_meshes(target: &mut CpuModel, mesh: &gltf::Mesh, buffer: &gltf::Buffer) {
-        mesh.primitives().for_each(|surface| {
-            if surface.mode() != Mode::Triangles {
-                return;
+    fn process_node(target: &mut CpuModel, node: &gltf::Node, buffers: &[gltf::buffer::Data]) {
+        if let Some(mesh) = node.mesh() {
+            for prim in mesh.primitives() {
+                let reader = prim.reader(|buffer| Some(&buffers[buffer.index()]));
+                let positions = if let Some(positions) = reader.read_positions() {
+                    positions.collect::<Vec<_>>()
+                } else {
+                    return;
+                };
+                let layout = MeshLayoutBuilder::default()
+                    .channel(VERTEX_POSITION_CHANNEL, VertexAttribute::Vec3);
+                let (uvs, layout) = if let Some(texcoord) = reader.read_tex_coords(0) {
+                    (
+                        texcoord.into_f32().collect::<Vec<_>>(),
+                        layout.channel(VERTEX_UV_CHANNEL, VertexAttribute::Vec2),
+                    )
+                } else {
+                    (vec![[0.0, 0.0]; positions.len()], layout)
+                };
+                let (normals, layout) = if let Some(normals) = reader.read_normals() {
+                    (
+                        normals.collect::<Vec<_>>(),
+                        layout.channel(VERTEX_NORNAL_CHANNEL, VertexAttribute::Vec3Normalized),
+                    )
+                } else {
+                    (vec![[1.0, 0.0, 0.0]; positions.len()], layout)
+                };
+                let (mut tangents, layout) = if let Some(tangents) = reader.read_tangents() {
+                    (
+                        tangents.collect::<Vec<_>>(),
+                        layout.channel(VERTEX_TANGENT_CHANNEL, VertexAttribute::Vec3Normalized),
+                    )
+                } else {
+                    (vec![[0.0, 1.0, 0.0, 0.0]; positions.len()], layout)
+                };
+
+                let indices = if let Some(indices) = reader.read_indices() {
+                    indices.into_u32().collect::<Vec<_>>()
+                } else {
+                    return;
+                };
+                let layout = if layout.has_channel(VERTEX_UV_CHANNEL)
+                    && layout.has_channel(VERTEX_NORNAL_CHANNEL)
+                    && !layout.has_channel(VERTEX_TANGENT_CHANNEL)
+                {
+                    mikktspace::generate_tangents(&mut TangentCalcContext {
+                        indices: &indices,
+                        positions: &positions,
+                        normals: &normals,
+                        uvs: &uvs,
+                        tangents: &mut tangents,
+                    });
+                    layout.channel(VERTEX_TANGENT_CHANNEL, VertexAttribute::Vec3Normalized)
+                } else {
+                    layout
+                };
+                let has_normals = layout.has_channel(VERTEX_NORNAL_CHANNEL);
+                let has_uvs = layout.has_channel(VERTEX_UV_CHANNEL);
+                let has_tangents = layout.has_channel(VERTEX_TANGENT_CHANNEL);
+                let mut builder = MeshBuilder::new(layout);
+                for index in 0..positions.len() {
+                    builder.vertex();
+                    builder.push(positions[index]);
+                    if has_uvs {
+                        builder.push(uvs[index]);
+                    }
+                    if has_normals {
+                        builder.push(normals[index]);
+                    }
+                    if has_tangents {
+                        let tangent = [tangents[index][0], tangents[index][1], tangents[index][2]];
+                        builder.push(tangent);
+                    }
+                }
+                builder.fill_indices(&indices.iter().map(|x| *x as usize).collect::<Vec<_>>());
+                let cpumesh = CpuMesh::build(builder, EffectInfo::new(PBR_OPAQUE_EFFECT));
+                let name = if let Some(name) = node.name() {
+                    name
+                } else {
+                    "none"
+                };
+                let (translate, rotation, scale) = node.transform().decomposed();
+                let translate = glam::Mat4::from_translation(glam::Vec3::from_array(translate));
+                let rotation = glam::Mat4::from_quat(glam::Quat::from_array(rotation));
+                let scale = glam::Mat4::from_scale(glam::Vec3::from_array(scale));
+                let transform = translate * rotation * scale;
+                target.add_mesh(cpumesh, name, &transform);
             }
-        });
+        }
     }
 }
 
@@ -141,6 +260,10 @@ impl ContentImporter for GltfModelImporter {
         let (document, buffers, images) = gltf::import(path)?;
 
         let effects = Self::collect_effects(&document, context);
-        Ok(Box::<CpuModel>::default())
+        let mut model = CpuModel::default();
+        document
+            .nodes()
+            .for_each(|node| Self::process_node(&mut model, &node, &buffers));
+        Ok(Box::new(model))
     }
 }
