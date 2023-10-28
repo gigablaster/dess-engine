@@ -216,7 +216,6 @@ impl GltfModelImporter {
                         builder.push(tangent);
                     }
                 }
-                builder.fill_indices(&indices.iter().map(|x| *x as usize).collect::<Vec<_>>());
                 let cpumesh = CpuMesh::build(builder, EffectInfo::new(PBR_OPAQUE_EFFECT));
                 let name = if let Some(name) = node.name() {
                     name

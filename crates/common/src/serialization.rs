@@ -6,6 +6,7 @@ use std::{
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use four_cc::FourCC;
+use numquant::linear::quantize;
 use uuid::Uuid;
 
 use crate::traits::{BinaryDeserialization, BinarySerialization};
@@ -283,6 +284,26 @@ impl BinaryDeserialization for glam::Vec4 {
         let w = r.read_f32::<LittleEndian>()?;
 
         Ok(Self::new(x, y, z, w))
+    }
+}
+
+impl BinarySerialization for glam::Quat {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        w.write_f32::<LittleEndian>(self.x)?;
+        w.write_f32::<LittleEndian>(self.y)?;
+        w.write_f32::<LittleEndian>(self.z)?;
+        w.write_f32::<LittleEndian>(self.w)
+    }
+}
+
+impl BinaryDeserialization for glam::Quat {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let x = r.read_f32::<LittleEndian>()?;
+        let y = r.read_f32::<LittleEndian>()?;
+        let z = r.read_f32::<LittleEndian>()?;
+        let w = r.read_f32::<LittleEndian>()?;
+
+        Ok(Self::from_xyzw(x, y, z, w))
     }
 }
 
