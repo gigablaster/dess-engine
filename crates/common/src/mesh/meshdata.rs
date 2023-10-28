@@ -9,7 +9,7 @@ pub trait Geometry: BinarySerialization + BinaryDeserialization + Copy {
     const MAGICK: FourCC;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct MeshData<T: Geometry> {
     pub geometry: Vec<T>, // w is padding
     pub attributes: Vec<LightingAttributes>,

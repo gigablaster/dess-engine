@@ -14,7 +14,7 @@ uuid = "1.4.1"
 image = "0.24.7"
 texpresso = "2.0.1"
 ddsfile = "0.5.1"
-gltf = "1.3.0"
+gltf = { version = "1.3.0", features = ["KHR_materials_emissive_strength", "KHR_materials_unlit"] }
 normalize-path = "0.2.1"
 mikktspace = { version = "0.3.0", features = ["glam"], default-features = false}
 glam = "0.24.1"

@@ -23,3 +23,12 @@ impl BinaryDeserialization for AABB {
         Ok(Self { center, extent })
     }
 }
+
+impl AABB {
+    pub fn from_min_max(min: glam::Vec3, max: glam::Vec3) -> Self {
+        let extent = max - min;
+        let center = min + extent / 2.0;
+
+        Self { center, extent }
+    }
+}

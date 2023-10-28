@@ -13,14 +13,14 @@ use crate::{
     Transform,
 };
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C, packed)]
 pub struct PackedVec2 {
     pub x: i16,
     pub y: i16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C, packed)]
 pub struct PackedVec3 {
     pub x: i16,
@@ -28,7 +28,7 @@ pub struct PackedVec3 {
     pub z: i16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C, packed)]
 pub struct PackedVec4 {
     pub x: i16,
@@ -44,6 +44,17 @@ pub struct LightingAttributes {
     pub tangent: PackedVec2,
     pub uv: PackedVec2,
     _pad: [u16; 2],
+}
+
+impl LightingAttributes {
+    pub fn new(normal: PackedVec2, tangent: PackedVec2, uv: PackedVec2) -> Self {
+        Self {
+            normal,
+            tangent,
+            uv,
+            _pad: [0, 0],
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -202,11 +213,20 @@ impl BinaryDeserialization for Bone {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 #[repr(C, packed)]
 pub struct StaticMeshGeometry {
     pub position: PackedVec3,
     _padding: u16,
+}
+
+impl StaticMeshGeometry {
+    pub fn new(position: PackedVec3) -> Self {
+        Self {
+            position,
+            _padding: 0,
+        }
+    }
 }
 
 impl BinarySerialization for StaticMeshGeometry {
