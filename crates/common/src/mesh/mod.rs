@@ -52,7 +52,7 @@ pub struct PackedVec4 {
     pub w: i16,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C, packed)]
 pub struct LightingAttributes {
     pub normal: PackedVec2,

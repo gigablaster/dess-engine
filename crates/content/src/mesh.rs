@@ -40,7 +40,7 @@ use normalize_path::NormalizePath;
 use crate::{Content, ContentImporter, ImportContext, ImportError};
 
 struct TangentCalcContext<'a> {
-    indices: &'a [u16],
+    indices: &'a [u32],
     positions: &'a [[f32; 3]],
     normals: &'a [[f32; 3]],
     uvs: &'a [[f32; 2]],
@@ -285,11 +285,12 @@ impl GltfModelImporter {
                 (vec![[0.0, 1.0, 0.0, 0.0]; positions.len()], false)
             };
 
-            let mut indices = if let Some(indices) = reader.read_indices() {
-                indices.into_u32().map(|x| x as u16).collect::<Vec<_>>()
+            let indices = if let Some(indices) = reader.read_indices() {
+                indices.into_u32().collect::<Vec<_>>()
             } else {
                 return;
             };
+
             if has_uvs && has_normals && !has_tangents {
                 mikktspace::generate_tangents(&mut TangentCalcContext {
                     indices: &indices,
@@ -310,9 +311,27 @@ impl GltfModelImporter {
                 .iter()
                 .map(|x| [x[0], x[1], x[2]])
                 .collect::<Vec<_>>();
-            let (max_position_value, mut geometry) = Self::process_static_geometry(&positions);
-            let (max_uv_value, mut attributes) =
-                Self::process_attributes(&normals, &uvs, &tangents);
+            let (max_position_value, geometry) = Self::process_static_geometry(&positions);
+            let (max_uv_value, attributes) = Self::process_attributes(&normals, &uvs, &tangents);
+
+            let (total_vertex_count, remapped_vertices) = meshopt::generate_vertex_remap_multi::<u8>(
+                geometry.len(),
+                &[
+                    meshopt::VertexStream::new(geometry.as_ptr()),
+                    meshopt::VertexStream::new(attributes.as_ptr()),
+                ],
+                Some(&indices),
+            );
+            meshopt::optimize_vertex_cache_in_place(&indices, geometry.len());
+            let mut geometry =
+                meshopt::remap_vertex_buffer(&geometry, total_vertex_count, &remapped_vertices);
+            let mut attributes =
+                meshopt::remap_vertex_buffer(&attributes, total_vertex_count, &remapped_vertices);
+            let mut indices =
+                meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remapped_vertices)
+                    .iter()
+                    .map(|x| *x as u16)
+                    .collect::<Vec<_>>();
             let first = target.geometry.len() as u32;
             let count = geometry.len() as u32;
             let material = Self::create_material(prim.material(), root);
