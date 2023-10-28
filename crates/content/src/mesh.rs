@@ -314,7 +314,7 @@ impl GltfModelImporter {
             let (max_position_value, geometry) = Self::process_static_geometry(&positions);
             let (max_uv_value, attributes) = Self::process_attributes(&normals, &uvs, &tangents);
 
-            let (total_vertex_count, remapped_vertices) = meshopt::generate_vertex_remap_multi::<u8>(
+            let (total_vertex_count, remap) = meshopt::generate_vertex_remap_multi::<u8>(
                 geometry.len(),
                 &[
                     meshopt::VertexStream::new(geometry.as_ptr()),
@@ -322,16 +322,18 @@ impl GltfModelImporter {
                 ],
                 Some(&indices),
             );
+            let geometry = meshopt::remap_vertex_buffer(&geometry, total_vertex_count, &remap);
+            let attributes = meshopt::remap_vertex_buffer(&attributes, total_vertex_count, &remap);
+            let indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
             meshopt::optimize_vertex_cache_in_place(&indices, geometry.len());
-            let mut geometry =
-                meshopt::remap_vertex_buffer(&geometry, total_vertex_count, &remapped_vertices);
+            let remap = meshopt::optimize_vertex_fetch_remap(&indices, geometry.len());
+            let mut geometry = meshopt::remap_vertex_buffer(&geometry, total_vertex_count, &remap);
             let mut attributes =
-                meshopt::remap_vertex_buffer(&attributes, total_vertex_count, &remapped_vertices);
-            let mut indices =
-                meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remapped_vertices)
-                    .iter()
-                    .map(|x| *x as u16)
-                    .collect::<Vec<_>>();
+                meshopt::remap_vertex_buffer(&attributes, total_vertex_count, &remap);
+            let indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
+
+            let mut indices = indices.iter().map(|x| *x as u16).collect::<Vec<_>>();
+
             let first = target.geometry.len() as u32;
             let count = geometry.len() as u32;
             let material = Self::create_material(prim.material(), root);
