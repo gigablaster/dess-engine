@@ -58,8 +58,6 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
     }
 }
 
-const PBR_OPAQUE_EFFECT: &str = "bdrf";
-
 #[derive(Debug, Default)]
 pub struct GltfModelImporter {}
 
@@ -348,7 +346,7 @@ impl ContentImporter for GltfModelImporter {
         path: &std::path::Path,
         context: &ImportContext,
     ) -> Result<Box<dyn Content>, ImportError> {
-        let (document, buffers, images) = gltf::import(path)?;
+        let (document, buffers, _images) = gltf::import(path)?;
 
         let mut model = StaticMeshData::default();
         document.nodes().for_each(|node| {

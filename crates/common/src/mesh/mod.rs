@@ -343,7 +343,7 @@ pub fn quantize_normalized(input: &[[f32; 3]]) -> Vec<PackedVec2> {
     input.iter().for_each(|x| x.write(&mut data));
     let values = quantize_normalized_values(&data);
     let mut result = Vec::with_capacity(input.len());
-    for index in 0..values.len() / 2 {
+    for index in 0..values.len() / 3 {
         let start = index * 3;
         let value = &values[start..start + 3];
         let vec = PackedVec2 {
