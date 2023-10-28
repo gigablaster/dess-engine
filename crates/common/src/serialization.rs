@@ -6,7 +6,7 @@ use std::{
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use four_cc::FourCC;
-use numquant::linear::quantize;
+
 use uuid::Uuid;
 
 use crate::traits::{BinaryDeserialization, BinarySerialization};

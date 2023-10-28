@@ -1,7 +1,8 @@
-mod staticmesh;
+mod meshdata;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-pub use staticmesh::*;
+use four_cc::FourCC;
+pub use meshdata::*;
 
 use crate::{
     bounds::AABB,
@@ -352,3 +353,33 @@ impl BinaryDeserialization for Bone {
         Ok(Self { parent, local_tr })
     }
 }
+
+#[derive(Debug, Clone, Copy)]
+#[repr(C, packed)]
+pub struct StaticMeshGeometry {
+    pub position: PackedVec3,
+    _padding: u16,
+}
+
+impl BinarySerialization for StaticMeshGeometry {
+    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        self.position.serialize(w)
+    }
+}
+
+impl BinaryDeserialization for StaticMeshGeometry {
+    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
+        let position = PackedVec3::deserialize(r)?;
+
+        Ok(Self {
+            position,
+            _padding: 0,
+        })
+    }
+}
+
+impl Geometry for StaticMeshGeometry {
+    const MAGICK: FourCC = FourCC(*b"STMS");
+}
+
+pub type StaticMeshData = MeshData<StaticMeshGeometry>;

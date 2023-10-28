@@ -3,13 +3,15 @@ use four_cc::FourCC;
 
 use crate::traits::{BinaryDeserialization, BinarySerialization};
 
-use super::{Bone, LightingAttributes, PackedVec3, PackedVec4, Surface};
+use super::{Bone, LightingAttributes, Surface};
 
-const MAGICK: FourCC = FourCC(*b"STMS");
+pub trait Geometry: BinarySerialization + BinaryDeserialization + Copy {
+    const MAGICK: FourCC;
+}
 
 #[derive(Debug)]
-pub struct StaticMesh {
-    pub positions: Vec<PackedVec4>, // w is padding
+pub struct MeshData<T: Geometry> {
+    pub geometry: Vec<T>, // w is padding
     pub attributes: Vec<LightingAttributes>,
     pub indices: Vec<u16>,
     pub surfaces: Vec<Surface>,
@@ -17,17 +19,12 @@ pub struct StaticMesh {
     pub bone_names: Vec<String>,
 }
 
-impl BinarySerialization for StaticMesh {
+impl<T: Geometry> BinarySerialization for MeshData<T> {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        MAGICK.serialize(w)?;
-        w.write_u32::<LittleEndian>(self.positions.len() as _)?;
-        for pos in &self.positions {
-            let pos = PackedVec3 {
-                x: pos.x,
-                y: pos.y,
-                z: pos.z,
-            };
-            pos.serialize(w)?;
+        T::MAGICK.serialize(w)?;
+        w.write_u32::<LittleEndian>(self.geometry.len() as _)?;
+        for geo in &self.geometry {
+            geo.serialize(w)?;
         }
         for attr in &self.attributes {
             attr.serialize(w)?;
@@ -46,26 +43,20 @@ impl BinarySerialization for StaticMesh {
     }
 }
 
-impl BinaryDeserialization for StaticMesh {
+impl<T: Geometry> BinaryDeserialization for MeshData<T> {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let magic = FourCC::deserialize(r)?;
-        if magic != MAGICK {
+        if magic != T::MAGICK {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::Other,
                 "Wrong mesh header",
             ));
         }
         let vertex_count = r.read_u32::<LittleEndian>()?;
-        let mut positions = Vec::with_capacity(vertex_count as _);
+        let mut geometry = Vec::with_capacity(vertex_count as _);
         let mut attributes = Vec::with_capacity(vertex_count as _);
         for _ in 0..vertex_count {
-            let pos = PackedVec3::deserialize(r)?;
-            positions.push(PackedVec4 {
-                x: pos.x,
-                y: pos.y,
-                z: pos.z,
-                w: 0,
-            });
+            geometry.push(T::deserialize(r)?);
         }
         for _ in 0..vertex_count {
             attributes.push(LightingAttributes::deserialize(r)?);
@@ -83,7 +74,7 @@ impl BinaryDeserialization for StaticMesh {
         }
 
         Ok(Self {
-            positions,
+            geometry,
             attributes,
             indices,
             surfaces,
