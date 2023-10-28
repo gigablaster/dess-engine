@@ -3,6 +3,7 @@ mod meshdata;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use four_cc::FourCC;
 pub use meshdata::*;
+use numquant::linear::quantize;
 
 use crate::{
     bounds::AABB,
@@ -383,3 +384,107 @@ impl Geometry for StaticMeshGeometry {
 }
 
 pub type StaticMeshData = MeshData<StaticMeshGeometry>;
+
+trait Quantizer<T> {
+    const COUNT: usize;
+    fn write(&self, out: &mut Vec<f32>);
+    fn pack(data: &[i16]) -> T;
+}
+
+impl Quantizer<PackedVec2> for [f32; 2] {
+    const COUNT: usize = 2;
+
+    fn write(&self, out: &mut Vec<f32>) {
+        out.push(self[0]);
+        out.push(self[1]);
+    }
+
+    fn pack(data: &[i16]) -> PackedVec2 {
+        PackedVec2 {
+            x: data[0],
+            y: data[1],
+        }
+    }
+}
+
+impl Quantizer<PackedVec3> for [f32; 3] {
+    const COUNT: usize = 3;
+
+    fn write(&self, out: &mut Vec<f32>) {
+        out.push(self[0]);
+        out.push(self[1]);
+        out.push(self[2]);
+    }
+
+    fn pack(data: &[i16]) -> PackedVec3 {
+        PackedVec3 {
+            x: data[0],
+            y: data[1],
+            z: data[2],
+        }
+    }
+}
+
+fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
+    let max = data
+        .iter()
+        .max_by(|x, y| x.abs().total_cmp(&y.abs()))
+        .copied()
+        .unwrap_or(0.0) as f64;
+    let result = data
+        .iter()
+        .map(|x| quantize(*x as _, -max..max, i16::MAX))
+        .collect::<Vec<_>>();
+
+    (max as f32, result)
+}
+
+fn quantize_normalized_values(data: &[f32]) -> Vec<i16> {
+    let result = data
+        .iter()
+        .map(|x| quantize(*x as _, -1.0..1.0, i16::MAX))
+        .collect::<Vec<_>>();
+
+    result
+}
+
+fn quantize_input<T, U: Quantizer<T>>(input: &[U]) -> (f32, Vec<T>) {
+    let mut data = Vec::with_capacity(input.len() * U::COUNT);
+    input.iter().for_each(|x| x.write(&mut data));
+    let (max, values) = quantize_values(&data);
+    let mut result = Vec::with_capacity(input.len());
+    for index in 0..values.len() / 3 {
+        let start = index * U::COUNT;
+        let value = &values[start..start + U::COUNT];
+        let vec = U::pack(value);
+        result.push(vec);
+    }
+
+    (max, result)
+}
+
+pub fn quantize_positions(input: &[[f32; 3]]) -> (f32, Vec<PackedVec3>) {
+    quantize_input(input)
+}
+
+pub fn quantize_uvs(input: &[[f32; 2]]) -> (f32, Vec<PackedVec2>) {
+    quantize_input(input)
+}
+
+pub fn quantize_normalized(input: &[[f32; 3]]) -> Vec<PackedVec2> {
+    let mut data = Vec::with_capacity(input.len() * 3);
+    input.iter().for_each(|x| x.write(&mut data));
+    let values = quantize_normalized_values(&data);
+    let mut result = Vec::with_capacity(input.len());
+    for index in 0..values.len() / 2 {
+        let start = index * 3;
+        let value = &values[start..start + 3];
+        let vec = PackedVec2 {
+            x: value[0],
+            y: value[1],
+        };
+        result.push(vec);
+    }
+
+    result
+}
