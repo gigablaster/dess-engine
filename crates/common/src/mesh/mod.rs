@@ -15,15 +15,15 @@
 
 mod material;
 mod meshdata;
+mod model;
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use four_cc::FourCC;
 pub use material::*;
 pub use meshdata::*;
+pub use model::*;
 use numquant::linear::quantize;
 
 use crate::{
-    bounds::AABB,
     traits::{BinaryDeserialization, BinarySerialization},
     Transform,
 };
@@ -70,17 +70,6 @@ impl LightingAttributes {
             _pad: [0, 0],
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Surface {
-    pub first: u32,
-    pub count: u32,
-    pub bone: u32,
-    pub bounds: AABB,
-    pub max_position_value: f32,
-    pub max_uv_value: f32,
-    pub material: Material,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -174,42 +163,6 @@ impl BinaryDeserialization for LightingAttributes {
     }
 }
 
-impl BinarySerialization for Surface {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        w.write_u32::<LittleEndian>(self.first)?;
-        w.write_u32::<LittleEndian>(self.count)?;
-        w.write_u32::<LittleEndian>(self.bone)?;
-        w.write_f32::<LittleEndian>(self.max_position_value)?;
-        w.write_f32::<LittleEndian>(self.max_uv_value)?;
-        self.bounds.serialize(w)?;
-        self.material.serialize(w)?;
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for Surface {
-    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let first = r.read_u32::<LittleEndian>()?;
-        let count = r.read_u32::<LittleEndian>()?;
-        let bone = r.read_u32::<LittleEndian>()?;
-        let max_position_value = r.read_f32::<LittleEndian>()?;
-        let max_uv_value = r.read_f32::<LittleEndian>()?;
-        let bounds = AABB::deserialize(r)?;
-        let material = Material::deserialize(r)?;
-
-        Ok(Self {
-            first,
-            count,
-            bone,
-            max_position_value,
-            max_uv_value,
-            bounds,
-            material,
-        })
-    }
-}
-
 impl BinarySerialization for Bone {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         w.write_u32::<LittleEndian>(self.parent)?;
@@ -261,9 +214,7 @@ impl BinaryDeserialization for StaticMeshGeometry {
     }
 }
 
-impl Geometry for StaticMeshGeometry {
-    const MAGICK: FourCC = FourCC(*b"STMS");
-}
+impl Geometry for StaticMeshGeometry {}
 
 pub type StaticMeshData = MeshData<StaticMeshGeometry>;
 

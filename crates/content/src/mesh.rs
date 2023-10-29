@@ -23,8 +23,8 @@ use dess_common::{
     mesh::{
         quantize_normalized, quantize_positions, quantize_uvs, BlendMode, Bone, LightingAttributes,
         Material, MaterialBaseColor, MaterialBlend, MaterialEmission, MaterialNormals,
-        MaterialOcclusion, MaterialValues, PbrMaterial, StaticMeshData, StaticMeshGeometry,
-        Surface, UnlitMaterial,
+        MaterialOcclusion, MaterialValues, ModelData, PbrMaterial, StaticMeshData,
+        StaticMeshGeometry, Surface, UnlitMaterial,
     },
     traits::BinarySerialization,
     Transform,
@@ -150,7 +150,7 @@ impl GltfModelImporter {
     }
 
     fn process_node(
-        target: &mut StaticMeshData,
+        model: &mut ModelData,
         parent_index: u32,
         node: &gltf::Node,
         buffers: &[gltf::buffer::Data],
@@ -168,19 +168,20 @@ impl GltfModelImporter {
                 scale,
             },
         };
-        let current_bone_index = target.bones.len() as u32;
-        target.bones.push(bone);
-        target.bone_names.push(
+        let current_bone_index = model.bones.len() as u32;
+        model.bones.push(bone);
+        model.names.insert(
             node.name()
                 .unwrap_or(&format!("GltfNode_{}", current_bone_index))
                 .into(),
+            current_bone_index,
         );
 
         if let Some(mesh) = node.mesh() {
-            Self::process_mesh(target, mesh, current_bone_index, buffers, root);
+            Self::process_mesh(model, mesh, current_bone_index, buffers, root);
         }
         node.children()
-            .for_each(|node| Self::process_node(target, current_bone_index, &node, buffers, root));
+            .for_each(|node| Self::process_node(model, current_bone_index, &node, buffers, root));
     }
 
     fn create_material(material: gltf::Material, root: &Path) -> Material {
@@ -256,12 +257,14 @@ impl GltfModelImporter {
     }
 
     fn process_mesh(
-        target: &mut StaticMeshData,
+        model: &mut ModelData,
         mesh: Mesh,
         bone: u32,
         buffers: &[gltf::buffer::Data],
         root: &Path,
     ) {
+        let mut target = StaticMeshData::default();
+        let mut indices_collect = Vec::new();
         for prim in mesh.primitives() {
             let reader = prim.reader(|buffer| Some(&buffers[buffer.index()]));
             let positions = if let Some(positions) = reader.read_positions() {
@@ -322,38 +325,46 @@ impl GltfModelImporter {
                 ],
                 Some(&indices),
             );
-            let geometry = meshopt::remap_vertex_buffer(&geometry, total_vertex_count, &remap);
-            let attributes = meshopt::remap_vertex_buffer(&attributes, total_vertex_count, &remap);
-            let indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
-            meshopt::optimize_vertex_cache_in_place(&indices, geometry.len());
-            let remap = meshopt::optimize_vertex_fetch_remap(&indices, geometry.len());
             let mut geometry = meshopt::remap_vertex_buffer(&geometry, total_vertex_count, &remap);
             let mut attributes =
                 meshopt::remap_vertex_buffer(&attributes, total_vertex_count, &remap);
-            let indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
+            let mut indices =
+                meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
+            meshopt::optimize_vertex_cache_in_place(&indices, geometry.len());
 
-            let mut indices = indices.iter().map(|x| *x as u16).collect::<Vec<_>>();
-
-            let first = target.geometry.len() as u32;
-            let count = geometry.len() as u32;
+            let first = indices_collect.len() as u32;
+            let count = indices.len() as u32;
+            indices_collect.append(&mut indices);
             let material = Self::create_material(prim.material(), root);
             target.geometry.append(&mut geometry);
             target.attributes.append(&mut attributes);
-            target.indices.append(&mut indices);
             target.surfaces.push(Surface {
                 first,
                 count,
-                bone,
                 bounds,
                 max_position_value,
                 max_uv_value,
                 material,
-            })
+            });
         }
+        let remap = meshopt::optimize_vertex_fetch_remap(&indices_collect, target.geometry.len());
+        target.geometry =
+            meshopt::remap_vertex_buffer(&target.geometry, target.geometry.len(), &remap);
+        target.attributes =
+            meshopt::remap_vertex_buffer(&target.attributes, target.attributes.len(), &remap);
+        let mesh_index = model.static_meshes.len() as u32;
+        let mesh_name = mesh.name().unwrap_or(&format!("GltfMesh_{}", bone)).into();
+        target.indices = indices_collect
+            .iter()
+            .map(|x| *x as u16)
+            .collect::<Vec<_>>();
+        model.static_meshes.push(target);
+        model.mesh_names.insert(mesh_name, mesh_index);
+        model.node_to_mesh.push((bone, mesh_index));
     }
 }
 
-impl Content for StaticMeshData {
+impl Content for ModelData {
     fn save(&self, path: &Path) -> std::io::Result<()> {
         self.serialize(&mut File::create(path)?)
     }
@@ -384,7 +395,7 @@ impl ContentImporter for GltfModelImporter {
     ) -> Result<Box<dyn Content>, ImportError> {
         let (document, buffers, _images) = gltf::import(path)?;
 
-        let mut model = StaticMeshData::default();
+        let mut model = ModelData::default();
         document.nodes().for_each(|node| {
             Self::process_node(&mut model, 0, &node, &buffers, context.destination_dir)
         });

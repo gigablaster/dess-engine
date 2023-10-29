@@ -14,14 +14,57 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use four_cc::FourCC;
 
-use crate::traits::{BinaryDeserialization, BinarySerialization};
+use crate::{
+    bounds::AABB,
+    traits::{BinaryDeserialization, BinarySerialization},
+};
 
-use super::{Bone, LightingAttributes, Surface};
+use super::{Bone, LightingAttributes, Material};
 
-pub trait Geometry: BinarySerialization + BinaryDeserialization + Copy {
-    const MAGICK: FourCC;
+pub trait Geometry: BinarySerialization + BinaryDeserialization + Copy {}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Surface {
+    pub first: u32,
+    pub count: u32,
+    pub bounds: AABB,
+    pub max_position_value: f32,
+    pub max_uv_value: f32,
+    pub material: Material,
+}
+
+impl BinarySerialization for Surface {
+    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        w.write_u32::<LittleEndian>(self.first)?;
+        w.write_u32::<LittleEndian>(self.count)?;
+        w.write_f32::<LittleEndian>(self.max_position_value)?;
+        w.write_f32::<LittleEndian>(self.max_uv_value)?;
+        self.bounds.serialize(w)?;
+        self.material.serialize(w)?;
+
+        Ok(())
+    }
+}
+
+impl BinaryDeserialization for Surface {
+    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
+        let first = r.read_u32::<LittleEndian>()?;
+        let count = r.read_u32::<LittleEndian>()?;
+        let max_position_value = r.read_f32::<LittleEndian>()?;
+        let max_uv_value = r.read_f32::<LittleEndian>()?;
+        let bounds = AABB::deserialize(r)?;
+        let material = Material::deserialize(r)?;
+
+        Ok(Self {
+            first,
+            count,
+            max_position_value,
+            max_uv_value,
+            bounds,
+            material,
+        })
+    }
 }
 
 #[derive(Debug, Default)]
@@ -30,13 +73,10 @@ pub struct MeshData<T: Geometry> {
     pub attributes: Vec<LightingAttributes>,
     pub indices: Vec<u16>,
     pub surfaces: Vec<Surface>,
-    pub bones: Vec<Bone>,
-    pub bone_names: Vec<String>,
 }
 
 impl<T: Geometry> BinarySerialization for MeshData<T> {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        T::MAGICK.serialize(w)?;
         w.write_u32::<LittleEndian>(self.geometry.len() as _)?;
         for geo in &self.geometry {
             geo.serialize(w)?;
@@ -46,13 +86,6 @@ impl<T: Geometry> BinarySerialization for MeshData<T> {
         }
         self.indices.serialize(w)?;
         self.surfaces.serialize(w)?;
-        w.write_u32::<LittleEndian>(self.bones.len() as _)?;
-        for bone in &self.bones {
-            bone.serialize(w)?;
-        }
-        for bone_name in &self.bone_names {
-            bone_name.serialize(w)?;
-        }
 
         Ok(())
     }
@@ -60,13 +93,6 @@ impl<T: Geometry> BinarySerialization for MeshData<T> {
 
 impl<T: Geometry> BinaryDeserialization for MeshData<T> {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let magic = FourCC::deserialize(r)?;
-        if magic != T::MAGICK {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                "Wrong mesh header",
-            ));
-        }
         let vertex_count = r.read_u32::<LittleEndian>()?;
         let mut geometry = Vec::with_capacity(vertex_count as _);
         let mut attributes = Vec::with_capacity(vertex_count as _);
@@ -93,8 +119,6 @@ impl<T: Geometry> BinaryDeserialization for MeshData<T> {
             attributes,
             indices,
             surfaces,
-            bones,
-            bone_names,
         })
     }
 }
