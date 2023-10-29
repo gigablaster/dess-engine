@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
+    collections::HashMap,
     fs::File,
     path::{Path, PathBuf},
 };
@@ -75,6 +76,11 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
 
 #[derive(Debug, Default)]
 pub struct GltfModelImporter {}
+
+struct ModelImportContext {
+    pub model: ModelData,
+    pub processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
+}
 
 impl GltfModelImporter {
     fn set_normal_texture(
@@ -150,7 +156,7 @@ impl GltfModelImporter {
     }
 
     fn process_node(
-        model: &mut ModelData,
+        context: &mut ModelImportContext,
         parent_index: u32,
         node: &gltf::Node,
         buffers: &[gltf::buffer::Data],
@@ -168,9 +174,9 @@ impl GltfModelImporter {
                 scale,
             },
         };
-        let current_bone_index = model.bones.len() as u32;
-        model.bones.push(bone);
-        model.names.insert(
+        let current_bone_index = context.model.bones.len() as u32;
+        context.model.bones.push(bone);
+        context.model.names.insert(
             node.name()
                 .unwrap_or(&format!("GltfNode_{}", current_bone_index))
                 .into(),
@@ -178,10 +184,17 @@ impl GltfModelImporter {
         );
 
         if let Some(mesh) = node.mesh() {
-            Self::process_mesh(model, mesh, current_bone_index, buffers, root);
+            if let Some(index) = context.processed_meshes.get(&mesh.index()) {
+                context
+                    .model
+                    .node_to_mesh
+                    .push((current_bone_index, *index));
+            } else {
+                Self::process_mesh(context, mesh, current_bone_index, buffers, root);
+            }
         }
         node.children()
-            .for_each(|node| Self::process_node(model, current_bone_index, &node, buffers, root));
+            .for_each(|node| Self::process_node(context, current_bone_index, &node, buffers, root));
     }
 
     fn create_material(material: gltf::Material, root: &Path) -> Material {
@@ -257,7 +270,7 @@ impl GltfModelImporter {
     }
 
     fn process_mesh(
-        model: &mut ModelData,
+        context: &mut ModelImportContext,
         mesh: Mesh,
         bone: u32,
         buffers: &[gltf::buffer::Data],
@@ -356,15 +369,16 @@ impl GltfModelImporter {
             meshopt::remap_vertex_buffer(&target.geometry, target.geometry.len(), &remap);
         target.attributes =
             meshopt::remap_vertex_buffer(&target.attributes, target.attributes.len(), &remap);
-        let mesh_index = model.static_meshes.len() as u32;
+        let mesh_index = context.model.static_meshes.len() as u32;
         let mesh_name = mesh.name().unwrap_or(&format!("GltfMesh_{}", bone)).into();
         target.indices = indices_collect
             .iter()
             .map(|x| *x as u16)
             .collect::<Vec<_>>();
-        model.static_meshes.push(target);
-        model.mesh_names.insert(mesh_name, mesh_index);
-        model.node_to_mesh.push((bone, mesh_index));
+        context.model.static_meshes.push(target);
+        context.model.mesh_names.insert(mesh_name, mesh_index);
+        context.model.node_to_mesh.push((bone, mesh_index));
+        context.processed_meshes.insert(mesh.index(), mesh_index);
     }
 }
 
@@ -399,10 +413,19 @@ impl ContentImporter for GltfModelImporter {
     ) -> Result<Box<dyn Content>, ImportError> {
         let (document, buffers, _images) = gltf::import(path)?;
 
-        let mut model = ModelData::default();
+        let mut import_context = ModelImportContext {
+            model: ModelData::default(),
+            processed_meshes: HashMap::new(),
+        };
         document.nodes().for_each(|node| {
-            Self::process_node(&mut model, 0, &node, &buffers, context.destination_dir)
+            Self::process_node(
+                &mut import_context,
+                0,
+                &node,
+                &buffers,
+                context.destination_dir,
+            )
         });
-        Ok(Box::new(model))
+        Ok(Box::new(import_context.model))
     }
 }
