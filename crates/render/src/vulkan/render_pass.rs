@@ -13,12 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    hash::Hash,
-    slice,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, hash::Hash, slice, sync::Arc};
 
 use crate::RenderError;
 
@@ -26,6 +21,7 @@ use super::{Device, ImageDesc};
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use dess_common::TempList;
+use parking_lot::Mutex;
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -169,7 +165,7 @@ impl FboCache {
         device: &Device,
         key: FboCacheKey,
     ) -> Result<vk::Framebuffer, RenderError> {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock();
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
         } else {
@@ -220,7 +216,7 @@ impl FboCache {
     }
 
     pub fn clear(&self, device: &Device) {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock();
         entries
             .drain()
             .for_each(|(_, fbo)| unsafe { device.raw().destroy_framebuffer(fbo, None) });

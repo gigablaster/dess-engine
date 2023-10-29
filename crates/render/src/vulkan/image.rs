@@ -16,10 +16,8 @@
 use ash::vk;
 use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use parking_lot::Mutex;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::RenderError;
 
@@ -177,7 +175,7 @@ impl Image {
     }
 
     pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, RenderError> {
-        let mut views = self.views.lock().unwrap();
+        let mut views = self.views.lock();
         if let Some(view) = views.get(&desc) {
             Ok(*view)
         } else {
@@ -200,7 +198,7 @@ impl Image {
     }
 
     pub(crate) fn destroy_all_views(&self) {
-        let mut views = self.views.lock().unwrap();
+        let mut views = self.views.lock();
         views.iter().for_each(|(_, view)| {
             unsafe { self.device.raw().destroy_image_view(*view, None) };
         });
@@ -279,7 +277,6 @@ impl Drop for Image {
         let mut drop_list = self.device.drop_list();
         self.views
             .lock()
-            .unwrap()
             .drain()
             .for_each(|(_, view)| drop_list.drop_image_view(view));
         if let Some(memory) = self.allocation.take() {
