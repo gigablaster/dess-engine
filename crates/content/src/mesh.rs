@@ -277,16 +277,19 @@ impl GltfModelImporter {
             } else {
                 (vec![[0.0, 0.0]; positions.len()], false)
             };
+            assert_eq!(positions.len(), uvs.len());
             let (normals, has_normals) = if let Some(normals) = reader.read_normals() {
                 (normals.collect::<Vec<_>>(), true)
             } else {
                 (vec![[1.0, 0.0, 0.0]; positions.len()], false)
             };
+            assert_eq!(positions.len(), normals.len());
             let (mut tangents, has_tangents) = if let Some(tangents) = reader.read_tangents() {
                 (tangents.collect::<Vec<_>>(), true)
             } else {
                 (vec![[0.0, 1.0, 0.0, 0.0]; positions.len()], false)
             };
+            assert_eq!(positions.len(), tangents.len());
 
             let indices = if let Some(indices) = reader.read_indices() {
                 indices.into_u32().collect::<Vec<_>>()
@@ -316,6 +319,7 @@ impl GltfModelImporter {
                 .collect::<Vec<_>>();
             let (max_position_value, geometry) = Self::process_static_geometry(&positions);
             let (max_uv_value, attributes) = Self::process_attributes(&normals, &uvs, &tangents);
+            assert_eq!(positions.len(), attributes.len());
 
             let (total_vertex_count, remap) = meshopt::generate_vertex_remap_multi::<u8>(
                 geometry.len(),

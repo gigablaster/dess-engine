@@ -286,7 +286,7 @@ fn quantize_input<T, U: Quantizer<T>>(input: &[U]) -> (f32, Vec<T>) {
     input.iter().for_each(|x| x.write(&mut data));
     let (max, values) = quantize_values(&data);
     let mut result = Vec::with_capacity(input.len());
-    for index in 0..values.len() / 3 {
+    for index in 0..values.len() / U::COUNT {
         let start = index * U::COUNT;
         let value = &values[start..start + U::COUNT];
         let vec = U::pack(value);
