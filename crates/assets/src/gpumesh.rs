@@ -98,14 +98,14 @@ impl BinaryDeserialization for Surface {
 }
 
 #[derive(Debug, Default)]
-pub struct MeshData<T: Geometry> {
+pub struct GpuMesh<T: Geometry> {
     pub geometry: Vec<T>, // w is padding
     pub attributes: Vec<LightingAttributes>,
     pub indices: Vec<u16>,
     pub surfaces: Vec<Surface>,
 }
 
-impl<T: Geometry> BinarySerialization for MeshData<T> {
+impl<T: Geometry> BinarySerialization for GpuMesh<T> {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         w.write_u32::<LittleEndian>(self.geometry.len() as _)?;
         for geo in &self.geometry {
@@ -121,7 +121,7 @@ impl<T: Geometry> BinarySerialization for MeshData<T> {
     }
 }
 
-impl<T: Geometry> BinaryDeserialization for MeshData<T> {
+impl<T: Geometry> BinaryDeserialization for GpuMesh<T> {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let vertex_count = r.read_u32::<LittleEndian>()?;
         let mut geometry = Vec::with_capacity(vertex_count as _);
@@ -250,7 +250,7 @@ impl BinaryDeserialization for StaticMeshGeometry {
 
 impl Geometry for StaticMeshGeometry {}
 
-pub type StaticMeshData = MeshData<StaticMeshGeometry>;
+pub type StaticMeshData = GpuMesh<StaticMeshGeometry>;
 
 fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
     let max = data

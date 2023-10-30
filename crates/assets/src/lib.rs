@@ -13,15 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use bytes::Bytes;
-use turbosloth::Lazy;
-
+mod gltf_import;
+mod gpumesh;
+mod gpumodel;
 mod image;
 mod material;
-mod meshdata;
-mod model;
-
-pub enum DataSource {
-    Lazy(Lazy<Bytes>),
-    Immediate(Bytes),
-}

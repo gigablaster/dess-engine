@@ -17,10 +17,10 @@ use std::collections::HashMap;
 
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
-use crate::meshdata::{Bone, StaticMeshData};
+use crate::gpumesh::{Bone, StaticMeshData};
 
 #[derive(Debug, Default)]
-pub struct ModelData {
+pub struct GpuModel {
     pub static_meshes: Vec<StaticMeshData>,
     pub mesh_names: HashMap<String, u32>,
     pub bones: Vec<Bone>,
@@ -28,7 +28,7 @@ pub struct ModelData {
     pub node_to_mesh: Vec<(u32, u32)>,
 }
 
-impl BinarySerialization for ModelData {
+impl BinarySerialization for GpuModel {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.static_meshes.serialize(w)?;
         self.mesh_names.serialize(w)?;
@@ -40,7 +40,7 @@ impl BinarySerialization for ModelData {
     }
 }
 
-impl BinaryDeserialization for ModelData {
+impl BinaryDeserialization for GpuModel {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let static_meshes = Vec::deserialize(r)?;
         let mesh_names = HashMap::deserialize(r)?;

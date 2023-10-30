@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::io;
+use std::{fs::File, io, path::PathBuf};
 
 use ash::vk;
 use async_trait::async_trait;
@@ -21,11 +21,9 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
-use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
+use image::{imageops::FilterType, io::Reader, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 use turbosloth::{Lazy, LazyWorker, RunContext};
-
-use crate::DataSource;
 
 #[derive(Debug)]
 pub struct ImageRgba8Data {
@@ -40,7 +38,7 @@ pub enum RawImage {
 }
 
 pub struct LoadImage {
-    source: DataSource,
+    path: PathBuf,
 }
 
 #[derive(Debug)]
@@ -51,8 +49,8 @@ pub struct GpuImage {
 }
 
 impl LoadImage {
-    pub fn new(source: DataSource) -> Self {
-        Self { source }
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
     }
 }
 
@@ -61,14 +59,10 @@ impl LazyWorker for LoadImage {
     type Output = anyhow::Result<RawImage>;
 
     async fn run(self, ctx: RunContext) -> Self::Output {
-        let bytes = match self.source {
-            DataSource::Immediate(bytes) => bytes,
-            DataSource::Lazy(bytes) => Bytes::clone(bytes.eval(&ctx).await?.as_ref()),
-        };
-        if let Ok(dds) = Dds::read(&mut io::Cursor::new(&bytes)) {
+        if let Ok(dds) = Dds::read(&mut File::open(&self.path)?) {
             Ok(RawImage::Dds(dds))
         } else {
-            let image = image::load_from_memory(&bytes)?;
+            let image = Reader::open(&self.path)?.with_guessed_format()?.decode()?;
             let dimensions = [image.dimensions().0, image.dimensions().1];
             let image = image.to_rgba8();
 
