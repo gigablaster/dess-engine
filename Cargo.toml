@@ -4,6 +4,7 @@ members=[
     "crates/vfs",
     "crates/render",
     "crates/content",
+    "crates/assets",
     "tools/packer",
     "tools/transformer"
 ]
