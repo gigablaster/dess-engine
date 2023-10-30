@@ -18,7 +18,6 @@ mod chunky_list;
 mod client;
 mod handle;
 pub mod memory;
-pub mod mesh;
 mod serialization;
 mod time;
 pub mod traits;

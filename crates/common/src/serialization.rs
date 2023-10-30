@@ -341,3 +341,54 @@ impl BinaryDeserialization for glam::Mat4 {
         Ok(glam::Mat4::from_cols_array(&data))
     }
 }
+
+impl<const N: usize> BinarySerialization for [i16; N] {
+    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        for index in 0..N {
+            w.write_i16::<LittleEndian>(self[index])?;
+        }
+
+        Ok(())
+    }
+}
+
+impl<const N: usize> BinaryDeserialization for [i16; N] {
+    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
+        let mut data = [0i16; N];
+        r.read_i16_into::<LittleEndian>(&mut data)?;
+
+        Ok(data)
+    }
+}
+
+impl BinarySerialization for (u32, u32) {
+    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        w.write_u32::<LittleEndian>(self.0)?;
+        w.write_u32::<LittleEndian>(self.1)?;
+
+        Ok(())
+    }
+}
+
+impl BinaryDeserialization for (u32, u32) {
+    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
+        let a = r.read_u32::<LittleEndian>()?;
+        let b = r.read_u32::<LittleEndian>()?;
+
+        Ok((a, b))
+    }
+}
+
+impl BinarySerialization for u32 {
+    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        w.write_u32::<LittleEndian>(*self)?;
+
+        Ok(())
+    }
+}
+
+impl BinaryDeserialization for u32 {
+    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
+        r.read_u32::<LittleEndian>()
+    }
+}

@@ -14,8 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-
-use crate::traits::{BinaryDeserialization, BinarySerialization};
+use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
 pub trait MaterialBaseColor {
     fn set_base_texture(&mut self, texture: Option<String>);

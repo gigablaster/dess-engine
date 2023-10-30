@@ -519,6 +519,7 @@ dependencies = [
  "log",
  "meshopt",
  "mikktspace",
+ "numquant",
  "shader-prepper",
  "turbosloth",
  "uuid",
@@ -533,7 +534,6 @@ dependencies = [
  "four-cc",
  "glam 0.24.1",
  "log",
- "numquant",
  "uuid",
 ]
 
