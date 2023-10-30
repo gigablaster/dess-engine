@@ -16,7 +16,9 @@
 use std::path::PathBuf;
 
 use async_trait::async_trait;
-use turbosloth::{LazyWorker, RunContext};
+use turbosloth::{Lazy, LazyWorker, RunContext};
+
+use crate::gpumodel::GpuModel;
 
 pub struct LoadGltf {
     path: PathBuf,
@@ -46,5 +48,26 @@ impl LazyWorker for LoadGltf {
             buffers,
             images,
         })
+    }
+}
+
+pub struct CreateGpuModel {
+    pub gltf: Lazy<LoadedGltf>,
+}
+
+impl CreateGpuModel {
+    pub fn new(gltf: Lazy<LoadedGltf>) -> Self {
+        Self { gltf }
+    }
+}
+
+#[async_trait]
+impl LazyWorker for CreateGpuModel {
+    type Output = anyhow::Result<GpuModel>;
+
+    async fn run(self, ctx: RunContext) -> Self::Output {
+        let gltf = self.gltf.eval(&ctx).await?;
+
+        todo!()
     }
 }

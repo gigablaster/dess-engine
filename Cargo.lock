@@ -513,7 +513,6 @@ dependencies = [
  "four-cc",
  "glam 0.24.1",
  "gltf",
- "hassle-rs",
  "image",
  "intel_tex_2",
  "log",
@@ -521,6 +520,7 @@ dependencies = [
  "mikktspace",
  "numquant",
  "shader-prepper",
+ "siphasher",
  "turbosloth",
  "uuid",
 ]
@@ -1862,6 +1862,12 @@ dependencies = [
  "time",
  "windows-sys 0.42.0",
 ]
+
+[[package]]
+name = "siphasher"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "54ac45299ccbd390721be55b412d41931911f654fa99e2cb8bfb57184b2061fe"
 
 [[package]]
 name = "slotmap"

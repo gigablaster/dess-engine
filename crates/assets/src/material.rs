@@ -16,6 +16,8 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
+use crate::AssetRef;
+
 pub trait MaterialBaseColor {
     fn set_base_texture(&mut self, texture: Option<String>);
     fn set_base_color(&mut self, color: glam::Vec4);
@@ -82,11 +84,11 @@ impl BinaryDeserialization for BlendMode {
 #[derive(Debug, Clone, PartialEq)]
 pub struct PbrMaterial {
     pub blend: BlendMode,
-    pub base: Option<String>,
-    pub normal: Option<String>,
-    pub metallic_roughness: Option<String>,
-    pub occlusion: Option<String>,
-    pub emission: Option<String>,
+    pub base: AssetRef,
+    pub normal: AssetRef,
+    pub metallic_roughness: AssetRef,
+    pub occlusion: AssetRef,
+    pub emission: AssetRef,
     pub base_color: glam::Vec4,
     pub emission_color: glam::Vec3,
     pub emission_value: f32,
@@ -98,11 +100,11 @@ impl Default for PbrMaterial {
     fn default() -> Self {
         Self {
             blend: BlendMode::Opaque,
-            base: None,
-            normal: None,
-            metallic_roughness: None,
-            occlusion: None,
-            emission: None,
+            base: AssetRef::default(),
+            normal: AssetRef::default(),
+            metallic_roughness: AssetRef::default(),
+            occlusion: AssetRef::default(),
+            emission: AssetRef::default(),
             base_color: glam::vec4(0.5, 0.5, 0.5, 1.0),
             emission_color: glam::Vec3::ZERO,
             emission_value: 0.0,
@@ -115,7 +117,7 @@ impl Default for PbrMaterial {
 #[derive(Debug, Clone, PartialEq)]
 pub struct UnlitMaterial {
     pub blend: BlendMode,
-    pub base: Option<String>,
+    pub base: AssetRef,
     pub base_color: glam::Vec4,
 }
 
@@ -123,7 +125,7 @@ impl Default for UnlitMaterial {
     fn default() -> Self {
         Self {
             blend: BlendMode::Opaque,
-            base: None,
+            base: AssetRef::default(),
             base_color: glam::vec4(0.5, 0.5, 0.5, 1.0),
         }
     }
@@ -146,7 +148,7 @@ impl MaterialBaseColor for PbrMaterial {
     }
 
     fn set_base_texture(&mut self, texture: Option<String>) {
-        self.base = texture;
+        self.base = texture.into();
     }
 }
 
@@ -156,7 +158,7 @@ impl MaterialBaseColor for UnlitMaterial {
     }
 
     fn set_base_texture(&mut self, texture: Option<String>) {
-        self.base = texture;
+        self.base = texture.into();
     }
 }
 
@@ -176,25 +178,25 @@ impl MaterialValues for PbrMaterial {
     }
 
     fn set_metallic_roughness_texture(&mut self, texture: Option<String>) {
-        self.metallic_roughness = texture;
+        self.metallic_roughness = texture.into();
     }
 }
 
 impl MaterialNormals for PbrMaterial {
     fn set_normal_texture(&mut self, texture: Option<String>) {
-        self.normal = texture;
+        self.normal = texture.into();
     }
 }
 
 impl MaterialOcclusion for PbrMaterial {
     fn set_occlusion_texture(&mut self, texture: Option<String>) {
-        self.occlusion = texture;
+        self.occlusion = texture.into();
     }
 }
 
 impl MaterialEmission for PbrMaterial {
     fn set_emission_texture(&mut self, texture: Option<String>) {
-        self.emission = texture;
+        self.emission = texture.into();
     }
 
     fn set_emission_color(&mut self, value: glam::Vec3) {
@@ -212,23 +214,6 @@ impl MaterialBlend for PbrMaterial {
     }
 }
 
-fn norm_color4(color: glam::Vec4) -> [u8; 4] {
-    [
-        value_to_u8(color.x),
-        value_to_u8(color.y),
-        value_to_u8(color.z),
-        value_to_u8(color.w),
-    ]
-}
-
-fn norm_color3(color: glam::Vec3) -> [u8; 3] {
-    [
-        value_to_u8(color.x),
-        value_to_u8(color.y),
-        value_to_u8(color.z),
-    ]
-}
-
 impl BinarySerialization for PbrMaterial {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.blend.serialize(w)?;
@@ -237,13 +222,11 @@ impl BinarySerialization for PbrMaterial {
         self.metallic_roughness.serialize(w)?;
         self.occlusion.serialize(w)?;
         self.emission.serialize(w)?;
-        let base_color = norm_color4(self.base_color);
-        let emission_color = norm_color3(self.emission_color);
-        w.write_all(&base_color)?;
-        w.write_all(&emission_color)?;
+        self.base_color.serialize(w)?;
+        self.emission_color.serialize(w)?;
         w.write_f32::<LittleEndian>(self.emission_value)?;
-        w.write_u8(value_to_u8(self.metallic_value))?;
-        w.write_u8(value_to_u8(self.roughness_value))?;
+        w.write_f32::<LittleEndian>(self.metallic_value)?;
+        w.write_f32::<LittleEndian>(self.roughness_value)?;
 
         Ok(())
     }
@@ -252,29 +235,16 @@ impl BinarySerialization for PbrMaterial {
 impl BinaryDeserialization for PbrMaterial {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let blend = BlendMode::deserialize(r)?;
-        let base = Option::<String>::deserialize(r)?;
-        let normal = Option::<String>::deserialize(r)?;
-        let metallic_roughness = Option::<String>::deserialize(r)?;
-        let occlusion = Option::<String>::deserialize(r)?;
-        let emission = Option::<String>::deserialize(r)?;
-        let mut base_color = [0u8; 4];
-        let mut emission_color = [0u8; 3];
-        r.read_exact(&mut base_color)?;
-        r.read_exact(&mut emission_color)?;
+        let base = AssetRef::deserialize(r)?;
+        let normal = AssetRef::deserialize(r)?;
+        let metallic_roughness = AssetRef::deserialize(r)?;
+        let occlusion = AssetRef::deserialize(r)?;
+        let emission = AssetRef::deserialize(r)?;
+        let base_color = glam::Vec4::deserialize(r)?;
+        let emission_color = glam::Vec3::deserialize(r)?;
         let emission_value = r.read_f32::<LittleEndian>()?;
-        let metallic_value = r.read_u8()? as f32 / 255.0;
-        let roughness_value = r.read_u8()? as f32 / 255.0;
-        let base_color = glam::vec4(
-            base_color[0] as f32 / 255.0,
-            base_color[1] as f32 / 255.0,
-            base_color[2] as f32 / 255.0,
-            base_color[3] as f32 / 255.0,
-        );
-        let emission_color = glam::vec3(
-            emission_color[0] as f32 / 255.0,
-            emission_color[1] as f32 / 255.0,
-            emission_color[2] as f32 / 255.0,
-        );
+        let metallic_value = r.read_f32::<LittleEndian>()?;
+        let roughness_value = r.read_f32::<LittleEndian>()?;
 
         Ok(Self {
             blend,
@@ -296,8 +266,7 @@ impl BinarySerialization for UnlitMaterial {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.blend.serialize(w)?;
         self.base.serialize(w)?;
-        let base_color = norm_color4(self.base_color);
-        w.write_all(&base_color)?;
+        self.base_color.serialize(w)?;
 
         Ok(())
     }
@@ -306,15 +275,8 @@ impl BinarySerialization for UnlitMaterial {
 impl BinaryDeserialization for UnlitMaterial {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let blend = BlendMode::deserialize(r)?;
-        let base = Option::<String>::deserialize(r)?;
-        let mut base_color = [0u8; 4];
-        r.read_exact(&mut base_color)?;
-        let base_color = glam::vec4(
-            base_color[0] as f32 / 255.0,
-            base_color[1] as f32 / 255.0,
-            base_color[2] as f32 / 255.0,
-            base_color[3] as f32 / 255.0,
-        );
+        let base = AssetRef::deserialize(r)?;
+        let base_color = glam::Vec4::deserialize(r)?;
 
         Ok(Self {
             blend,

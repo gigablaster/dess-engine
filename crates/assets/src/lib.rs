@@ -13,8 +13,55 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
+use dess_common::traits::{BinaryDeserialization, BinarySerialization};
+use siphasher::sip128::SipHasher;
+
 mod gltf_import;
 mod gpumesh;
 mod gpumodel;
 mod image;
 mod material;
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct AssetRef {
+    hash: u128,
+}
+
+impl From<String> for AssetRef {
+    fn from(value: String) -> Self {
+        Self {
+            hash: SipHasher::default().hash(value.as_bytes()).as_u128(),
+        }
+    }
+}
+
+impl From<Option<String>> for AssetRef {
+    fn from(value: Option<String>) -> Self {
+        if let Some(name) = value {
+            name.into()
+        } else {
+            AssetRef::default()
+        }
+    }
+}
+
+impl AssetRef {
+    pub fn valid(&self) -> bool {
+        self.hash != 0
+    }
+}
+
+impl BinarySerialization for AssetRef {
+    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        w.write_u128::<LittleEndian>(self.hash)
+    }
+}
+
+impl BinaryDeserialization for AssetRef {
+    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
+        let hash = r.read_u128::<LittleEndian>()?;
+
+        Ok(Self { hash })
+    }
+}
