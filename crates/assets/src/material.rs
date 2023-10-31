@@ -54,15 +54,19 @@ pub enum BlendMode {
     AlphaBlend,
 }
 
+const BLEND_ID_OPAQUE: u8 = 0;
+const BLEND_ID_ALPHA_TEST: u8 = 1;
+const BLEND_ID_ALPHA_BLEND: u8 = 2;
+
 impl BinarySerialization for BlendMode {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         match self {
-            Self::Opaque => w.write_u8(0)?,
+            Self::Opaque => w.write_u8(BLEND_ID_OPAQUE)?,
             Self::AlphaTest(cutoff) => {
-                w.write_u8(1)?;
+                w.write_u8(BLEND_ID_ALPHA_TEST)?;
                 w.write_f32::<LittleEndian>(*cutoff)?;
             }
-            Self::AlphaBlend => w.write_u8(2)?,
+            Self::AlphaBlend => w.write_u8(BLEND_ID_ALPHA_BLEND)?,
         }
 
         Ok(())
@@ -73,9 +77,9 @@ impl BinaryDeserialization for BlendMode {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let ty = r.read_u8()?;
         match ty {
-            0 => Ok(Self::Opaque),
-            1 => Ok(Self::AlphaTest(r.read_u8()? as f32 / 255.0)),
-            2 => Ok(Self::AlphaBlend),
+            BLEND_ID_OPAQUE => Ok(Self::Opaque),
+            BLEND_ID_ALPHA_TEST => Ok(Self::AlphaTest(r.read_u8()? as f32 / 255.0)),
+            BLEND_ID_ALPHA_BLEND => Ok(Self::AlphaBlend),
             val => panic!("Unknown blend mode {}", val),
         }
     }
@@ -318,15 +322,18 @@ impl BinaryDeserialization for UnlitMaterial {
     }
 }
 
+const MATERIAL_ID_PBR: u8 = 0;
+const MATERIAL_ID_UNLIT: u8 = 1;
+
 impl BinarySerialization for Material {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         match self {
             Material::Pbr(pbr) => {
-                w.write_u8(0)?;
+                w.write_u8(MATERIAL_ID_PBR)?;
                 pbr.serialize(w)?;
             }
             Material::Unlit(unlit) => {
-                w.write_u8(1)?;
+                w.write_u8(MATERIAL_ID_UNLIT)?;
                 unlit.serialize(w)?;
             }
         }
@@ -339,8 +346,8 @@ impl BinaryDeserialization for Material {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let ty = r.read_u8()?;
         match ty {
-            0 => Ok(Self::Pbr(PbrMaterial::deserialize(r)?)),
-            1 => Ok(Self::Unlit(UnlitMaterial::deserialize(r)?)),
+            MATERIAL_ID_PBR => Ok(Self::Pbr(PbrMaterial::deserialize(r)?)),
+            MATERIAL_ID_UNLIT => Ok(Self::Unlit(UnlitMaterial::deserialize(r)?)),
             id => panic!("Unknown material ID {}", id),
         }
     }
