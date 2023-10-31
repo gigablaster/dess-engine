@@ -514,6 +514,7 @@ dependencies = [
  "mikktspace",
  "normalize-path",
  "numquant",
+ "parking_lot",
  "shader-prepper",
  "siphasher",
  "turbosloth",

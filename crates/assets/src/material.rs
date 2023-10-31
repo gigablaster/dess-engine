@@ -19,26 +19,26 @@ use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use crate::{AssetDependencies, AssetRef};
 
 pub trait MaterialBaseColor {
-    fn set_base_texture(&mut self, texture: Option<String>);
+    fn set_base_texture(&mut self, texture: AssetRef);
     fn set_base_color(&mut self, color: glam::Vec4);
 }
 
 pub trait MaterialNormals {
-    fn set_normal_texture(&mut self, texture: Option<String>);
+    fn set_normal_texture(&mut self, texture: AssetRef);
 }
 
 pub trait MaterialValues {
-    fn set_metallic_roughness_texture(&mut self, texture: Option<String>);
+    fn set_metallic_roughness_texture(&mut self, texture: AssetRef);
     fn set_metallic_value(&mut self, value: f32);
     fn set_roughness_value(&mut self, value: f32);
 }
 
 pub trait MaterialOcclusion {
-    fn set_occlusion_texture(&mut self, texture: Option<String>);
+    fn set_occlusion_texture(&mut self, texture: AssetRef);
 }
 
 pub trait MaterialEmission {
-    fn set_emission_texture(&mut self, texture: Option<String>);
+    fn set_emission_texture(&mut self, texture: AssetRef);
     fn set_emission_color(&mut self, value: glam::Vec3);
     fn set_emission_value(&mut self, value: f32);
 }
@@ -183,8 +183,8 @@ impl MaterialBaseColor for PbrMaterial {
         self.base_color = color;
     }
 
-    fn set_base_texture(&mut self, texture: Option<String>) {
-        self.base = texture.into();
+    fn set_base_texture(&mut self, texture: AssetRef) {
+        self.base = texture;
     }
 }
 
@@ -193,8 +193,8 @@ impl MaterialBaseColor for UnlitMaterial {
         self.base_color = color;
     }
 
-    fn set_base_texture(&mut self, texture: Option<String>) {
-        self.base = texture.into();
+    fn set_base_texture(&mut self, texture: AssetRef) {
+        self.base = texture;
     }
 }
 
@@ -213,26 +213,26 @@ impl MaterialValues for PbrMaterial {
         self.roughness_value = value;
     }
 
-    fn set_metallic_roughness_texture(&mut self, texture: Option<String>) {
-        self.metallic_roughness = texture.into();
+    fn set_metallic_roughness_texture(&mut self, texture: AssetRef) {
+        self.metallic_roughness = texture;
     }
 }
 
 impl MaterialNormals for PbrMaterial {
-    fn set_normal_texture(&mut self, texture: Option<String>) {
-        self.normal = texture.into();
+    fn set_normal_texture(&mut self, texture: AssetRef) {
+        self.normal = texture;
     }
 }
 
 impl MaterialOcclusion for PbrMaterial {
-    fn set_occlusion_texture(&mut self, texture: Option<String>) {
-        self.occlusion = texture.into();
+    fn set_occlusion_texture(&mut self, texture: AssetRef) {
+        self.occlusion = texture;
     }
 }
 
 impl MaterialEmission for PbrMaterial {
-    fn set_emission_texture(&mut self, texture: Option<String>) {
-        self.emission = texture.into();
+    fn set_emission_texture(&mut self, texture: AssetRef) {
+        self.emission = texture;
     }
 
     fn set_emission_color(&mut self, value: glam::Vec3) {

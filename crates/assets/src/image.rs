@@ -96,7 +96,7 @@ impl LazyWorker for CreatePlaceholderImage {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub enum ImagePurpose {
     Color,
     NonColor,

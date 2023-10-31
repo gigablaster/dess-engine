@@ -16,6 +16,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use async_trait::async_trait;
@@ -25,7 +26,6 @@ use gltf::{
     texture::{self, Info},
     Mesh,
 };
-use normalize_path::NormalizePath;
 use turbosloth::{Lazy, LazyWorker, RunContext};
 
 use crate::{
@@ -34,11 +34,12 @@ use crate::{
         StaticGpuMesh, StaticMeshGeometry, Surface,
     },
     gpumodel::GpuModel,
+    image::ImagePurpose,
     material::{
         BlendMode, Material, MaterialBaseColor, MaterialBlend, MaterialEmission, MaterialNormals,
         MaterialOcclusion, MaterialValues, PbrMaterial, UnlitMaterial,
     },
-    ROOT_DATA_PATH,
+    AssetProcessingContext, AssetRef,
 };
 
 pub struct LoadGltf {
@@ -79,85 +80,87 @@ struct ModelImportContext {
 
 pub struct CreateGpuModel {
     pub gltf: Lazy<LoadedGltf>,
+    pub context: Arc<AssetProcessingContext>,
 }
 
 impl CreateGpuModel {
-    pub fn new(gltf: Lazy<LoadedGltf>) -> Self {
-        Self { gltf }
+    pub fn new(gltf: Lazy<LoadedGltf>, context: &Arc<AssetProcessingContext>) -> Self {
+        Self {
+            gltf,
+            context: context.clone(),
+        }
     }
 
     fn set_normal_texture(
+        &self,
         material: &mut impl MaterialNormals,
-        root: &Path,
         normal: &Option<NormalTexture>,
     ) {
         if let Some(texture) = normal {
-            material.set_normal_texture(Self::texture_path(root, texture.texture()));
+            material
+                .set_normal_texture(self.import_texture(texture.texture(), ImagePurpose::Normals));
         }
     }
 
     fn set_occlusion_texture(
+        &self,
         material: &mut impl MaterialOcclusion,
-        root: &Path,
         occlusion: &Option<OcclusionTexture>,
     ) {
         if let Some(texture) = occlusion {
-            material.set_occlusion_texture(Self::texture_path(root, texture.texture()));
+            material.set_occlusion_texture(
+                self.import_texture(texture.texture(), ImagePurpose::NonColor),
+            );
         }
     }
 
-    fn set_base_color(
-        material: &mut impl MaterialBaseColor,
-        root: &Path,
-        pbr: &PbrMetallicRoughness,
-    ) {
+    fn set_base_color(&self, material: &mut impl MaterialBaseColor, pbr: &PbrMetallicRoughness) {
         if let Some(texture) = pbr.base_color_texture() {
-            material.set_base_texture(Self::texture_path(root, texture.texture()));
+            material.set_base_texture(self.import_texture(texture.texture(), ImagePurpose::Color));
         }
         material.set_base_color(glam::Vec4::from_array(pbr.base_color_factor()));
     }
 
-    fn set_material_values(
-        material: &mut impl MaterialValues,
-        root: &Path,
-        pbr: &PbrMetallicRoughness,
-    ) {
+    fn set_material_values(&self, material: &mut impl MaterialValues, pbr: &PbrMetallicRoughness) {
         if let Some(texture) = pbr.metallic_roughness_texture() {
-            material.set_metallic_roughness_texture(Self::texture_path(root, texture.texture()));
+            material.set_metallic_roughness_texture(
+                self.import_texture(texture.texture(), ImagePurpose::NonColor),
+            );
         }
         material.set_metallic_value(pbr.metallic_factor());
         material.set_roughness_value(pbr.roughness_factor());
     }
 
     fn set_emission_color(
+        &self,
         material: &mut impl MaterialEmission,
-        root: &Path,
         emission: &Option<Info>,
         color: [f32; 3],
         value: Option<f32>,
     ) {
         if let Some(texture) = emission {
-            material.set_emission_texture(Self::texture_path(root, texture.texture()));
+            material.set_emission_texture(
+                self.import_texture(texture.texture(), ImagePurpose::NonColor),
+            );
         }
         material.set_emission_color(glam::Vec3::from_array(color));
         material.set_emission_value(value.unwrap_or(0.0));
     }
 
-    fn texture_path(root: &Path, texture: texture::Texture) -> Option<String> {
+    fn import_texture(&self, texture: texture::Texture, purpose: ImagePurpose) -> AssetRef {
         if let gltf::image::Source::Uri { uri, .. } = texture.source().source() {
-            let path: PathBuf = root.join(Path::new(uri)).normalize();
-            path.to_str().map(|x| x.into())
+            self.context.import_image(Path::new(uri), purpose)
         } else {
-            None
+            AssetRef::default()
         }
     }
 
     fn process_node(
+        &self,
         context: &mut ModelImportContext,
         parent_index: u32,
         node: &gltf::Node,
         buffers: &[gltf::buffer::Data],
-        root: &Path,
     ) {
         let (translation, rotation, scale) = node.transform().decomposed();
         let translation = glam::Vec3::from_array(translation);
@@ -187,22 +190,22 @@ impl CreateGpuModel {
                     .node_to_mesh
                     .push((current_bone_index, *index));
             } else {
-                Self::process_mesh(context, mesh, current_bone_index, buffers, root);
+                self.process_mesh(context, mesh, current_bone_index, buffers);
             }
         }
         node.children()
-            .for_each(|node| Self::process_node(context, current_bone_index, &node, buffers, root));
+            .for_each(|node| self.process_node(context, current_bone_index, &node, buffers));
     }
 
-    fn create_material(material: gltf::Material, root: &Path) -> Material {
+    fn create_material(&self, material: gltf::Material) -> Material {
         if material.unlit() {
-            Material::Unlit(Self::create_unlit_material(material, root))
+            Material::Unlit(self.create_unlit_material(material))
         } else {
-            Material::Pbr(Self::create_pbr_material(material, root))
+            Material::Pbr(self.create_pbr_material(material))
         }
     }
 
-    fn set_blend_mode(target: &mut impl MaterialBlend, material: &gltf::Material) {
+    fn set_blend_mode(&self, target: &mut impl MaterialBlend, material: &gltf::Material) {
         match material.alpha_mode() {
             AlphaMode::Opaque => target.set_blend_mode(BlendMode::Opaque),
             AlphaMode::Mask => {
@@ -212,24 +215,23 @@ impl CreateGpuModel {
         }
     }
 
-    fn create_unlit_material(material: gltf::Material, root: &Path) -> UnlitMaterial {
+    fn create_unlit_material(&self, material: gltf::Material) -> UnlitMaterial {
         let mut target = UnlitMaterial::default();
-        Self::set_blend_mode(&mut target, &material);
-        Self::set_base_color(&mut target, root, &material.pbr_metallic_roughness());
+        self.set_blend_mode(&mut target, &material);
+        self.set_base_color(&mut target, &material.pbr_metallic_roughness());
 
         target
     }
 
-    fn create_pbr_material(material: gltf::Material, root: &Path) -> PbrMaterial {
+    fn create_pbr_material(&self, material: gltf::Material) -> PbrMaterial {
         let mut target = PbrMaterial::default();
-        Self::set_blend_mode(&mut target, &material);
-        Self::set_base_color(&mut target, root, &material.pbr_metallic_roughness());
-        Self::set_material_values(&mut target, root, &material.pbr_metallic_roughness());
-        Self::set_normal_texture(&mut target, root, &material.normal_texture());
-        Self::set_occlusion_texture(&mut target, root, &material.occlusion_texture());
-        Self::set_emission_color(
+        self.set_blend_mode(&mut target, &material);
+        self.set_base_color(&mut target, &material.pbr_metallic_roughness());
+        self.set_material_values(&mut target, &material.pbr_metallic_roughness());
+        self.set_normal_texture(&mut target, &material.normal_texture());
+        self.set_occlusion_texture(&mut target, &material.occlusion_texture());
+        self.set_emission_color(
             &mut target,
-            root,
             &material.emissive_texture(),
             material.emissive_factor(),
             material.emissive_strength(),
@@ -267,11 +269,11 @@ impl CreateGpuModel {
     }
 
     fn process_mesh(
+        &self,
         context: &mut ModelImportContext,
         mesh: Mesh,
         bone: u32,
         buffers: &[gltf::buffer::Data],
-        root: &Path,
     ) {
         let mut target = StaticGpuMesh::default();
         let mut indices_collect = Vec::new();
@@ -349,7 +351,7 @@ impl CreateGpuModel {
             let first = indices_collect.len() as u32;
             let count = indices.len() as u32;
             indices_collect.append(&mut indices);
-            let material = Self::create_material(prim.material(), root);
+            let material = self.create_material(prim.material());
             target.geometry.append(&mut geometry);
             target.attributes.append(&mut attributes);
             target.surfaces.push(Surface {
@@ -424,15 +426,9 @@ impl LazyWorker for CreateGpuModel {
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };
-        let path = gltf
-            .path
-            .strip_prefix(ROOT_DATA_PATH)
-            .unwrap()
-            .parent()
-            .unwrap();
-        gltf.document.nodes().for_each(|node| {
-            Self::process_node(&mut import_context, 0, &node, &gltf.buffers, path)
-        });
+        gltf.document
+            .nodes()
+            .for_each(|node| self.process_node(&mut import_context, 0, &node, &gltf.buffers));
 
         Ok(import_context.model)
     }
