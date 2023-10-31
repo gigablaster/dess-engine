@@ -55,7 +55,6 @@ pub struct LoadedGltf {
     path: PathBuf,
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
-    images: Vec<gltf::image::Data>,
 }
 
 #[async_trait]
@@ -63,13 +62,12 @@ impl LazyWorker for LoadGltf {
     type Output = anyhow::Result<LoadedGltf>;
 
     async fn run(self, _ctx: RunContext) -> Self::Output {
-        let (document, buffers, images) = gltf::import(&self.path)?;
+        let (document, buffers, _) = gltf::import(&self.path)?;
 
         Ok(LoadedGltf {
             path: self.path,
             document,
             buffers,
-            images,
         })
     }
 }
@@ -147,7 +145,7 @@ impl CreateGpuModel {
 
     fn texture_path(root: &Path, texture: texture::Texture) -> Option<String> {
         if let gltf::image::Source::Uri { uri, .. } = texture.source().source() {
-            let mut path: PathBuf = root.join(Path::new(uri)).normalize().into();
+            let path: PathBuf = root.join(Path::new(uri)).normalize();
             path.to_str().map(|x| x.into())
         } else {
             None

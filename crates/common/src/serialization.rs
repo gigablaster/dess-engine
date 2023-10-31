@@ -344,6 +344,7 @@ impl BinaryDeserialization for glam::Mat4 {
 
 impl<const N: usize> BinarySerialization for [i16; N] {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
+        #[allow(clippy::needless_range_loop)]
         for index in 0..N {
             w.write_i16::<LittleEndian>(self[index])?;
         }

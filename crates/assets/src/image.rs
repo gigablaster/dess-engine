@@ -25,8 +25,6 @@ use image::{imageops::FilterType, io::Reader, DynamicImage, GenericImageView, Im
 use intel_tex_2::{bc5, bc7};
 use turbosloth::{Lazy, LazyWorker, RunContext};
 
-use crate::AssetDependencies;
-
 #[derive(Debug)]
 pub struct ImageRgba8Data {
     pub data: Bytes,
@@ -36,7 +34,7 @@ pub struct ImageRgba8Data {
 #[derive(Debug)]
 pub enum RawImage {
     Rgba(ImageRgba8Data),
-    Dds(Dds),
+    Dds(Box<Dds>),
 }
 
 pub struct LoadImage {
@@ -60,9 +58,9 @@ impl LoadImage {
 impl LazyWorker for LoadImage {
     type Output = anyhow::Result<RawImage>;
 
-    async fn run(self, ctx: RunContext) -> Self::Output {
+    async fn run(self, _ctx: RunContext) -> Self::Output {
         if let Ok(dds) = Dds::read(&mut File::open(&self.path)?) {
-            Ok(RawImage::Dds(dds))
+            Ok(RawImage::Dds(Box::new(dds)))
         } else {
             let image = Reader::open(&self.path)?.with_guessed_format()?.decode()?;
             let dimensions = [image.dimensions().0, image.dimensions().1];

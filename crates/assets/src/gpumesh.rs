@@ -153,23 +153,6 @@ impl<T: Geometry> BinaryDeserialization for GpuMesh<T> {
     }
 }
 
-fn serialize_packed<const N: usize>(
-    w: &mut impl std::io::Write,
-    data: &[i16; N],
-) -> std::io::Result<()> {
-    for index in 0..N {
-        w.write_i16::<LittleEndian>(data[index])?;
-    }
-    Ok(())
-}
-
-fn deserialize_packed<const N: usize>(r: &mut impl std::io::Read) -> std::io::Result<[i16; N]> {
-    let mut data = [0i16; N];
-    r.read_i16_into::<LittleEndian>(&mut data)?;
-
-    Ok(data)
-}
-
 impl BinarySerialization for LightingAttributes {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.normal.serialize(w)?;
