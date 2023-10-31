@@ -91,7 +91,7 @@ impl BinaryDeserialization for AssetRef {
     }
 }
 
-pub trait AssetDependencies {
+pub trait Asset {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
 }
 
@@ -192,4 +192,14 @@ impl AssetProcessingContext {
     pub fn drain_images_to_process(&self) -> Vec<ImageRef> {
         self.inner.lock().drain_images_to_process()
     }
+}
+
+pub trait Content {}
+
+pub trait ContentImporter<T: Content> {
+    fn import(&self) -> anyhow::Result<T>;
+}
+
+pub trait ContentProcessor<T: Content, U: Asset> {
+    fn process(&self, content: T) -> anyhow::Result<U>;
 }

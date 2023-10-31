@@ -19,7 +19,7 @@ use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
 use crate::{
     gpumesh::{Bone, StaticGpuMesh},
-    AssetDependencies,
+    Asset,
 };
 
 #[derive(Debug, Default)]
@@ -61,7 +61,7 @@ impl BinaryDeserialization for GpuModel {
     }
 }
 
-impl AssetDependencies for GpuModel {
+impl Asset for GpuModel {
     fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {
         self.static_meshes
             .iter()

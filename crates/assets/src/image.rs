@@ -16,14 +16,14 @@
 use std::{fs::File, io, path::PathBuf};
 
 use ash::vk;
-use async_trait::async_trait;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use image::{imageops::FilterType, io::Reader, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
-use turbosloth::{Lazy, LazyWorker, RunContext};
+
+use crate::{Asset, Content, ContentImporter, ContentProcessor};
 
 #[derive(Debug)]
 pub struct ImageRgba8Data {
@@ -32,20 +32,8 @@ pub struct ImageRgba8Data {
 }
 
 #[derive(Debug)]
-pub enum RawImage {
-    Rgba(ImageRgba8Data),
-    Dds(Box<Dds>),
-}
-
 pub struct LoadImage {
     path: PathBuf,
-}
-
-#[derive(Debug)]
-pub struct GpuImage {
-    pub format: vk::Format,
-    pub dimensions: [u32; 2],
-    pub mips: Vec<Vec<u8>>,
 }
 
 impl LoadImage {
@@ -54,11 +42,27 @@ impl LoadImage {
     }
 }
 
-#[async_trait]
-impl LazyWorker for LoadImage {
-    type Output = anyhow::Result<RawImage>;
+#[derive(Debug)]
+pub enum RawImage {
+    Rgba(ImageRgba8Data),
+    Dds(Box<Dds>),
+}
 
-    async fn run(self, _ctx: RunContext) -> Self::Output {
+impl Content for RawImage {}
+
+#[derive(Debug)]
+pub struct GpuImage {
+    pub format: vk::Format,
+    pub dimensions: [u32; 2],
+    pub mips: Vec<Vec<u8>>,
+}
+
+impl Asset for GpuImage {
+    fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {}
+}
+
+impl ContentImporter<RawImage> for LoadImage {
+    fn import(&self) -> anyhow::Result<RawImage> {
         if let Ok(dds) = Dds::read(&mut File::open(&self.path)?) {
             Ok(RawImage::Dds(Box::new(dds)))
         } else {
@@ -84,11 +88,8 @@ impl CreatePlaceholderImage {
     }
 }
 
-#[async_trait]
-impl LazyWorker for CreatePlaceholderImage {
-    type Output = anyhow::Result<RawImage>;
-
-    async fn run(self, _ctx: RunContext) -> Self::Output {
+impl ContentImporter<RawImage> for CreatePlaceholderImage {
+    fn import(&self) -> anyhow::Result<RawImage> {
         Ok(RawImage::Rgba(ImageRgba8Data {
             data: Bytes::from(self.data.to_vec()),
             dimensions: [1, 1],
@@ -105,7 +106,6 @@ pub enum ImagePurpose {
 }
 
 pub struct CreateGpuImage {
-    image: Lazy<RawImage>,
     purpose: ImagePurpose,
 }
 
@@ -125,8 +125,8 @@ impl BcMode {
 }
 
 impl CreateGpuImage {
-    pub fn new(image: Lazy<RawImage>, purpose: ImagePurpose) -> Self {
-        Self { image, purpose }
+    pub fn new(purpose: ImagePurpose) -> Self {
+        Self { purpose }
     }
 
     fn process_dds(image: &Dds) -> anyhow::Result<GpuImage> {
@@ -278,14 +278,11 @@ impl CreateGpuImage {
     }
 }
 
-#[async_trait]
-impl LazyWorker for CreateGpuImage {
-    type Output = anyhow::Result<GpuImage>;
-
-    async fn run(self, ctx: RunContext) -> Self::Output {
-        match self.image.eval(&ctx).await?.as_ref() {
-            RawImage::Dds(dds) => Self::process_dds(dds),
-            RawImage::Rgba(image) => Self::process_rgba(image, self.purpose),
+impl ContentProcessor<RawImage, GpuImage> for CreateGpuImage {
+    fn process(&self, content: RawImage) -> anyhow::Result<GpuImage> {
+        match content {
+            RawImage::Dds(dds) => Self::process_dds(&dds),
+            RawImage::Rgba(image) => Self::process_rgba(&image, self.purpose),
         }
     }
 }

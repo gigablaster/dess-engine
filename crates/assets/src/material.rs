@@ -16,7 +16,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
-use crate::{AssetDependencies, AssetRef};
+use crate::{Asset, AssetRef};
 
 pub trait MaterialBaseColor {
     fn set_base_texture(&mut self, texture: AssetRef);
@@ -135,7 +135,7 @@ impl Default for UnlitMaterial {
     }
 }
 
-impl AssetDependencies for PbrMaterial {
+impl Asset for PbrMaterial {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
         if self.base.valid() {
             deps.push(self.base);
@@ -155,7 +155,7 @@ impl AssetDependencies for PbrMaterial {
     }
 }
 
-impl AssetDependencies for UnlitMaterial {
+impl Asset for UnlitMaterial {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
         if self.base.valid() {
             deps.push(self.base);
@@ -169,7 +169,7 @@ pub enum Material {
     Unlit(UnlitMaterial),
 }
 
-impl AssetDependencies for Material {
+impl Asset for Material {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
         match self {
             Self::Pbr(pbr) => pbr.collect_dependencies(deps),

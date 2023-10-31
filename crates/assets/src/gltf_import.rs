@@ -15,6 +15,8 @@
 
 use std::{
     collections::HashMap,
+    fmt::Debug,
+    hash::Hash,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -26,7 +28,6 @@ use gltf::{
     texture::{self, Info},
     Mesh,
 };
-use turbosloth::{Lazy, LazyWorker, RunContext};
 
 use crate::{
     gpumesh::{
@@ -39,9 +40,10 @@ use crate::{
         BlendMode, Material, MaterialBaseColor, MaterialBlend, MaterialEmission, MaterialNormals,
         MaterialOcclusion, MaterialValues, PbrMaterial, UnlitMaterial,
     },
-    AssetProcessingContext, AssetRef,
+    AssetProcessingContext, AssetRef, Content, ContentImporter, ContentProcessor,
 };
 
+#[derive(Debug, Clone, Hash)]
 pub struct LoadGltf {
     path: PathBuf,
 }
@@ -52,24 +54,19 @@ impl LoadGltf {
     }
 }
 
+#[derive(Debug)]
 pub struct LoadedGltf {
-    path: PathBuf,
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
 }
 
-#[async_trait]
-impl LazyWorker for LoadGltf {
-    type Output = anyhow::Result<LoadedGltf>;
+impl Content for LoadedGltf {}
 
-    async fn run(self, _ctx: RunContext) -> Self::Output {
+impl ContentImporter<LoadedGltf> for LoadGltf {
+    fn import(&self) -> anyhow::Result<LoadedGltf> {
         let (document, buffers, _) = gltf::import(&self.path)?;
 
-        Ok(LoadedGltf {
-            path: self.path,
-            document,
-            buffers,
-        })
+        Ok(LoadedGltf { document, buffers })
     }
 }
 
@@ -78,15 +75,14 @@ struct ModelImportContext {
     pub processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
 }
 
+#[derive(Clone)]
 pub struct CreateGpuModel {
-    pub gltf: Lazy<LoadedGltf>,
     pub context: Arc<AssetProcessingContext>,
 }
 
 impl CreateGpuModel {
-    pub fn new(gltf: Lazy<LoadedGltf>, context: &Arc<AssetProcessingContext>) -> Self {
+    pub fn new(context: &Arc<AssetProcessingContext>) -> Self {
         Self {
-            gltf,
             context: context.clone(),
         }
     }
@@ -415,20 +411,16 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
     }
 }
 
-#[async_trait]
-impl LazyWorker for CreateGpuModel {
-    type Output = anyhow::Result<GpuModel>;
-
-    async fn run(self, ctx: RunContext) -> Self::Output {
-        let gltf = self.gltf.eval(&ctx).await?;
-
+impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
+    fn process(&self, content: LoadedGltf) -> anyhow::Result<GpuModel> {
         let mut import_context = ModelImportContext {
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };
-        gltf.document
+        content
+            .document
             .nodes()
-            .for_each(|node| self.process_node(&mut import_context, 0, &node, &gltf.buffers));
+            .for_each(|node| self.process_node(&mut import_context, 0, &node, &content.buffers));
 
         Ok(import_context.model)
     }
