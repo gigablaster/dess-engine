@@ -25,6 +25,8 @@ use image::{imageops::FilterType, io::Reader, DynamicImage, GenericImageView, Im
 use intel_tex_2::{bc5, bc7};
 use turbosloth::{Lazy, LazyWorker, RunContext};
 
+use crate::AssetDependencies;
+
 #[derive(Debug)]
 pub struct ImageRgba8Data {
     pub data: Bytes,

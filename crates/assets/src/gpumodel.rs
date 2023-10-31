@@ -13,11 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
-use crate::gpumesh::{Bone, StaticMeshData};
+use crate::{
+    gpumesh::{Bone, StaticMeshData},
+    AssetDependencies,
+};
 
 #[derive(Debug, Default)]
 pub struct GpuModel {
@@ -55,5 +58,13 @@ impl BinaryDeserialization for GpuModel {
             names,
             node_to_mesh,
         })
+    }
+}
+
+impl AssetDependencies for GpuModel {
+    fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {
+        self.static_meshes
+            .iter()
+            .for_each(|x| x.collect_dependencies(deps))
     }
 }

@@ -65,3 +65,7 @@ impl BinaryDeserialization for AssetRef {
         Ok(Self { hash })
     }
 }
+
+pub trait AssetDependencies {
+    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
+}

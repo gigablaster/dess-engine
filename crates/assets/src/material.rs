@@ -16,7 +16,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
-use crate::AssetRef;
+use crate::{AssetDependencies, AssetRef};
 
 pub trait MaterialBaseColor {
     fn set_base_texture(&mut self, texture: Option<String>);
@@ -60,7 +60,7 @@ impl BinarySerialization for BlendMode {
             Self::Opaque => w.write_u8(0)?,
             Self::AlphaTest(cutoff) => {
                 w.write_u8(1)?;
-                w.write_u8(value_to_u8(*cutoff))?;
+                w.write_f32::<LittleEndian>(*cutoff)?;
             }
             Self::AlphaBlend => w.write_u8(2)?,
         }
@@ -131,15 +131,47 @@ impl Default for UnlitMaterial {
     }
 }
 
+impl AssetDependencies for PbrMaterial {
+    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+        if self.base.valid() {
+            deps.push(self.base);
+        }
+        if self.normal.valid() {
+            deps.push(self.normal);
+        }
+        if self.metallic_roughness.valid() {
+            deps.push(self.metallic_roughness);
+        }
+        if self.occlusion.valid() {
+            deps.push(self.occlusion);
+        }
+        if self.emission.valid() {
+            deps.push(self.occlusion);
+        }
+    }
+}
+
+impl AssetDependencies for UnlitMaterial {
+    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+        if self.base.valid() {
+            deps.push(self.base);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Material {
     Pbr(PbrMaterial),
     Unlit(UnlitMaterial),
 }
 
-fn value_to_u8(value: f32) -> u8 {
-    let value = value.clamp(0.0, 1.0);
-    (value * 255.0) as u8
+impl AssetDependencies for Material {
+    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+        match self {
+            Self::Pbr(pbr) => pbr.collect_dependencies(deps),
+            Self::Unlit(unlit) => unlit.collect_dependencies(deps),
+        }
+    }
 }
 
 impl MaterialBaseColor for PbrMaterial {

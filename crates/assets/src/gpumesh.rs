@@ -21,7 +21,7 @@ use dess_common::{
 };
 use numquant::linear::quantize;
 
-use crate::material::Material;
+use crate::{material::Material, AssetDependencies};
 
 pub trait Geometry: BinarySerialization + BinaryDeserialization + Copy {}
 
@@ -306,4 +306,12 @@ pub(crate) fn quantize_uvs(input: &[[f32; 2]]) -> (f32, Vec<[i16; 2]>) {
 pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[i16; 2]> {
     let (_, quantized) = quantize_input(input);
     quantized.iter().map(|x| [x[0], x[1]]).collect()
+}
+
+impl<T: Geometry> AssetDependencies for GpuMesh<T> {
+    fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {
+        self.surfaces
+            .iter()
+            .for_each(|x| x.material.collect_dependencies(deps));
+    }
 }
