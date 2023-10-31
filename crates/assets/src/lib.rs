@@ -69,3 +69,5 @@ impl BinaryDeserialization for AssetRef {
 pub trait AssetDependencies {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
 }
+
+pub(crate) const ROOT_DATA_PATH: &str = "data";

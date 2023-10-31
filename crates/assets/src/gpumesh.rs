@@ -250,7 +250,7 @@ impl BinaryDeserialization for StaticMeshGeometry {
 
 impl Geometry for StaticMeshGeometry {}
 
-pub type StaticMeshData = GpuMesh<StaticMeshGeometry>;
+pub type StaticGpuMesh = GpuMesh<StaticMeshGeometry>;
 
 fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
     let max = data

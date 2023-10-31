@@ -18,13 +18,13 @@ use std::collections::{HashMap, HashSet};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
 use crate::{
-    gpumesh::{Bone, StaticMeshData},
+    gpumesh::{Bone, StaticGpuMesh},
     AssetDependencies,
 };
 
 #[derive(Debug, Default)]
 pub struct GpuModel {
-    pub static_meshes: Vec<StaticMeshData>,
+    pub static_meshes: Vec<StaticGpuMesh>,
     pub mesh_names: HashMap<String, u32>,
     pub bones: Vec<Bone>,
     pub names: HashMap<String, u32>,

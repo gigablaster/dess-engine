@@ -518,6 +518,7 @@ dependencies = [
  "log",
  "meshopt",
  "mikktspace",
+ "normalize-path",
  "numquant",
  "shader-prepper",
  "siphasher",
