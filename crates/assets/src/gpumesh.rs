@@ -21,7 +21,7 @@ use dess_common::{
 };
 use numquant::linear::quantize;
 
-use crate::{material::Material, Asset};
+use crate::material::Material;
 
 pub trait Geometry: BinarySerialization + BinaryDeserialization + Copy {}
 
@@ -247,15 +247,6 @@ fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
         .collect::<Vec<_>>();
 
     (max as f32, result)
-}
-
-fn quantize_normalized_values(data: &[f32]) -> Vec<i16> {
-    let result = data
-        .iter()
-        .map(|x| quantize(*x as _, -1.0..1.0, i16::MAX))
-        .collect::<Vec<_>>();
-
-    result
 }
 
 fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, Vec<[i16; N]>) {

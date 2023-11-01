@@ -15,7 +15,8 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    env, io,
+    env, fs,
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 
@@ -37,7 +38,7 @@ mod material;
 #[derive(Debug)]
 pub enum Error {
     OutOfDataPath(PathBuf),
-    Import,
+    ImportFailed,
     Unsupported,
     WrongDependency,
     Io(io::Error),
@@ -132,7 +133,7 @@ impl AssetProcessingContextImpl {
     }
 
     pub fn import_image(&mut self, image: ImageSource) -> AssetRef {
-        match image.source {
+        match &image.source {
             ImageDataSource::File(path) => {
                 let path = get_relative_asset_path(&path).unwrap();
                 if let Some(asset) = self.images.get(&path) {
@@ -202,21 +203,36 @@ impl AssetProcessingContext {
 pub trait Content {}
 
 pub trait ContentImporter<T: Content> {
-    fn import(&self) -> anyhow::Result<T>;
+    fn import(&self) -> Result<T, Error>;
 }
 
 pub trait ContentProcessor<T: Content, U: Asset> {
     fn process(&self, content: T) -> anyhow::Result<U>;
 }
 
-fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
+pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
     if path.is_absolute() {
         let prefix = env::current_dir()?.join(ROOT_DATA_PATH);
-        if !path.starts_with(prefix) {
+        if !path.starts_with(&prefix) {
             return Err(Error::OutOfDataPath(path.into()));
         }
         Ok(path.strip_prefix(prefix).unwrap().into())
     } else {
         Ok(path.strip_prefix(ROOT_DATA_PATH).unwrap().into())
     }
+}
+
+pub(crate) fn read_to_end<P>(path: P) -> Result<Vec<u8>, Error>
+where
+    P: AsRef<Path>,
+{
+    let file = fs::File::open(path.as_ref()).map_err(Error::Io)?;
+    // Allocate one extra byte so the buffer doesn't need to grow before the
+    // final `read` call at the end of the file.  Don't worry about `usize`
+    // overflow because reading will fail regardless in that case.
+    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
+    let mut reader = io::BufReader::new(file);
+    let mut data = Vec::with_capacity(length as usize);
+    reader.read_to_end(&mut data).map_err(Error::Io)?;
+    Ok(data)
 }

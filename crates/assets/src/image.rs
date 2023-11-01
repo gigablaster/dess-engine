@@ -13,11 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    fs::{self},
-    io,
-    path::PathBuf,
-};
+use std::{io, path::PathBuf};
 
 use ash::vk;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -27,7 +23,7 @@ use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
-use crate::{Asset, Content, ContentImporter, ContentProcessor};
+use crate::{read_to_end, Asset, Content, ContentImporter, ContentProcessor, Error};
 
 #[derive(Debug)]
 pub struct ImageRgba8Data {
@@ -35,13 +31,13 @@ pub struct ImageRgba8Data {
     pub dimensions: [u32; 2],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ImageDataSource {
     File(PathBuf),
     Bytes(Bytes),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ImageSource {
     pub source: ImageDataSource,
     pub purpose: ImagePurpose,
@@ -57,7 +53,7 @@ impl ImageSource {
 
     pub fn from_bytes(bytes: &[u8], purpose: ImagePurpose) -> Self {
         Self {
-            source: ImageDataSource::Bytes(Bytes::from(bytes)),
+            source: ImageDataSource::Bytes(Bytes::copy_from_slice(bytes)),
             purpose,
         }
     }
@@ -89,19 +85,18 @@ impl Asset for GpuImage {
 }
 
 impl ContentImporter<RawImage> for ImageSource {
-    fn import(&self) -> anyhow::Result<RawImage> {
-        let bytes = match self.source {
-            ImageDataSource::Bytes(bytes) => bytes,
-            ImageDataSource::File(path) => Bytes::from(fs::read(path)?),
+    fn import(&self) -> Result<RawImage, Error> {
+        let bytes = match &self.source {
+            ImageDataSource::Bytes(bytes) => Bytes::clone(bytes),
+            ImageDataSource::File(path) => Bytes::copy_from_slice(&read_to_end(path)?),
         };
         if let Ok(dds) = Dds::read(bytes.as_ref()) {
-            // Ok(RawImageData::Dds(Box::new(dds)))
             Ok(RawImage {
                 data: RawImageData::Dds(Box::new(dds)),
                 purpose: self.purpose,
             })
         } else {
-            let image = image::load_from_memory(&bytes)?;
+            let image = image::load_from_memory(&bytes).map_err(|_| Error::ImportFailed)?;
             let dimensions = [image.dimensions().0, image.dimensions().1];
             let image = image.to_rgba8();
 
@@ -128,7 +123,7 @@ impl CreatePlaceholderImage {
 }
 
 impl ContentImporter<RawImage> for CreatePlaceholderImage {
-    fn import(&self) -> anyhow::Result<RawImage> {
+    fn import(&self) -> Result<RawImage, Error> {
         Ok(RawImage {
             data: RawImageData::Rgba(ImageRgba8Data {
                 data: Bytes::from(self.data.to_vec()),

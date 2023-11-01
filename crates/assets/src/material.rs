@@ -16,7 +16,7 @@
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
-use crate::{Asset, AssetRef};
+use crate::AssetRef;
 
 pub trait MaterialBaseColor {
     fn set_base_texture(&mut self, texture: AssetRef);

@@ -13,23 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    hash::Hash,
-    path::{Path, PathBuf},
-    sync::Arc, io, fs,
-};
+use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use base64::Engine;
 use dess_common::{bounds::AABB, Transform};
 use gltf::{
     material::{AlphaMode, NormalTexture, OcclusionTexture, PbrMetallicRoughness},
     texture::{self, Info},
     Mesh,
 };
+use normalize_path::NormalizePath;
 
 use crate::{
+    get_relative_asset_path,
     gpumesh::{
         quantize_normalized, quantize_positions, quantize_uvs, Bone, LightingAttributes,
         StaticGpuMesh, StaticMeshGeometry, Surface,
@@ -40,7 +35,7 @@ use crate::{
         BlendMode, Material, MaterialBaseColor, MaterialBlend, MaterialEmission, MaterialNormals,
         MaterialOcclusion, MaterialValues, PbrMaterial, UnlitMaterial,
     },
-    AssetProcessingContext, AssetRef, Content, ContentImporter, ContentProcessor, prepare_names,
+    AssetProcessingContext, AssetRef, Content, ContentImporter, ContentProcessor, Error,
 };
 
 #[derive(Debug, Clone, Hash)]
@@ -56,8 +51,7 @@ impl GltfSource {
 
 #[derive(Debug)]
 pub struct LoadedGltf {
-    name: String,
-    base_path: PathBuf,
+    base: PathBuf,
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
     images: Vec<gltf::image::Data>,
@@ -66,91 +60,23 @@ pub struct LoadedGltf {
 impl Content for LoadedGltf {}
 
 impl ContentImporter<LoadedGltf> for GltfSource {
-    fn import(&self) -> anyhow::Result<LoadedGltf> {
-        let (document, buffers, images) = gltf::import(&self.path)?;
-        let (name, base_path) = prepare_names(&self.path);
-        Ok(LoadedGltf { document, buffers, images, name, base_path })
+    fn import(&self) -> Result<LoadedGltf, Error> {
+        let (document, buffers, images) =
+            gltf::import(&self.path).map_err(|_| Error::ImportFailed)?;
+        let base = get_relative_asset_path(&self.path)?;
+        Ok(LoadedGltf {
+            document,
+            buffers,
+            images,
+            base,
+        })
     }
 }
 
 struct ModelImportContext {
     model: GpuModel,
-    name: String,
+    base: PathBuf,
     processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
-}
-
-/// Represents the set of URI schemes the importer supports.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-enum Scheme<'a> {
-    /// `data:[<media type>];base64,<data>`.
-    Data(Option<&'a str>, &'a str),
-
-    /// `file:[//]<absolute file path>`.
-    ///
-    /// Note: The file scheme does not implement authority.
-    File(&'a str),
-
-    /// `../foo`, etc.
-    Relative,
-
-    /// Placeholder for an unsupported URI scheme identifier.
-    Unsupported,
-}
-
-fn read_to_end<P>(path: P) -> Result<Vec<u8>, Error>
-where
-    P: AsRef<Path>,
-{
-    use io::Read;
-    let file = fs::File::open(path.as_ref()).map_err(|_|Error::Io)?;
-    // Allocate one extra byte so the buffer doesn't need to grow before the
-    // final `read` call at the end of the file.  Don't worry about `usize`
-    // overflow because reading will fail regardless in that case.
-    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
-    let mut reader = io::BufReader::new(file);
-    let mut data = Vec::with_capacity(length as usize);
-    reader.read_to_end(&mut data).map_err(|_| Error::Io)?;
-    Ok(data)
-}
-
-impl<'a> Scheme<'a> {
-    fn parse(uri: &str) -> Scheme<'_> {
-        if uri.contains(':') {
-            #[allow(clippy::manual_strip)]
-            #[allow(clippy::iter_nth_zero)]
-            if uri.starts_with("data:") {
-                let match0 = &uri["data:".len()..].split(";base64,").nth(0);
-                let match1 = &uri["data:".len()..].split(";base64,").nth(1);
-                if match1.is_some() {
-                    Scheme::Data(Some(match0.unwrap()), match1.unwrap())
-                } else if match0.is_some() {
-                    Scheme::Data(None, match0.unwrap())
-                } else {
-                    Scheme::Unsupported
-                }
-            } else if uri.starts_with("file://") {
-                Scheme::File(&uri["file://".len()..])
-            } else if uri.starts_with("file:") {
-                Scheme::File(&uri["file:".len()..])
-            } else {
-                Scheme::Unsupported
-            }
-        } else {
-            Scheme::Relative
-        }
-    }
-
-    fn read(base: Option<&Path>, uri: &str) -> Result<Vec<u8>, Error> {
-        match Scheme::parse(uri) {
-            // The path may be unused in the Scheme::Data case
-            // Example: "uri" : "data:application/octet-stream;base64,wsVHPgA...."
-            Scheme::Data(_, base64) => base64::engine::general_purpose::STANDARD_NO_PAD.decode(base64).map_err(|_| Error::Base64),
-            Scheme::File(path) if base.is_some() => read_to_end(path),
-            Scheme::Relative if base.is_some() => read_to_end(base.unwrap().join(uri)),
-            Scheme::Unsupported => Err(Error::UnsupportedScheme),
-            _ => Err(Error::ExternalReferenceInSliceImport),
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -172,8 +98,11 @@ impl CreateGpuModel {
         normal: &Option<NormalTexture>,
     ) {
         if let Some(texture) = normal {
-            material
-                .set_normal_texture(self.import_texture(context, texture.texture(), ImagePurpose::Normals, "normals"));
+            material.set_normal_texture(self.import_texture(
+                context,
+                texture.texture(),
+                ImagePurpose::Normals,
+            ));
         }
     }
 
@@ -184,24 +113,42 @@ impl CreateGpuModel {
         occlusion: &Option<OcclusionTexture>,
     ) {
         if let Some(texture) = occlusion {
-            material.set_occlusion_texture(
-                self.import_texture(context, texture.texture(), ImagePurpose::NonColor, "occlusion"),
-            );
+            material.set_occlusion_texture(self.import_texture(
+                context,
+                texture.texture(),
+                ImagePurpose::NonColor,
+            ));
         }
     }
 
-    fn set_base_color(&self, context: &ModelImportContext, material: &mut impl MaterialBaseColor, pbr: &PbrMetallicRoughness) {
+    fn set_base_color(
+        &self,
+        context: &ModelImportContext,
+        material: &mut impl MaterialBaseColor,
+        pbr: &PbrMetallicRoughness,
+    ) {
         if let Some(texture) = pbr.base_color_texture() {
-            material.set_base_texture(self.import_texture(context, texture.texture(), ImagePurpose::Color, "base_color"));
+            material.set_base_texture(self.import_texture(
+                context,
+                texture.texture(),
+                ImagePurpose::Color,
+            ));
         }
         material.set_base_color(glam::Vec4::from_array(pbr.base_color_factor()));
     }
 
-    fn set_material_values(&self, context: &ModelImportContext, material: &mut impl MaterialValues, pbr: &PbrMetallicRoughness) {
+    fn set_material_values(
+        &self,
+        context: &ModelImportContext,
+        material: &mut impl MaterialValues,
+        pbr: &PbrMetallicRoughness,
+    ) {
         if let Some(texture) = pbr.metallic_roughness_texture() {
-            material.set_metallic_roughness_texture(
-                self.import_texture(context, texture.texture(), ImagePurpose::NonColor, "metallic_roughness"),
-            );
+            material.set_metallic_roughness_texture(self.import_texture(
+                context,
+                texture.texture(),
+                ImagePurpose::NonColor,
+            ));
         }
         material.set_metallic_value(pbr.metallic_factor());
         material.set_roughness_value(pbr.roughness_factor());
@@ -216,42 +163,30 @@ impl CreateGpuModel {
         value: Option<f32>,
     ) {
         if let Some(texture) = emission {
-            material.set_emission_texture(
-                self.import_texture(context, texture.texture(), ImagePurpose::NonColor, "emissive"),
-            );
+            material.set_emission_texture(self.import_texture(
+                context,
+                texture.texture(),
+                ImagePurpose::NonColor,
+            ));
         }
         material.set_emission_color(glam::Vec3::from_array(color));
         material.set_emission_value(value.unwrap_or(0.0));
     }
 
-    fn import_texture(&self, context: &ModelImportContext, texture: texture::Texture, purpose: ImagePurpose, slot: &str) -> anyhow::Result<AssetRef> {
+    fn import_texture(
+        &self,
+        context: &ModelImportContext,
+        texture: texture::Texture,
+        purpose: ImagePurpose,
+    ) -> AssetRef {
         match texture.source().source() {
             gltf::image::Source::Uri { uri, .. } => {
-                let uri = urlencoding::decode(uri)?;
-                let uri = uri.as_ref();
-
-                match Scheme::parse(uri) {
-                        Scheme::Data(Some(_mime_type), base64) => {
-                            let bytes = base64::engine::general_purpose::STANDARD_NO_PAD.decode(base64)?;
-                            self.context.import_image(&format!("{}@{}", context.name, slot), ImageSource::from_bytes(&bytes, purpose));
-                        }
-                        Scheme::Data(None, ..) => return Err(Error::ExternalReferenceInSliceImport),
-                        Scheme::Unsupported => return Err(Error::UnsupportedScheme),
-                        Scheme::File(path) => self.context.import_image(ImageSource::File(path.into(), purpose)),
-                        Scheme::Relative => {
-                            self.context.import_image(ImageSource::from_file(context.base_path.join(uri)))
-                        }
-                }
-                self.context.import_image(Path::new(uri), purpose),
+                let image_path = context.base.join(uri).normalize();
+                self.context
+                    .import_image(ImageSource::from_file(image_path, purpose))
             }
-            _ => AssetRef::default()
+            _ => AssetRef::default(),
         }
-        
-        // if let gltf::image::Source::Uri { uri, .. } = texture.source().source() {
-        //     self.context.import_image(Path::new(uri), purpose)
-        // } else {
-        //     AssetRef::default()
-        // }
     }
 
     fn process_node(
@@ -296,11 +231,11 @@ impl CreateGpuModel {
             .for_each(|node| self.process_node(context, current_bone_index, &node, buffers));
     }
 
-    fn create_material(&self, material: gltf::Material) -> Material {
+    fn create_material(&self, context: &ModelImportContext, material: gltf::Material) -> Material {
         if material.unlit() {
-            Material::Unlit(self.create_unlit_material(material))
+            Material::Unlit(self.create_unlit_material(context, material))
         } else {
-            Material::Pbr(self.create_pbr_material(material))
+            Material::Pbr(self.create_pbr_material(context, material))
         }
     }
 
@@ -314,22 +249,31 @@ impl CreateGpuModel {
         }
     }
 
-    fn create_unlit_material(&self, material: gltf::Material) -> UnlitMaterial {
+    fn create_unlit_material(
+        &self,
+        context: &ModelImportContext,
+        material: gltf::Material,
+    ) -> UnlitMaterial {
         let mut target = UnlitMaterial::default();
         self.set_blend_mode(&mut target, &material);
-        self.set_base_color(&mut target, &material.pbr_metallic_roughness());
+        self.set_base_color(context, &mut target, &material.pbr_metallic_roughness());
 
         target
     }
 
-    fn create_pbr_material(&self, material: gltf::Material) -> PbrMaterial {
+    fn create_pbr_material(
+        &self,
+        context: &ModelImportContext,
+        material: gltf::Material,
+    ) -> PbrMaterial {
         let mut target = PbrMaterial::default();
         self.set_blend_mode(&mut target, &material);
-        self.set_base_color(&mut target, &material.pbr_metallic_roughness());
-        self.set_material_values(&mut target, &material.pbr_metallic_roughness());
-        self.set_normal_texture(&mut target, &material.normal_texture());
-        self.set_occlusion_texture(&mut target, &material.occlusion_texture());
+        self.set_base_color(context, &mut target, &material.pbr_metallic_roughness());
+        self.set_material_values(context, &mut target, &material.pbr_metallic_roughness());
+        self.set_normal_texture(context, &mut target, &material.normal_texture());
+        self.set_occlusion_texture(context, &mut target, &material.occlusion_texture());
         self.set_emission_color(
+            context,
             &mut target,
             &material.emissive_texture(),
             material.emissive_factor(),
@@ -450,7 +394,7 @@ impl CreateGpuModel {
             let first = indices_collect.len() as u32;
             let count = indices.len() as u32;
             indices_collect.append(&mut indices);
-            let material = self.create_material(prim.material());
+            let material = self.create_material(context, prim.material());
             target.geometry.append(&mut geometry);
             target.attributes.append(&mut attributes);
             target.surfaces.push(Surface {
@@ -517,6 +461,7 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
 impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
     fn process(&self, content: LoadedGltf) -> anyhow::Result<GpuModel> {
         let mut import_context = ModelImportContext {
+            base: content.base,
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };
