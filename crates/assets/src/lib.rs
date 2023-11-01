@@ -55,11 +55,17 @@ pub struct AssetRef {
 }
 
 impl AssetRef {
-    pub fn create() -> Self {
+    pub fn from_path(path: &Path) -> Self {
+        Self::from_bytes(&path.to_str().unwrap().as_bytes())
+    }
+
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        let hash = siphasher::sip128::SipHasher::default().hash(bytes);
         Self {
-            uuid: Uuid::new_v4(),
+            uuid: Uuid::from_u128(hash.as_u128()),
         }
     }
+
     pub fn valid(&self) -> bool {
         !self.uuid.is_nil()
     }
@@ -99,15 +105,12 @@ struct AssetProcessingContextImpl {
     images: HashMap<PathBuf, AssetRef>,
     /// Asset names. Only named assets can be requested.
     names: HashMap<String, AssetRef>,
-    /// Which asset created from which file. Needed to regenerate extracted assets
-    /// when original file was changed.
-    dependencies: HashMap<AssetRef, PathBuf>,
     /// Models that should be imported.
     models_to_process: HashMap<AssetRef, GltfSource>,
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
     /// Hashes for all inline assets, to catch and reuse same resources
-    blob_hashes: HashMap<u128, AssetRef>,
+    blobs: HashSet<AssetRef>,
 }
 
 unsafe impl Send for AssetProcessingContextImpl {}
@@ -120,49 +123,37 @@ impl AssetProcessingContextImpl {
             Ok(*asset)
         } else {
             info!("Requested model import {:?}", path);
-            let asset = AssetRef::create();
+            let asset = AssetRef::from_path(&model.path);
             self.models.insert(path, asset);
             self.models_to_process.insert(asset, model);
-            self.dependencies.insert(asset, path);
 
             Ok(asset)
         }
     }
 
-    pub fn import_image(
-        &mut self,
-        image: ImageSource,
-        origin: Option<&Path>,
-    ) -> Result<AssetRef, Error> {
+    pub fn import_image(&mut self, image: ImageSource) -> Result<AssetRef, Error> {
         match image.source {
             ImageDataSource::File(path) => {
                 let path = get_relative_asset_path(&path)?;
                 if let Some(asset) = self.images.get(&path) {
                     Ok(*asset)
                 } else {
-                    let asset = AssetRef::create();
+                    let asset = AssetRef::from_path(&path);
                     info!("Requested image import {:?} ref: {:?}", path, asset);
                     self.images.insert(path, asset);
                     self.images_to_process.insert(asset, image);
-                    self.dependencies.insert(asset, path);
 
                     Ok(asset)
                 }
             }
             ImageDataSource::Bytes(bytes) => {
-                let hash = siphasher::sip128::SipHasher::default().hash(&bytes);
-                if let Some(asset) = self.blob_hashes.get(&hash.as_u128()) {
-                    Ok(*asset)
+                let asset = AssetRef::from_bytes(&bytes);
+                if self.blobs.contains(&asset) {
+                    Ok(asset)
                 } else {
-                    let asset = AssetRef::create();
-                    info!(
-                        "Added image extracted from {:?} hash {:?} ref {:?}",
-                        origin, hash, asset
-                    );
+                    info!("Added image from blob ref {:?}", asset);
+                    self.blobs.insert(asset);
                     self.images_to_process.insert(asset, image);
-                    if let Some(origin) = origin {
-                        self.dependencies.insert(asset, origin.into());
-                    }
 
                     Ok(asset)
                 }
@@ -195,12 +186,8 @@ impl AssetProcessingContext {
         self.inner.lock().import_model(model)
     }
 
-    pub fn import_image(
-        &self,
-        image: ImageSource,
-        origin: Option<&Path>,
-    ) -> Result<AssetRef, Error> {
-        self.inner.lock().import_image(image, origin)
+    pub fn import_image(&self, image: ImageSource) -> Result<AssetRef, Error> {
+        self.inner.lock().import_image(image)
     }
 
     pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
