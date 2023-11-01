@@ -117,45 +117,45 @@ unsafe impl Send for AssetProcessingContextImpl {}
 unsafe impl Sync for AssetProcessingContextImpl {}
 
 impl AssetProcessingContextImpl {
-    pub fn import_model(&mut self, model: GltfSource) -> Result<AssetRef, Error> {
-        let path = get_relative_asset_path(&model.path)?;
+    pub fn import_model(&mut self, model: GltfSource) -> AssetRef {
+        let path = get_relative_asset_path(&model.path).unwrap();
         if let Some(asset) = self.models.get(&path) {
-            Ok(*asset)
+            *asset
         } else {
             info!("Requested model import {:?}", path);
             let asset = AssetRef::from_path(&model.path);
             self.models.insert(path, asset);
             self.models_to_process.insert(asset, model);
 
-            Ok(asset)
+            asset
         }
     }
 
-    pub fn import_image(&mut self, image: ImageSource) -> Result<AssetRef, Error> {
+    pub fn import_image(&mut self, image: ImageSource) -> AssetRef {
         match image.source {
             ImageDataSource::File(path) => {
-                let path = get_relative_asset_path(&path)?;
+                let path = get_relative_asset_path(&path).unwrap();
                 if let Some(asset) = self.images.get(&path) {
-                    Ok(*asset)
+                    *asset
                 } else {
                     let asset = AssetRef::from_path(&path);
                     info!("Requested image import {:?} ref: {:?}", path, asset);
                     self.images.insert(path, asset);
                     self.images_to_process.insert(asset, image);
 
-                    Ok(asset)
+                    asset
                 }
             }
             ImageDataSource::Bytes(bytes) => {
                 let asset = AssetRef::from_bytes(&bytes);
                 if self.blobs.contains(&asset) {
-                    Ok(asset)
+                    asset
                 } else {
                     info!("Added image from blob ref {:?}", asset);
                     self.blobs.insert(asset);
                     self.images_to_process.insert(asset, image);
 
-                    Ok(asset)
+                    asset
                 }
             }
         }
@@ -182,11 +182,11 @@ pub struct AssetProcessingContext {
 unsafe impl Sync for AssetProcessingContext {}
 
 impl AssetProcessingContext {
-    pub fn import_model(&self, model: GltfSource) -> Result<AssetRef, Error> {
+    pub fn import_model(&self, model: GltfSource) -> AssetRef {
         self.inner.lock().import_model(model)
     }
 
-    pub fn import_image(&self, image: ImageSource) -> Result<AssetRef, Error> {
+    pub fn import_image(&self, image: ImageSource) -> AssetRef {
         self.inner.lock().import_image(image)
     }
 
