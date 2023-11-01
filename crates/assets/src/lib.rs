@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     env, io,
     path::{Path, PathBuf},
 };
@@ -106,6 +106,8 @@ struct AssetProcessingContextImpl {
     models_to_process: HashMap<AssetRef, GltfSource>,
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
+    /// Hashes for all inline assets, to catch and reuse same resources
+    blob_hashes: HashMap<u128, AssetRef>,
 }
 
 unsafe impl Send for AssetProcessingContextImpl {}
@@ -138,8 +140,8 @@ impl AssetProcessingContextImpl {
                 if let Some(asset) = self.images.get(&path) {
                     Ok(*asset)
                 } else {
-                    info!("Requested image import {:?}", path);
                     let asset = AssetRef::create();
+                    info!("Requested image import {:?} ref: {:?}", path, asset);
                     self.images.insert(path, asset);
                     self.images_to_process.insert(asset, image);
                     self.dependencies.insert(asset, path);
@@ -147,23 +149,24 @@ impl AssetProcessingContextImpl {
                     Ok(asset)
                 }
             }
-            ImageDataSource::Bytes(_) if origin.is_some() => {
-                let origin = origin.unwrap().into();
-                info!("Added image extracted from {:?}", origin);
-                let asset = AssetRef::create();
-                self.images_to_process.insert(asset, image);
-                self.dependencies.insert(asset, origin);
+            ImageDataSource::Bytes(bytes) => {
+                let hash = siphasher::sip128::SipHasher::default().hash(&bytes);
+                if let Some(asset) = self.blob_hashes.get(&hash.as_u128()) {
+                    Ok(*asset)
+                } else {
+                    let asset = AssetRef::create();
+                    info!(
+                        "Added image extracted from {:?} hash {:?} ref {:?}",
+                        origin, hash, asset
+                    );
+                    self.images_to_process.insert(asset, image);
+                    if let Some(origin) = origin {
+                        self.dependencies.insert(asset, origin.into());
+                    }
 
-                Ok(asset)
+                    Ok(asset)
+                }
             }
-            ImageDataSource::Bytes(_) if origin.is_none() => {
-                let asset = AssetRef::create();
-                info!("Added image with no origin");
-                self.images_to_process.insert(asset, image);
-
-                Ok(asset)
-            }
-            _ => unreachable!(),
         }
     }
 
