@@ -15,7 +15,11 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
-use dess_assets::{GpuModel, MaterialNormals, MaterialOcclusion, MaterialBaseColor, MaterialValues, MaterialEmission, AssetRef, Bone, Material, MaterialBlend, BlendMode, UnlitMaterial, PbrMaterial, LightingAttributes, StaticMeshGeometry, StaticGpuMesh, Surface};
+use dess_assets::{
+    AssetRef, BlendMode, Bone, GpuModel, LightingAttributes, Material, MaterialBaseColor,
+    MaterialBlend, MaterialEmission, MaterialNormals, MaterialOcclusion, MaterialValues,
+    PbrMaterial, StaticGpuMesh, StaticMeshGeometry, Surface, UnlitMaterial,
+};
 use dess_common::{bounds::AABB, Transform};
 use gltf::{
     material::{AlphaMode, NormalTexture, OcclusionTexture, PbrMetallicRoughness},
@@ -26,8 +30,8 @@ use normalize_path::NormalizePath;
 use numquant::linear::quantize;
 
 use crate::{
-    get_relative_asset_path,
-    AssetProcessingContext, Content, ContentImporter, ContentProcessor, Error, ImagePurpose, ImageSource,
+    get_relative_asset_path, AssetProcessingContext, Content, ContentImporter, ContentProcessor,
+    Error, ImagePurpose, ImageSource,
 };
 
 #[derive(Debug, Clone, Hash)]
@@ -512,4 +516,3 @@ pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[i16; 2]> {
     let (_, quantized) = quantize_input(input);
     quantized.iter().map(|x| [x[0], x[1]]).collect()
 }
-

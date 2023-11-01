@@ -20,7 +20,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dess_assets::{AssetRef, Asset};
+use dess_assets::{Asset, AssetRef};
 use log::info;
 use parking_lot::Mutex;
 
@@ -44,7 +44,6 @@ impl From<io::Error> for Error {
         Error::Io(value)
     }
 }
-
 
 const ROOT_DATA_PATH: &str = "data";
 
@@ -75,7 +74,10 @@ impl AssetProcessingContextImpl {
         } else {
             info!("Requested model import {:?}", path);
             let asset = AssetRef::from_path(&model.path);
-            self.set_name(asset, path.as_os_str().to_ascii_lowercase().to_str().unwrap());
+            self.set_name(
+                asset,
+                path.as_os_str().to_ascii_lowercase().to_str().unwrap(),
+            );
             self.models.insert(path, asset);
             self.models_to_process.insert(asset, model);
 

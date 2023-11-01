@@ -240,8 +240,10 @@ impl Surface {
     }
 }
 
-impl<T:Geometry> GpuMesh<T> {
+impl<T: Geometry> GpuMesh<T> {
     pub(crate) fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
-        self.surfaces.iter().for_each(|x| x.collect_dependencies(deps));
+        self.surfaces
+            .iter()
+            .for_each(|x| x.collect_dependencies(deps));
     }
 }

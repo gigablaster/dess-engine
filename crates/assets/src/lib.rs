@@ -24,8 +24,8 @@ mod gpumodel;
 mod image;
 mod material;
 
-pub use gpumodel::*;
 pub use gpumesh::*;
+pub use gpumodel::*;
 pub use image::*;
 pub use material::*;
 
@@ -75,4 +75,3 @@ pub trait Asset {
     const TYPE_ID: Uuid;
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
 }
-

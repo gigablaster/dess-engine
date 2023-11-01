@@ -1,4 +1,3 @@
-
 // Copyright (C) 2023 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
@@ -14,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-
 use std::path::PathBuf;
 
 use ash::vk;
@@ -24,7 +22,7 @@ use dess_assets::GpuImage;
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
-use crate::{Content, ContentImporter, Error, read_to_end, ContentProcessor};
+use crate::{read_to_end, Content, ContentImporter, ContentProcessor, Error};
 
 #[derive(Debug)]
 pub struct ImageRgba8Data {
