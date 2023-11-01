@@ -14,157 +14,168 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{HashMap, HashSet},
-    hash::{Hash, Hasher},
+    collections::HashMap,
+    env, io,
     path::{Path, PathBuf},
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
-use image::ImagePurpose;
+use gltf_import::GltfSource;
+use image::{ImageDataSource, ImageSource};
 use log::info;
 use parking_lot::Mutex;
-use siphasher::sip128::{Hasher128, SipHasher};
+use uuid::Uuid;
 
+mod assetdb;
 mod gltf_import;
 mod gpumesh;
 mod gpumodel;
 mod image;
 mod material;
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug)]
+pub enum Error {
+    OutOfDataPath(PathBuf),
+    Import,
+    Unsupported,
+    WrongDependency,
+    Io(io::Error),
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Error::Io(value)
+    }
+}
+
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssetRef {
-    hash: u128,
-}
-
-impl From<String> for AssetRef {
-    fn from(value: String) -> Self {
-        Self {
-            hash: SipHasher::default().hash(value.as_bytes()).as_u128(),
-        }
-    }
-}
-
-impl From<Option<String>> for AssetRef {
-    fn from(value: Option<String>) -> Self {
-        if let Some(name) = value {
-            name.into()
-        } else {
-            AssetRef::default()
-        }
-    }
-}
-
-impl From<ImageRef> for AssetRef {
-    fn from(value: ImageRef) -> Self {
-        let mut hasher = SipHasher::default();
-        hasher.write(value.path.to_str().unwrap().as_bytes());
-        hasher.write(&[value.purpose as u8]);
-        Self {
-            hash: hasher.finish128().as_u128(),
-        }
-    }
+    uuid: Uuid,
 }
 
 impl AssetRef {
-    pub fn from_path(path: impl Into<PathBuf>) -> Self {
-        let path = path.into();
-        path.to_str().unwrap().to_string().into()
+    pub fn create() -> Self {
+        Self {
+            uuid: Uuid::new_v4(),
+        }
+    }
+    pub fn valid(&self) -> bool {
+        !self.uuid.is_nil()
     }
 
-    pub fn valid(&self) -> bool {
-        self.hash != 0
+    pub fn as_path(&self) -> PathBuf {
+        format!("{}/{}", CACHE_PATH, self.uuid.hyphenated()).into()
     }
 }
 
 impl BinarySerialization for AssetRef {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        w.write_u128::<LittleEndian>(self.hash)
+        w.write_u128::<LittleEndian>(self.uuid.as_u128())
     }
 }
 
 impl BinaryDeserialization for AssetRef {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let hash = r.read_u128::<LittleEndian>()?;
-
-        Ok(Self { hash })
+        Ok(Self {
+            uuid: Uuid::from_u128_le(r.read_u128::<LittleEndian>()?),
+        })
     }
 }
 
 pub trait Asset {
+    const TYPE_ID: Uuid;
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
 }
 
-pub(crate) const ROOT_DATA_PATH: &str = "data";
-
-#[derive(Debug, PartialEq, Eq, Clone, Hash)]
-pub struct ImageRef {
-    pub path: PathBuf,
-    pub purpose: ImagePurpose,
-}
+const ROOT_DATA_PATH: &str = "data";
+const CACHE_PATH: &str = ".cache";
 
 #[derive(Debug, Default)]
 struct AssetProcessingContextImpl {
+    /// All currently imported models.
     models: HashMap<PathBuf, AssetRef>,
-    images: HashMap<ImageRef, AssetRef>,
-    models_to_process: HashSet<PathBuf>,
-    images_to_process: HashSet<ImageRef>,
+    /// All currently imported images.
+    images: HashMap<PathBuf, AssetRef>,
+    /// Asset names. Only named assets can be requested.
+    names: HashMap<String, AssetRef>,
+    /// Which asset created from which file. Needed to regenerate extracted assets
+    /// when original file was changed.
+    dependencies: HashMap<AssetRef, PathBuf>,
+    /// Models that should be imported.
+    models_to_process: HashMap<AssetRef, GltfSource>,
+    /// Images that should be imported.
+    images_to_process: HashMap<AssetRef, ImageSource>,
 }
 
 unsafe impl Send for AssetProcessingContextImpl {}
 unsafe impl Sync for AssetProcessingContextImpl {}
 
 impl AssetProcessingContextImpl {
-    fn root_path(path: impl Into<PathBuf>) -> PathBuf {
-        path.into()
-            .strip_prefix(ROOT_DATA_PATH)
-            .unwrap()
-            .parent()
-            .unwrap()
-            .into()
-    }
-
-    fn get_path(path: &Path) -> PathBuf {
-        let root = Self::root_path(path);
-        let name = path.file_name().unwrap();
-
-        root.join(name)
-    }
-
-    pub fn import_model(&mut self, path: &Path) -> AssetRef {
-        let path = Self::get_path(path);
+    pub fn import_model(&mut self, model: GltfSource) -> Result<AssetRef, Error> {
+        let path = get_relative_asset_path(&model.path)?;
         if let Some(asset) = self.models.get(&path) {
-            *asset
+            Ok(*asset)
         } else {
-            info!("Request model import {:?}", path);
-            let asset = AssetRef::from_path(&path);
-            self.models.insert(path.clone(), asset);
-            self.models_to_process.insert(path);
+            info!("Requested model import {:?}", path);
+            let asset = AssetRef::create();
+            self.models.insert(path, asset);
+            self.models_to_process.insert(asset, model);
+            self.dependencies.insert(asset, path);
 
-            asset
+            Ok(asset)
         }
     }
 
-    pub fn import_image(&mut self, path: &Path, purpose: ImagePurpose) -> AssetRef {
-        let path = Self::get_path(path);
-        let image_ref = ImageRef { path, purpose };
-        if let Some(asset) = self.images.get(&image_ref) {
-            *asset
-        } else {
-            info!("Request texture import {:?}", image_ref);
-            let asset = AssetRef::from_path(&image_ref.path);
-            self.images.insert(image_ref.clone(), asset);
-            self.images_to_process.insert(image_ref);
+    pub fn import_image(
+        &mut self,
+        image: ImageSource,
+        origin: Option<&Path>,
+    ) -> Result<AssetRef, Error> {
+        match image.source {
+            ImageDataSource::File(path) => {
+                let path = get_relative_asset_path(&path)?;
+                if let Some(asset) = self.images.get(&path) {
+                    Ok(*asset)
+                } else {
+                    info!("Requested image import {:?}", path);
+                    let asset = AssetRef::create();
+                    self.images.insert(path, asset);
+                    self.images_to_process.insert(asset, image);
+                    self.dependencies.insert(asset, path);
 
-            asset
+                    Ok(asset)
+                }
+            }
+            ImageDataSource::Bytes(_) if origin.is_some() => {
+                let origin = origin.unwrap().into();
+                info!("Added image extracted from {:?}", origin);
+                let asset = AssetRef::create();
+                self.images_to_process.insert(asset, image);
+                self.dependencies.insert(asset, origin);
+
+                Ok(asset)
+            }
+            ImageDataSource::Bytes(_) if origin.is_none() => {
+                let asset = AssetRef::create();
+                info!("Added image with no origin");
+                self.images_to_process.insert(asset, image);
+
+                Ok(asset)
+            }
+            _ => unreachable!(),
         }
     }
 
-    pub fn drain_models_to_process(&mut self) -> Vec<PathBuf> {
+    pub fn set_name(&mut self, asset: AssetRef, name: &str) {
+        self.names.insert(name.into(), asset);
+    }
+
+    pub fn drain_models_to_process(&mut self) -> Vec<(AssetRef, GltfSource)> {
         self.models_to_process.drain().collect()
     }
 
-    pub fn drain_images_to_process(&mut self) -> Vec<ImageRef> {
+    pub fn drain_images_to_process(&mut self) -> Vec<(AssetRef, ImageSource)> {
         self.images_to_process.drain().collect()
     }
 }
@@ -177,19 +188,23 @@ pub struct AssetProcessingContext {
 unsafe impl Sync for AssetProcessingContext {}
 
 impl AssetProcessingContext {
-    pub fn import_model(&self, path: &Path) -> AssetRef {
-        self.inner.lock().import_model(path)
+    pub fn import_model(&self, model: GltfSource) -> Result<AssetRef, Error> {
+        self.inner.lock().import_model(model)
     }
 
-    pub fn import_image(&self, path: &Path, purpose: ImagePurpose) -> AssetRef {
-        self.inner.lock().import_image(path, purpose)
+    pub fn import_image(
+        &self,
+        image: ImageSource,
+        origin: Option<&Path>,
+    ) -> Result<AssetRef, Error> {
+        self.inner.lock().import_image(image, origin)
     }
 
-    pub fn drain_models_to_process(&self) -> Vec<PathBuf> {
+    pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
         self.inner.lock().drain_models_to_process()
     }
 
-    pub fn drain_images_to_process(&self) -> Vec<ImageRef> {
+    pub fn drain_images_to_process(&self) -> Vec<(AssetRef, ImageSource)> {
         self.inner.lock().drain_images_to_process()
     }
 }
@@ -202,4 +217,16 @@ pub trait ContentImporter<T: Content> {
 
 pub trait ContentProcessor<T: Content, U: Asset> {
     fn process(&self, content: T) -> anyhow::Result<U>;
+}
+
+fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
+    if path.is_absolute() {
+        let prefix = env::current_dir()?.join(ROOT_DATA_PATH);
+        if !path.starts_with(prefix) {
+            return Err(Error::OutOfDataPath(path.into()));
+        }
+        Ok(path.strip_prefix(prefix).unwrap().into())
+    } else {
+        Ok(path.strip_prefix(ROOT_DATA_PATH).unwrap().into())
+    }
 }

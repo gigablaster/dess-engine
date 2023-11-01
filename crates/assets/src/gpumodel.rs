@@ -62,6 +62,8 @@ impl BinaryDeserialization for GpuModel {
 }
 
 impl Asset for GpuModel {
+    const TYPE_ID: uuid::Uuid = uuid::uuid!("7b229650-8f34-4d5a-b140-8e5d9ce599aa");
+
     fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {
         self.static_meshes
             .iter()

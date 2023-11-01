@@ -135,7 +135,7 @@ impl Default for UnlitMaterial {
     }
 }
 
-impl Asset for PbrMaterial {
+impl PbrMaterial {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
         if self.base.valid() {
             deps.push(self.base);
@@ -155,7 +155,7 @@ impl Asset for PbrMaterial {
     }
 }
 
-impl Asset for UnlitMaterial {
+impl UnlitMaterial {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
         if self.base.valid() {
             deps.push(self.base);
@@ -169,8 +169,8 @@ pub enum Material {
     Unlit(UnlitMaterial),
 }
 
-impl Asset for Material {
-    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+impl Material {
+    pub fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
         match self {
             Self::Pbr(pbr) => pbr.collect_dependencies(deps),
             Self::Unlit(unlit) => unlit.collect_dependencies(deps),

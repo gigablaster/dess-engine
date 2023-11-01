@@ -13,14 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fs::File, io, path::PathBuf};
+use std::{
+    fs::{self},
+    io,
+    path::PathBuf,
+};
 
 use ash::vk;
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
-use image::{imageops::FilterType, io::Reader, DynamicImage, GenericImageView, ImageBuffer, Rgba};
+use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
 use crate::{Asset, Content, ContentImporter, ContentProcessor};
@@ -32,20 +36,42 @@ pub struct ImageRgba8Data {
 }
 
 #[derive(Debug)]
-pub struct LoadImage {
-    path: PathBuf,
+pub enum ImageDataSource {
+    File(PathBuf),
+    Bytes(Bytes),
 }
 
-impl LoadImage {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
+#[derive(Debug)]
+pub struct ImageSource {
+    pub source: ImageDataSource,
+    pub purpose: ImagePurpose,
+}
+
+impl ImageSource {
+    pub fn from_file(path: impl Into<PathBuf>, purpose: ImagePurpose) -> Self {
+        Self {
+            source: ImageDataSource::File(path.into()),
+            purpose,
+        }
+    }
+
+    pub fn from_bytes(bytes: &[u8], purpose: ImagePurpose) -> Self {
+        Self {
+            source: ImageDataSource::Bytes(Bytes::from(bytes)),
+            purpose,
+        }
     }
 }
 
 #[derive(Debug)]
-pub enum RawImage {
+pub enum RawImageData {
     Rgba(ImageRgba8Data),
     Dds(Box<Dds>),
+}
+
+pub struct RawImage {
+    data: RawImageData,
+    purpose: ImagePurpose,
 }
 
 impl Content for RawImage {}
@@ -58,42 +84,58 @@ pub struct GpuImage {
 }
 
 impl Asset for GpuImage {
-    fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {}
+    const TYPE_ID: uuid::Uuid = uuid::uuid!("c2871b90-6b51-427f-b1d8-4cedbedc8993");
+    fn collect_dependencies(&self, _deps: &mut Vec<crate::AssetRef>) {}
 }
 
-impl ContentImporter<RawImage> for LoadImage {
+impl ContentImporter<RawImage> for ImageSource {
     fn import(&self) -> anyhow::Result<RawImage> {
-        if let Ok(dds) = Dds::read(&mut File::open(&self.path)?) {
-            Ok(RawImage::Dds(Box::new(dds)))
+        let bytes = match self.source {
+            ImageDataSource::Bytes(bytes) => bytes,
+            ImageDataSource::File(path) => Bytes::from(fs::read(path)?),
+        };
+        if let Ok(dds) = Dds::read(bytes.as_ref()) {
+            // Ok(RawImageData::Dds(Box::new(dds)))
+            Ok(RawImage {
+                data: RawImageData::Dds(Box::new(dds)),
+                purpose: self.purpose,
+            })
         } else {
-            let image = Reader::open(&self.path)?.with_guessed_format()?.decode()?;
+            let image = image::load_from_memory(&bytes)?;
             let dimensions = [image.dimensions().0, image.dimensions().1];
             let image = image.to_rgba8();
 
-            Ok(RawImage::Rgba(ImageRgba8Data {
-                data: image.into_raw().into(),
-                dimensions,
-            }))
+            Ok(RawImage {
+                data: RawImageData::Rgba(ImageRgba8Data {
+                    data: image.into_raw().into(),
+                    dimensions,
+                }),
+                purpose: self.purpose,
+            })
         }
     }
 }
 
 pub struct CreatePlaceholderImage {
     data: [u8; 4],
+    purpose: ImagePurpose,
 }
 
 impl CreatePlaceholderImage {
-    pub fn new(data: [u8; 4]) -> Self {
-        Self { data }
+    pub fn new(data: [u8; 4], purpose: ImagePurpose) -> Self {
+        Self { data, purpose }
     }
 }
 
 impl ContentImporter<RawImage> for CreatePlaceholderImage {
     fn import(&self) -> anyhow::Result<RawImage> {
-        Ok(RawImage::Rgba(ImageRgba8Data {
-            data: Bytes::from(self.data.to_vec()),
-            dimensions: [1, 1],
-        }))
+        Ok(RawImage {
+            data: RawImageData::Rgba(ImageRgba8Data {
+                data: Bytes::from(self.data.to_vec()),
+                dimensions: [1, 1],
+            }),
+            purpose: self.purpose,
+        })
     }
 }
 
@@ -105,9 +147,8 @@ pub enum ImagePurpose {
     Sprite,
 }
 
-pub struct CreateGpuImage {
-    purpose: ImagePurpose,
-}
+#[derive(Debug, Default)]
+pub struct CreateGpuImage {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BcMode {
@@ -125,10 +166,6 @@ impl BcMode {
 }
 
 impl CreateGpuImage {
-    pub fn new(purpose: ImagePurpose) -> Self {
-        Self { purpose }
-    }
-
     fn process_dds(image: &Dds) -> anyhow::Result<GpuImage> {
         if let Some(format) = Self::get_vk_format(image) {
             let data = image.get_data(0)?;
@@ -280,9 +317,9 @@ impl CreateGpuImage {
 
 impl ContentProcessor<RawImage, GpuImage> for CreateGpuImage {
     fn process(&self, content: RawImage) -> anyhow::Result<GpuImage> {
-        match content {
-            RawImage::Dds(dds) => Self::process_dds(&dds),
-            RawImage::Rgba(image) => Self::process_rgba(&image, self.purpose),
+        match content.data {
+            RawImageData::Dds(dds) => Self::process_dds(&dds),
+            RawImageData::Rgba(image) => Self::process_rgba(&image, content.purpose),
         }
     }
 }

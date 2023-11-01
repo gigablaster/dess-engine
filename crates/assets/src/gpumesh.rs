@@ -291,8 +291,8 @@ pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[i16; 2]> {
     quantized.iter().map(|x| [x[0], x[1]]).collect()
 }
 
-impl<T: Geometry> Asset for GpuMesh<T> {
-    fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {
+impl<T: Geometry> GpuMesh<T> {
+    pub fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {
         self.surfaces
             .iter()
             .for_each(|x| x.material.collect_dependencies(deps));
