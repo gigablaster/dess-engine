@@ -15,6 +15,7 @@
 
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
 
+use dess_assets::{GpuModel, MaterialNormals, MaterialOcclusion, MaterialBaseColor, MaterialValues, MaterialEmission, AssetRef, Bone, Material, MaterialBlend, BlendMode, UnlitMaterial, PbrMaterial, LightingAttributes, StaticMeshGeometry, StaticGpuMesh, Surface};
 use dess_common::{bounds::AABB, Transform};
 use gltf::{
     material::{AlphaMode, NormalTexture, OcclusionTexture, PbrMetallicRoughness},
@@ -22,20 +23,11 @@ use gltf::{
     Mesh,
 };
 use normalize_path::NormalizePath;
+use numquant::linear::quantize;
 
 use crate::{
     get_relative_asset_path,
-    gpumesh::{
-        quantize_normalized, quantize_positions, quantize_uvs, Bone, LightingAttributes,
-        StaticGpuMesh, StaticMeshGeometry, Surface,
-    },
-    gpumodel::GpuModel,
-    image::{ImagePurpose, ImageSource},
-    material::{
-        BlendMode, Material, MaterialBaseColor, MaterialBlend, MaterialEmission, MaterialNormals,
-        MaterialOcclusion, MaterialValues, PbrMaterial, UnlitMaterial,
-    },
-    AssetProcessingContext, AssetRef, Content, ContentImporter, ContentProcessor, Error,
+    AssetProcessingContext, Content, ContentImporter, ContentProcessor, Error, ImagePurpose, ImageSource,
 };
 
 #[derive(Debug, Clone, Hash)]
@@ -54,7 +46,7 @@ pub struct LoadedGltf {
     base: PathBuf,
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
-    images: Vec<gltf::image::Data>,
+    _images: Vec<gltf::image::Data>,
 }
 
 impl Content for LoadedGltf {}
@@ -67,7 +59,7 @@ impl ContentImporter<LoadedGltf> for GltfSource {
         Ok(LoadedGltf {
             document,
             buffers,
-            images,
+            _images: images,
             base,
         })
     }
@@ -473,3 +465,51 @@ impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
         Ok(import_context.model)
     }
 }
+
+fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
+    let max = data
+        .iter()
+        .max_by(|x, y| x.abs().total_cmp(&y.abs()))
+        .copied()
+        .unwrap_or(0.0) as f64;
+    let result = data
+        .iter()
+        .map(|x| quantize(*x as _, -max..max, i16::MAX))
+        .collect::<Vec<_>>();
+
+    (max as f32, result)
+}
+
+fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, Vec<[i16; N]>) {
+    let mut data = Vec::with_capacity(input.len() * N);
+    input
+        .iter()
+        .for_each(|x| x.iter().for_each(|x| data.push(*x)));
+    let (max, values) = quantize_values(&data);
+    let mut result = Vec::with_capacity(input.len());
+    for index in 0..values.len() / N {
+        let start = index * N;
+        let mut value: [i16; N] = [0i16; N];
+        let src = &values[start..start + N];
+        (0..N).for_each(|i| {
+            value[i] = src[i];
+        });
+        result.push(value);
+    }
+
+    (max, result)
+}
+
+pub(crate) fn quantize_positions(input: &[[f32; 3]]) -> (f32, Vec<[i16; 3]>) {
+    quantize_input(input)
+}
+
+pub(crate) fn quantize_uvs(input: &[[f32; 2]]) -> (f32, Vec<[i16; 2]>) {
+    quantize_input(input)
+}
+
+pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[i16; 2]> {
+    let (_, quantized) = quantize_input(input);
+    quantized.iter().map(|x| [x[0], x[1]]).collect()
+}
+

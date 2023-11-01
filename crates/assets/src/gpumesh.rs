@@ -19,9 +19,8 @@ use dess_common::{
     traits::{BinaryDeserialization, BinarySerialization},
     Transform,
 };
-use numquant::linear::quantize;
 
-use crate::material::Material;
+use crate::{material::Material, AssetRef};
 
 pub trait Geometry: BinarySerialization + BinaryDeserialization + Copy {}
 
@@ -235,57 +234,14 @@ impl Geometry for StaticMeshGeometry {}
 
 pub type StaticGpuMesh = GpuMesh<StaticMeshGeometry>;
 
-fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
-    let max = data
-        .iter()
-        .max_by(|x, y| x.abs().total_cmp(&y.abs()))
-        .copied()
-        .unwrap_or(0.0) as f64;
-    let result = data
-        .iter()
-        .map(|x| quantize(*x as _, -max..max, i16::MAX))
-        .collect::<Vec<_>>();
-
-    (max as f32, result)
-}
-
-fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, Vec<[i16; N]>) {
-    let mut data = Vec::with_capacity(input.len() * N);
-    input
-        .iter()
-        .for_each(|x| x.iter().for_each(|x| data.push(*x)));
-    let (max, values) = quantize_values(&data);
-    let mut result = Vec::with_capacity(input.len());
-    for index in 0..values.len() / N {
-        let start = index * N;
-        let mut value: [i16; N] = [0i16; N];
-        let src = &values[start..start + N];
-        (0..N).for_each(|i| {
-            value[i] = src[i];
-        });
-        result.push(value);
+impl Surface {
+    pub(crate) fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+        self.material.collect_dependencies(deps);
     }
-
-    (max, result)
 }
 
-pub(crate) fn quantize_positions(input: &[[f32; 3]]) -> (f32, Vec<[i16; 3]>) {
-    quantize_input(input)
-}
-
-pub(crate) fn quantize_uvs(input: &[[f32; 2]]) -> (f32, Vec<[i16; 2]>) {
-    quantize_input(input)
-}
-
-pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[i16; 2]> {
-    let (_, quantized) = quantize_input(input);
-    quantized.iter().map(|x| [x[0], x[1]]).collect()
-}
-
-impl<T: Geometry> GpuMesh<T> {
-    pub fn collect_dependencies(&self, deps: &mut Vec<crate::AssetRef>) {
-        self.surfaces
-            .iter()
-            .for_each(|x| x.material.collect_dependencies(deps));
+impl<T:Geometry> GpuMesh<T> {
+    pub(crate) fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+        self.surfaces.iter().for_each(|x| x.collect_dependencies(deps));
     }
 }

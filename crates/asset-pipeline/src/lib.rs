@@ -1,0 +1,189 @@
+// Copyright (C) 2023 gigablaster
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+use std::{
+    collections::{HashMap, HashSet},
+    env, fs,
+    io::{self, Read},
+    path::{Path, PathBuf},
+};
+
+use dess_assets::{AssetRef, Asset};
+use log::info;
+use parking_lot::Mutex;
+
+mod gltf_import;
+mod image_import;
+
+pub use gltf_import::*;
+pub use image_import::*;
+
+#[derive(Debug)]
+pub enum Error {
+    OutOfDataPath(PathBuf),
+    ImportFailed,
+    Unsupported,
+    WrongDependency,
+    Io(io::Error),
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Error::Io(value)
+    }
+}
+
+
+const ROOT_DATA_PATH: &str = "data";
+
+#[derive(Debug, Default)]
+struct AssetProcessingContextImpl {
+    /// All currently imported models.
+    models: HashMap<PathBuf, AssetRef>,
+    /// All currently imported images.
+    images: HashMap<PathBuf, AssetRef>,
+    /// Asset names. Only named assets can be requested.
+    names: HashMap<String, AssetRef>,
+    /// Models that should be imported.
+    models_to_process: HashMap<AssetRef, GltfSource>,
+    /// Images that should be imported.
+    images_to_process: HashMap<AssetRef, ImageSource>,
+    /// Hashes for all inline assets, to catch and reuse same resources
+    blobs: HashSet<AssetRef>,
+}
+
+unsafe impl Send for AssetProcessingContextImpl {}
+unsafe impl Sync for AssetProcessingContextImpl {}
+
+impl AssetProcessingContextImpl {
+    pub fn import_model(&mut self, model: GltfSource) -> AssetRef {
+        let path = get_relative_asset_path(&model.path).unwrap();
+        if let Some(asset) = self.models.get(&path) {
+            *asset
+        } else {
+            info!("Requested model import {:?}", path);
+            let asset = AssetRef::from_path(&model.path);
+            self.set_name(asset, path.as_os_str().to_ascii_lowercase().to_str().unwrap());
+            self.models.insert(path, asset);
+            self.models_to_process.insert(asset, model);
+
+            asset
+        }
+    }
+
+    pub fn import_image(&mut self, image: ImageSource) -> AssetRef {
+        match &image.source {
+            ImageDataSource::File(path) => {
+                let path = get_relative_asset_path(path).unwrap();
+                if let Some(asset) = self.images.get(&path) {
+                    *asset
+                } else {
+                    let asset = AssetRef::from_path(&path);
+                    info!("Requested image import {:?} ref: {:?}", path, asset);
+                    self.images.insert(path, asset);
+                    self.images_to_process.insert(asset, image);
+
+                    asset
+                }
+            }
+            ImageDataSource::Bytes(bytes) => {
+                let asset = AssetRef::from_bytes(bytes);
+                if self.blobs.contains(&asset) {
+                    asset
+                } else {
+                    info!("Added image from blob ref {:?}", asset);
+                    self.blobs.insert(asset);
+                    self.images_to_process.insert(asset, image);
+
+                    asset
+                }
+            }
+        }
+    }
+
+    pub fn set_name(&mut self, asset: AssetRef, name: &str) {
+        self.names.insert(name.into(), asset);
+    }
+
+    pub fn drain_models_to_process(&mut self) -> Vec<(AssetRef, GltfSource)> {
+        self.models_to_process.drain().collect()
+    }
+
+    pub fn drain_images_to_process(&mut self) -> Vec<(AssetRef, ImageSource)> {
+        self.images_to_process.drain().collect()
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct AssetProcessingContext {
+    inner: Mutex<AssetProcessingContextImpl>,
+}
+
+unsafe impl Sync for AssetProcessingContext {}
+
+impl AssetProcessingContext {
+    pub fn import_model(&self, model: GltfSource) -> AssetRef {
+        self.inner.lock().import_model(model)
+    }
+
+    pub fn import_image(&self, image: ImageSource) -> AssetRef {
+        self.inner.lock().import_image(image)
+    }
+
+    pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
+        self.inner.lock().drain_models_to_process()
+    }
+
+    pub fn drain_images_to_process(&self) -> Vec<(AssetRef, ImageSource)> {
+        self.inner.lock().drain_images_to_process()
+    }
+}
+
+pub trait Content {}
+
+pub trait ContentImporter<T: Content> {
+    fn import(&self) -> Result<T, Error>;
+}
+
+pub trait ContentProcessor<T: Content, U: Asset> {
+    fn process(&self, content: T) -> anyhow::Result<U>;
+}
+
+pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
+    if path.is_absolute() {
+        let prefix = env::current_dir()?.join(ROOT_DATA_PATH);
+        if !path.starts_with(&prefix) {
+            return Err(Error::OutOfDataPath(path.into()));
+        }
+        Ok(path.strip_prefix(prefix).unwrap().into())
+    } else {
+        Ok(path.strip_prefix(ROOT_DATA_PATH).unwrap().into())
+    }
+}
+
+pub(crate) fn read_to_end<P>(path: P) -> Result<Vec<u8>, Error>
+where
+    P: AsRef<Path>,
+{
+    let file = fs::File::open(path.as_ref()).map_err(Error::Io)?;
+    // Allocate one extra byte so the buffer doesn't need to grow before the
+    // final `read` call at the end of the file.  Don't worry about `usize`
+    // overflow because reading will fail regardless in that case.
+    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
+    let mut reader = io::BufReader::new(file);
+    let mut data = Vec::with_capacity(length as usize);
+    reader.read_to_end(&mut data).map_err(Error::Io)?;
+    Ok(data)
+}
