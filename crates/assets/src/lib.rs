@@ -13,17 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::path::{Path, PathBuf};
+use std::{
+    fs::File,
+    io,
+    path::{Path, PathBuf},
+};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
+use memmap::{Mmap, MmapOptions};
 use uuid::Uuid;
 
+mod bundle;
 mod gpumesh;
 mod gpumodel;
 mod image;
 mod material;
 
+pub use bundle::*;
 pub use gpumesh::*;
 pub use gpumodel::*;
 pub use image::*;
@@ -55,6 +62,10 @@ impl AssetRef {
     pub fn as_path(&self) -> PathBuf {
         format!("{}/{}", CACHE_PATH, self.uuid.hyphenated()).into()
     }
+
+    pub fn as_u128(&self) -> u128 {
+        self.uuid.as_u128()
+    }
 }
 
 impl BinarySerialization for AssetRef {
@@ -74,4 +85,28 @@ impl BinaryDeserialization for AssetRef {
 pub trait Asset {
     const TYPE_ID: Uuid;
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
+}
+
+pub trait AssetBundle {
+    fn load<T: Asset>(&self, asset: AssetRef) -> io::Result<Vec<u8>>;
+    fn asset_by_name(&self, name: &str) -> Option<AssetRef>;
+}
+
+struct MappedFile {
+    mmap: Mmap,
+}
+
+impl MappedFile {
+    pub fn open(path: &Path) -> io::Result<Self> {
+        let file = File::open(path)?;
+        Ok(Self {
+            mmap: unsafe { MmapOptions::new().map(&file) }?,
+        })
+    }
+}
+
+impl AsRef<[u8]> for MappedFile {
+    fn as_ref(&self) -> &[u8] {
+        &self.mmap
+    }
 }

@@ -528,9 +528,14 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "byteorder",
+ "bytes",
  "dess-common",
+ "four-cc",
  "glam 0.24.1",
+ "lz4_flex",
+ "memmap",
  "siphasher",
+ "sorted-vec",
  "uuid",
 ]
 
@@ -543,6 +548,7 @@ dependencies = [
  "four-cc",
  "glam 0.24.1",
  "log",
+ "sorted-vec",
  "uuid",
  "xml-rs",
 ]
@@ -1166,6 +1172,16 @@ name = "memchr"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2dffe52ecf27772e601905b7522cb4ef790d2cc203488bbd0e2fe85fcb74566d"
+
+[[package]]
+name = "memmap"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6585fd95e7bb50d6cc31e20d4cf9afb4e2ba16c5846fc76793f11218da9c475b"
+dependencies = [
+ "libc",
+ "winapi",
+]
 
 [[package]]
 name = "memmap2"
@@ -1870,6 +1886,12 @@ dependencies = [
  "wayland-cursor",
  "wayland-protocols",
 ]
+
+[[package]]
+name = "sorted-vec"
+version = "0.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c6734caf0b6f51addd5eeacca12fb39b2c6c14e8d4f3ac42f3a78955c0467458"
 
 [[package]]
 name = "spin"

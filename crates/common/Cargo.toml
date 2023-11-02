@@ -13,4 +13,4 @@ uuid = "1.4.1"
 arrayvec = "0.7.4"
 glam = "0.24.1"
 xml-rs = "0.8.16"
-
+sorted-vec = "0.8.3"
