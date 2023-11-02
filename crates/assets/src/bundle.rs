@@ -13,6 +13,8 @@ use uuid::Uuid;
 
 use crate::{Asset, AssetBundle, AssetRef, MappedFile};
 
+pub const LOCAL_BUNDLE_ALIGN: u64 = 4096;
+
 #[derive(Debug, Eq, Clone, Copy)]
 struct BundleDirectoryEntry {
     id: Uuid,
@@ -23,10 +25,10 @@ struct BundleDirectoryEntry {
 }
 
 impl BundleDirectoryEntry {
-    pub fn new<T: Asset>(asset: AssetRef, offset: u64, size: u32, packed: u32) -> Self {
+    pub fn new(asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32) -> Self {
         Self {
             id: asset.uuid,
-            ty: T::TYPE_ID,
+            ty,
             offset,
             size,
             packed,
@@ -89,14 +91,14 @@ pub struct LocalBundleDesc {
 }
 
 pub trait BundleDesc: BinarySerialization + BinaryDeserialization {
-    fn add_asset<T: Asset>(&mut self, asset: AssetRef, offset: u64, size: u32, packed: u32);
+    fn add_asset(&mut self, asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32);
     fn set_name(&mut self, asset: AssetRef, name: &str);
 }
 
 impl BundleDesc for LocalBundleDesc {
-    fn add_asset<T: Asset>(&mut self, asset: AssetRef, offset: u64, size: u32, packed: u32) {
+    fn add_asset(&mut self, asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32) {
         self.assets
-            .push(BundleDirectoryEntry::new::<T>(asset, offset, size, packed));
+            .push(BundleDirectoryEntry::new(asset, ty, offset, size, packed));
     }
 
     fn set_name(&mut self, asset: AssetRef, name: &str) {
@@ -149,12 +151,16 @@ impl AssetBundle for LocalBundle {
             let packed = entry.packed as usize;
             let offset = entry.offset as usize;
             let slice = &self.file.as_ref()[offset..offset + packed];
-            let data = lz4_flex::decompress(slice, size).map_err(|x| {
-                io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Decompression failed: {:?}", x),
-                )
-            })?;
+            let data = if packed != size {
+                lz4_flex::decompress(slice, size).map_err(|x| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Decompression failed: {:?}", x),
+                    )
+                })?
+            } else {
+                Vec::from(slice)
+            };
 
             Ok(data)
         } else {

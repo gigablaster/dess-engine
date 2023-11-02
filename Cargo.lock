@@ -511,6 +511,7 @@ dependencies = [
  "image",
  "intel_tex_2",
  "log",
+ "lz4_flex",
  "meshopt",
  "mikktspace",
  "normalize-path",

@@ -14,13 +14,13 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{hash_set, HashMap, HashSet},
+    collections::{HashMap, HashSet},
     env, fs,
     io::{self, Read},
     path::{Path, PathBuf},
 };
 
-use dess_assets::{Asset, AssetRef};
+use dess_assets::{Asset, AssetRef, GpuImage, GpuModel};
 use log::info;
 use parking_lot::Mutex;
 
@@ -31,6 +31,7 @@ mod image_import;
 pub use bundle_builder::*;
 pub use gltf_import::*;
 pub use image_import::*;
+use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum Error {
@@ -48,6 +49,7 @@ impl From<io::Error> for Error {
 }
 
 const ROOT_DATA_PATH: &str = "data";
+const ASSET_CACHE_PATH: &str = ".cache";
 
 #[derive(Debug, Default)]
 struct AssetProcessingContextImpl {
@@ -62,7 +64,7 @@ struct AssetProcessingContextImpl {
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
     /// Hashes for all inline assets, to catch and reuse same resources
-    assets: HashSet<AssetRef>,
+    assets: HashSet<(AssetRef, Uuid)>,
     /// Asset ownership. Every asset have source, direct or indirect.
     owners: HashMap<AssetRef, PathBuf>,
 }
@@ -84,7 +86,7 @@ impl AssetProcessingContextImpl {
             );
             self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model);
-            self.assets.insert(asset);
+            self.assets.insert((asset, GpuModel::TYPE_ID));
             self.owners.insert(asset, path);
 
             asset
@@ -102,7 +104,7 @@ impl AssetProcessingContextImpl {
                     info!("Requested image import {:?} ref: {:?}", path, asset);
                     self.images.insert(path.clone(), asset);
                     self.images_to_process.insert(asset, image);
-                    self.assets.insert(asset);
+                    self.assets.insert((asset, GpuImage::TYPE_ID));
                     let owner = owner.unwrap_or(&path);
                     self.owners.insert(asset, owner.into());
                     asset
@@ -110,11 +112,11 @@ impl AssetProcessingContextImpl {
             }
             ImageDataSource::Bytes(bytes) => {
                 let asset = AssetRef::from_bytes(bytes);
-                if self.assets.contains(&asset) {
+                if self.assets.contains(&(asset, GpuImage::TYPE_ID)) {
                     asset
                 } else {
                     info!("Added image from blob ref {:?}", asset);
-                    self.assets.insert(asset);
+                    self.assets.insert((asset, GpuImage::TYPE_ID));
                     self.images_to_process.insert(asset, image);
                     self.owners
                         .insert(asset, owner.expect("Can't add asset without owner").into());
@@ -137,7 +139,7 @@ impl AssetProcessingContextImpl {
         self.images_to_process.drain().collect()
     }
 
-    pub fn all_assets(&self) -> Vec<AssetRef> {
+    pub fn all_assets(&self) -> Vec<(AssetRef, Uuid)> {
         self.assets.iter().copied().collect()
     }
 
@@ -173,7 +175,7 @@ impl AssetProcessingContext {
         self.inner.lock().drain_images_to_process()
     }
 
-    pub fn all_assets(&self) -> Vec<AssetRef> {
+    pub fn all_assets(&self) -> Vec<(AssetRef, Uuid)> {
         self.inner.lock().all_assets()
     }
 
@@ -204,17 +206,21 @@ pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
     }
 }
 
-pub(crate) fn read_to_end<P>(path: P) -> Result<Vec<u8>, Error>
+pub(crate) fn read_to_end<P>(path: P) -> io::Result<Vec<u8>>
 where
     P: AsRef<Path>,
 {
-    let file = fs::File::open(path.as_ref()).map_err(Error::Io)?;
+    let file = fs::File::open(path.as_ref())?;
     // Allocate one extra byte so the buffer doesn't need to grow before the
     // final `read` call at the end of the file.  Don't worry about `usize`
     // overflow because reading will fail regardless in that case.
     let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
     let mut reader = io::BufReader::new(file);
     let mut data = Vec::with_capacity(length as usize);
-    reader.read_to_end(&mut data).map_err(Error::Io)?;
+    reader.read_to_end(&mut data)?;
     Ok(data)
+}
+
+fn cached_asset_name(asset: AssetRef) -> PathBuf {
+    Path::new(ASSET_CACHE_PATH).join(Path::new(&format!("{}.bin", asset)))
 }

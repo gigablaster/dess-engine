@@ -13,11 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    fs::File,
-    io,
-    path::{Path, PathBuf},
-};
+use std::{fmt::Display, fs::File, io, path::Path};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
@@ -35,8 +31,6 @@ pub use gpumesh::*;
 pub use gpumodel::*;
 pub use image::*;
 pub use material::*;
-
-const CACHE_PATH: &str = ".cache";
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssetRef {
@@ -59,12 +53,14 @@ impl AssetRef {
         !self.uuid.is_nil()
     }
 
-    pub fn as_path(&self) -> PathBuf {
-        format!("{}/{}", CACHE_PATH, self.uuid.hyphenated()).into()
-    }
-
     pub fn as_u128(&self) -> u128 {
         self.uuid.as_u128()
+    }
+}
+
+impl Display for AssetRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.uuid.as_hyphenated())
     }
 }
 

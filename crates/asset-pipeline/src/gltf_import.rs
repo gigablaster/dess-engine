@@ -74,7 +74,7 @@ impl ContentImporter<LoadedGltf> for GltfSource {
 struct ModelImportContext {
     model: GpuModel,
     base: PathBuf,
-    path: PathBuf,
+    _path: PathBuf,
     processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
 }
 
@@ -461,7 +461,7 @@ impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
     fn process(&self, content: LoadedGltf) -> anyhow::Result<GpuModel> {
         let mut import_context = ModelImportContext {
             base: content.base,
-            path: content.path,
+            _path: content.path,
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };
