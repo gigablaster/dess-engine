@@ -29,6 +29,8 @@ use uuid::Uuid;
 use crate::{Asset, AssetBundle, AssetRef, MappedFile};
 
 pub const LOCAL_BUNDLE_ALIGN: u64 = 4096;
+pub const LOCAL_BUNDLE_MAGIC: FourCC = FourCC(*b"BNDL");
+pub const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
 
 #[derive(Debug, Eq, Clone, Copy)]
 struct BundleDirectoryEntry {
@@ -144,6 +146,9 @@ pub struct LocalBundle {
     desc: LocalBundleDesc,
 }
 
+unsafe impl Send for LocalBundle {}
+unsafe impl Sync for LocalBundle {}
+
 impl AssetBundle for LocalBundle {
     fn asset_by_name(&self, name: &str) -> Option<AssetRef> {
         self.desc.names.get(name).copied()
@@ -186,9 +191,6 @@ impl AssetBundle for LocalBundle {
         }
     }
 }
-
-pub const LOCAL_BUNDLE_MAGIC: FourCC = FourCC(*b"BNDL");
-pub const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
 
 impl LocalBundle {
     pub fn load(path: &Path) -> io::Result<Self> {
