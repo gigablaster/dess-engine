@@ -47,6 +47,7 @@ impl GltfSource {
 
 #[derive(Debug)]
 pub struct LoadedGltf {
+    path: PathBuf,
     base: PathBuf,
     document: gltf::Document,
     buffers: Vec<gltf::buffer::Data>,
@@ -61,6 +62,7 @@ impl ContentImporter<LoadedGltf> for GltfSource {
             gltf::import(&self.path).map_err(|_| Error::ImportFailed)?;
         let base = get_relative_asset_path(&self.path)?;
         Ok(LoadedGltf {
+            path: self.path.clone(),
             document,
             buffers,
             _images: images,
@@ -72,6 +74,7 @@ impl ContentImporter<LoadedGltf> for GltfSource {
 struct ModelImportContext {
     model: GpuModel,
     base: PathBuf,
+    path: PathBuf,
     processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
 }
 
@@ -179,7 +182,7 @@ impl CreateGpuModel {
             gltf::image::Source::Uri { uri, .. } => {
                 let image_path = context.base.join(uri).normalize();
                 self.context
-                    .import_image(ImageSource::from_file(image_path, purpose))
+                    .import_image(ImageSource::from_file(image_path, purpose), None)
             }
             _ => AssetRef::default(),
         }
@@ -458,6 +461,7 @@ impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
     fn process(&self, content: LoadedGltf) -> anyhow::Result<GpuModel> {
         let mut import_context = ModelImportContext {
             base: content.base,
+            path: content.path,
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };

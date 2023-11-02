@@ -13,34 +13,46 @@ use uuid::Uuid;
 
 use crate::{Asset, AssetBundle, AssetRef, MappedFile};
 
-#[derive(Debug, Eq)]
-struct Entry {
-    pub id: Uuid,
-    pub ty: Uuid,
-    pub offset: u64,
-    pub size: u32,
-    pub packed: u32,
+#[derive(Debug, Eq, Clone, Copy)]
+struct BundleDirectoryEntry {
+    id: Uuid,
+    ty: Uuid,
+    offset: u64,
+    size: u32,
+    packed: u32,
 }
 
-impl PartialEq for Entry {
+impl BundleDirectoryEntry {
+    pub fn new<T: Asset>(asset: AssetRef, offset: u64, size: u32, packed: u32) -> Self {
+        Self {
+            id: asset.uuid,
+            ty: T::TYPE_ID,
+            offset,
+            size,
+            packed,
+        }
+    }
+}
+
+impl PartialEq for BundleDirectoryEntry {
     fn eq(&self, other: &Self) -> bool {
         self.id == other.id
     }
 }
 
-impl PartialOrd for Entry {
+impl PartialOrd for BundleDirectoryEntry {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Ord for Entry {
+impl Ord for BundleDirectoryEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.id.as_u128().cmp(&other.id.as_u128())
     }
 }
 
-impl BinarySerialization for Entry {
+impl BinarySerialization for BundleDirectoryEntry {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.id.serialize(w)?;
         self.ty.serialize(w)?;
@@ -52,7 +64,7 @@ impl BinarySerialization for Entry {
     }
 }
 
-impl BinaryDeserialization for Entry {
+impl BinaryDeserialization for BundleDirectoryEntry {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let id = Uuid::deserialize(r)?;
         let ty = Uuid::deserialize(r)?;
@@ -70,12 +82,29 @@ impl BinaryDeserialization for Entry {
     }
 }
 
-struct BundleDesc {
-    assets: SortedSet<Entry>,
+#[derive(Debug, Default)]
+pub struct LocalBundleDesc {
+    assets: SortedSet<BundleDirectoryEntry>,
     names: HashMap<String, AssetRef>,
 }
 
-impl BinarySerialization for BundleDesc {
+pub trait BundleDesc: BinarySerialization + BinaryDeserialization {
+    fn add_asset<T: Asset>(&mut self, asset: AssetRef, offset: u64, size: u32, packed: u32);
+    fn set_name(&mut self, asset: AssetRef, name: &str);
+}
+
+impl BundleDesc for LocalBundleDesc {
+    fn add_asset<T: Asset>(&mut self, asset: AssetRef, offset: u64, size: u32, packed: u32) {
+        self.assets
+            .push(BundleDirectoryEntry::new::<T>(asset, offset, size, packed));
+    }
+
+    fn set_name(&mut self, asset: AssetRef, name: &str) {
+        self.names.insert(name.into(), asset);
+    }
+}
+
+impl BinarySerialization for LocalBundleDesc {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.assets.serialize(w)?;
         self.names.serialize(w)?;
@@ -84,7 +113,7 @@ impl BinarySerialization for BundleDesc {
     }
 }
 
-impl BinaryDeserialization for BundleDesc {
+impl BinaryDeserialization for LocalBundleDesc {
     fn deserialize(r: &mut impl std::io::Read) -> io::Result<Self> {
         let assets = SortedSet::deserialize(r)?;
         let names = HashMap::deserialize(r)?;
@@ -95,7 +124,7 @@ impl BinaryDeserialization for BundleDesc {
 
 pub struct LocalBundle {
     file: MappedFile,
-    desc: BundleDesc,
+    desc: LocalBundleDesc,
 }
 
 impl AssetBundle for LocalBundle {
@@ -137,19 +166,19 @@ impl AssetBundle for LocalBundle {
     }
 }
 
-pub const BUNDLE_MAGIC: FourCC = FourCC(*b"BNDL");
-pub const BUNDLE_FILE_VERSION: u32 = 1;
+pub const LOCAL_BUNDLE_MAGIC: FourCC = FourCC(*b"BNDL");
+pub const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
 
 impl LocalBundle {
     pub fn load(path: &Path) -> io::Result<Self> {
         let file = MappedFile::open(path)?;
         let mut cursor = Cursor::new(file.as_ref());
         let magic = FourCC::deserialize(&mut cursor)?;
-        if magic != BUNDLE_MAGIC {
+        if magic != LOCAL_BUNDLE_MAGIC {
             return Err(io::Error::new(io::ErrorKind::Other, "Wrong bundle header"));
         }
         let version = cursor.read_u32::<LittleEndian>()?;
-        if version != BUNDLE_FILE_VERSION {
+        if version != LOCAL_BUNDLE_FILE_VERSION {
             return Err(io::Error::new(io::ErrorKind::Other, "Wrong bundle version"));
         }
         cursor.seek(io::SeekFrom::End(0))?;
@@ -157,7 +186,7 @@ impl LocalBundle {
         cursor.seek(io::SeekFrom::Start(size - size_of::<u64>() as u64))?;
         let offset = cursor.read_u64::<LittleEndian>()?;
         cursor.seek(io::SeekFrom::Start(offset as _))?;
-        let desc = BundleDesc::deserialize(&mut cursor)?;
+        let desc = LocalBundleDesc::deserialize(&mut cursor)?;
 
         Ok(LocalBundle { file, desc })
     }

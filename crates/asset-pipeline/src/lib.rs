@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{hash_set, HashMap, HashSet},
     env, fs,
     io::{self, Read},
     path::{Path, PathBuf},
@@ -24,9 +24,11 @@ use dess_assets::{Asset, AssetRef};
 use log::info;
 use parking_lot::Mutex;
 
+mod bundle_builder;
 mod gltf_import;
 mod image_import;
 
+pub use bundle_builder::*;
 pub use gltf_import::*;
 pub use image_import::*;
 
@@ -60,7 +62,9 @@ struct AssetProcessingContextImpl {
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
     /// Hashes for all inline assets, to catch and reuse same resources
-    blobs: HashSet<AssetRef>,
+    assets: HashSet<AssetRef>,
+    /// Asset ownership. Every asset have source, direct or indirect.
+    owners: HashMap<AssetRef, PathBuf>,
 }
 
 unsafe impl Send for AssetProcessingContextImpl {}
@@ -78,14 +82,16 @@ impl AssetProcessingContextImpl {
                 asset,
                 path.as_os_str().to_ascii_lowercase().to_str().unwrap(),
             );
-            self.models.insert(path, asset);
+            self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model);
+            self.assets.insert(asset);
+            self.owners.insert(asset, path);
 
             asset
         }
     }
 
-    pub fn import_image(&mut self, image: ImageSource) -> AssetRef {
+    pub fn import_image(&mut self, image: ImageSource, owner: Option<&Path>) -> AssetRef {
         match &image.source {
             ImageDataSource::File(path) => {
                 let path = get_relative_asset_path(path).unwrap();
@@ -94,20 +100,24 @@ impl AssetProcessingContextImpl {
                 } else {
                     let asset = AssetRef::from_path(&path);
                     info!("Requested image import {:?} ref: {:?}", path, asset);
-                    self.images.insert(path, asset);
+                    self.images.insert(path.clone(), asset);
                     self.images_to_process.insert(asset, image);
-
+                    self.assets.insert(asset);
+                    let owner = owner.unwrap_or(&path);
+                    self.owners.insert(asset, owner.into());
                     asset
                 }
             }
             ImageDataSource::Bytes(bytes) => {
                 let asset = AssetRef::from_bytes(bytes);
-                if self.blobs.contains(&asset) {
+                if self.assets.contains(&asset) {
                     asset
                 } else {
                     info!("Added image from blob ref {:?}", asset);
-                    self.blobs.insert(asset);
+                    self.assets.insert(asset);
                     self.images_to_process.insert(asset, image);
+                    self.owners
+                        .insert(asset, owner.expect("Can't add asset without owner").into());
 
                     asset
                 }
@@ -126,6 +136,17 @@ impl AssetProcessingContextImpl {
     pub fn drain_images_to_process(&mut self) -> Vec<(AssetRef, ImageSource)> {
         self.images_to_process.drain().collect()
     }
+
+    pub fn all_assets(&self) -> Vec<AssetRef> {
+        self.assets.iter().copied().collect()
+    }
+
+    pub fn all_names(&self) -> Vec<(String, AssetRef)> {
+        self.names
+            .iter()
+            .map(|(x, y)| (x.clone(), *y))
+            .collect::<Vec<_>>()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -140,8 +161,8 @@ impl AssetProcessingContext {
         self.inner.lock().import_model(model)
     }
 
-    pub fn import_image(&self, image: ImageSource) -> AssetRef {
-        self.inner.lock().import_image(image)
+    pub fn import_image(&self, image: ImageSource, owner: Option<&Path>) -> AssetRef {
+        self.inner.lock().import_image(image, owner)
     }
 
     pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
@@ -150,6 +171,14 @@ impl AssetProcessingContext {
 
     pub fn drain_images_to_process(&self) -> Vec<(AssetRef, ImageSource)> {
         self.inner.lock().drain_images_to_process()
+    }
+
+    pub fn all_assets(&self) -> Vec<AssetRef> {
+        self.inner.lock().all_assets()
+    }
+
+    pub fn all_names(&self) -> Vec<(String, AssetRef)> {
+        self.inner.lock().all_names()
     }
 }
 
