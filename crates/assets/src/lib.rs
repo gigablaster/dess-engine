@@ -82,12 +82,12 @@ impl BinaryDeserialization for AssetRef {
     }
 }
 
-pub trait Asset {
+pub trait Asset: Send + Sync {
     const TYPE_ID: Uuid;
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
 }
 
-pub trait AssetBundle {
+pub trait AssetBundle: Sync {
     fn load<T: Asset>(&self, asset: AssetRef) -> io::Result<Vec<u8>>;
     fn asset_by_name(&self, name: &str) -> Option<AssetRef>;
 }

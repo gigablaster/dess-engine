@@ -112,7 +112,7 @@ impl AssetBundle for LocalBundle {
             let entry = &self.desc.assets[index];
             if entry.ty != T::TYPE_ID {
                 return Err(io::Error::new(
-                    io::ErrorKind::Other,
+                    io::ErrorKind::InvalidData,
                     format!("Wrong asset type: expected {} got {}", T::TYPE_ID, entry.ty),
                 ));
             }
@@ -122,7 +122,7 @@ impl AssetBundle for LocalBundle {
             let slice = &self.file.as_ref()[offset..offset + packed];
             let data = lz4_flex::decompress(slice, size).map_err(|x| {
                 io::Error::new(
-                    io::ErrorKind::Other,
+                    io::ErrorKind::InvalidData,
                     format!("Decompression failed: {:?}", x),
                 )
             })?;
@@ -130,7 +130,7 @@ impl AssetBundle for LocalBundle {
             Ok(data)
         } else {
             Err(io::Error::new(
-                io::ErrorKind::Other,
+                io::ErrorKind::NotFound,
                 format!("Asset id {} isn't found", asset.uuid),
             ))
         }
