@@ -27,7 +27,7 @@ use dess_assets::{
 use dess_common::traits::BinarySerialization;
 use log::{error, info};
 
-use crate::{cached_asset_name, read_to_end, AssetProcessingContext};
+use crate::{cached_asset_path, read_to_end, AssetProcessingContext};
 
 /// Builds local asset bundle
 ///
@@ -40,7 +40,7 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
     LOCAL_BUNDLE_FILE_VERSION.serialize(&mut target)?;
     let all_assets = context.all_assets();
     for (asset, ty) in all_assets {
-        let src_path = cached_asset_name(asset);
+        let src_path = cached_asset_path(asset);
         if src_path.exists() {
             let data = read_to_end(src_path)?;
             let size = data.len() as u32;

@@ -22,7 +22,9 @@ use dess_assets::GpuImage;
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
-use crate::{read_to_end, Content, ContentImporter, ContentProcessor, Error};
+use crate::{
+    read_to_end, AssetProcessingContext, Content, ContentImporter, ContentProcessor, Error,
+};
 
 #[derive(Debug)]
 pub struct ImageRgba8Data {
@@ -298,7 +300,11 @@ impl CreateGpuImage {
 }
 
 impl ContentProcessor<RawImage, GpuImage> for CreateGpuImage {
-    fn process(&self, content: RawImage) -> Result<GpuImage, Error> {
+    fn process(
+        &self,
+        _context: &AssetProcessingContext,
+        content: RawImage,
+    ) -> Result<GpuImage, Error> {
         match content.data {
             RawImageData::Dds(dds) => Self::process_dds(&dds),
             RawImageData::Rgba(image) => Self::process_rgba(&image, content.purpose),

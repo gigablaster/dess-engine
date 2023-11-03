@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{collections::HashMap, path::PathBuf};
 
 use dess_assets::{
     AssetRef, BlendMode, Bone, GpuModel, LightingAttributes, Material, MaterialBaseColor,
@@ -78,27 +78,21 @@ struct ModelImportContext {
     processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
 }
 
-#[derive(Clone)]
-pub struct CreateGpuModel {
-    context: Arc<AssetProcessingContext>,
-}
+#[derive(Debug, Default)]
+pub struct CreateGpuModel {}
 
 impl CreateGpuModel {
-    pub fn new(context: &Arc<AssetProcessingContext>) -> Self {
-        Self {
-            context: context.clone(),
-        }
-    }
-
     fn set_normal_texture(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         material: &mut impl MaterialNormals,
         normal: &Option<NormalTexture>,
     ) {
         if let Some(texture) = normal {
             material.set_normal_texture(self.import_texture(
                 context,
+                model_context,
                 texture.texture(),
                 ImagePurpose::Normals,
             ));
@@ -107,13 +101,15 @@ impl CreateGpuModel {
 
     fn set_occlusion_texture(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         material: &mut impl MaterialOcclusion,
         occlusion: &Option<OcclusionTexture>,
     ) {
         if let Some(texture) = occlusion {
             material.set_occlusion_texture(self.import_texture(
                 context,
+                model_context,
                 texture.texture(),
                 ImagePurpose::NonColor,
             ));
@@ -122,13 +118,15 @@ impl CreateGpuModel {
 
     fn set_base_color(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         material: &mut impl MaterialBaseColor,
         pbr: &PbrMetallicRoughness,
     ) {
         if let Some(texture) = pbr.base_color_texture() {
             material.set_base_texture(self.import_texture(
                 context,
+                model_context,
                 texture.texture(),
                 ImagePurpose::Color,
             ));
@@ -138,13 +136,15 @@ impl CreateGpuModel {
 
     fn set_material_values(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         material: &mut impl MaterialValues,
         pbr: &PbrMetallicRoughness,
     ) {
         if let Some(texture) = pbr.metallic_roughness_texture() {
             material.set_metallic_roughness_texture(self.import_texture(
                 context,
+                model_context,
                 texture.texture(),
                 ImagePurpose::NonColor,
             ));
@@ -155,7 +155,8 @@ impl CreateGpuModel {
 
     fn set_emission_color(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         material: &mut impl MaterialEmission,
         emission: &Option<Info>,
         color: [f32; 3],
@@ -164,6 +165,7 @@ impl CreateGpuModel {
         if let Some(texture) = emission {
             material.set_emission_texture(self.import_texture(
                 context,
+                model_context,
                 texture.texture(),
                 ImagePurpose::NonColor,
             ));
@@ -174,15 +176,15 @@ impl CreateGpuModel {
 
     fn import_texture(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         texture: texture::Texture,
         purpose: ImagePurpose,
     ) -> AssetRef {
         match texture.source().source() {
             gltf::image::Source::Uri { uri, .. } => {
-                let image_path = context.base.join(uri).normalize();
-                self.context
-                    .import_image(ImageSource::from_file(image_path, purpose), None)
+                let image_path = model_context.base.join(uri).normalize();
+                context.import_image(&ImageSource::from_file(image_path, purpose), None)
             }
             _ => AssetRef::default(),
         }
@@ -190,7 +192,8 @@ impl CreateGpuModel {
 
     fn process_node(
         &self,
-        context: &mut ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &mut ModelImportContext,
         parent_index: u32,
         node: &gltf::Node,
         buffers: &[gltf::buffer::Data],
@@ -207,9 +210,9 @@ impl CreateGpuModel {
                 scale,
             },
         };
-        let current_bone_index = context.model.bones.len() as u32;
-        context.model.bones.push(bone);
-        context.model.names.insert(
+        let current_bone_index = model_context.model.bones.len() as u32;
+        model_context.model.bones.push(bone);
+        model_context.model.names.insert(
             node.name()
                 .unwrap_or(&format!("GltfNode_{}", current_bone_index))
                 .into(),
@@ -217,24 +220,30 @@ impl CreateGpuModel {
         );
 
         if let Some(mesh) = node.mesh() {
-            if let Some(index) = context.processed_meshes.get(&mesh.index()) {
-                context
+            if let Some(index) = model_context.processed_meshes.get(&mesh.index()) {
+                model_context
                     .model
                     .node_to_mesh
                     .push((current_bone_index, *index));
             } else {
-                self.process_mesh(context, mesh, current_bone_index, buffers);
+                self.process_mesh(context, model_context, mesh, current_bone_index, buffers);
             }
         }
-        node.children()
-            .for_each(|node| self.process_node(context, current_bone_index, &node, buffers));
+        node.children().for_each(|node| {
+            self.process_node(context, model_context, current_bone_index, &node, buffers)
+        });
     }
 
-    fn create_material(&self, context: &ModelImportContext, material: gltf::Material) -> Material {
+    fn create_material(
+        &self,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
+        material: gltf::Material,
+    ) -> Material {
         if material.unlit() {
-            Material::Unlit(self.create_unlit_material(context, material))
+            Material::Unlit(self.create_unlit_material(context, model_context, material))
         } else {
-            Material::Pbr(self.create_pbr_material(context, material))
+            Material::Pbr(self.create_pbr_material(context, model_context, material))
         }
     }
 
@@ -250,29 +259,57 @@ impl CreateGpuModel {
 
     fn create_unlit_material(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         material: gltf::Material,
     ) -> UnlitMaterial {
         let mut target = UnlitMaterial::default();
         self.set_blend_mode(&mut target, &material);
-        self.set_base_color(context, &mut target, &material.pbr_metallic_roughness());
+        self.set_base_color(
+            context,
+            model_context,
+            &mut target,
+            &material.pbr_metallic_roughness(),
+        );
 
         target
     }
 
     fn create_pbr_material(
         &self,
-        context: &ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
         material: gltf::Material,
     ) -> PbrMaterial {
         let mut target = PbrMaterial::default();
         self.set_blend_mode(&mut target, &material);
-        self.set_base_color(context, &mut target, &material.pbr_metallic_roughness());
-        self.set_material_values(context, &mut target, &material.pbr_metallic_roughness());
-        self.set_normal_texture(context, &mut target, &material.normal_texture());
-        self.set_occlusion_texture(context, &mut target, &material.occlusion_texture());
+        self.set_base_color(
+            context,
+            model_context,
+            &mut target,
+            &material.pbr_metallic_roughness(),
+        );
+        self.set_material_values(
+            context,
+            model_context,
+            &mut target,
+            &material.pbr_metallic_roughness(),
+        );
+        self.set_normal_texture(
+            context,
+            model_context,
+            &mut target,
+            &material.normal_texture(),
+        );
+        self.set_occlusion_texture(
+            context,
+            model_context,
+            &mut target,
+            &material.occlusion_texture(),
+        );
         self.set_emission_color(
             context,
+            model_context,
             &mut target,
             &material.emissive_texture(),
             material.emissive_factor(),
@@ -312,7 +349,8 @@ impl CreateGpuModel {
 
     fn process_mesh(
         &self,
-        context: &mut ModelImportContext,
+        context: &AssetProcessingContext,
+        model_context: &mut ModelImportContext,
         mesh: Mesh,
         bone: u32,
         buffers: &[gltf::buffer::Data],
@@ -393,7 +431,7 @@ impl CreateGpuModel {
             let first = indices_collect.len() as u32;
             let count = indices.len() as u32;
             indices_collect.append(&mut indices);
-            let material = self.create_material(context, prim.material());
+            let material = self.create_material(context, model_context, prim.material());
             target.geometry.append(&mut geometry);
             target.attributes.append(&mut attributes);
             target.surfaces.push(Surface {
@@ -410,16 +448,18 @@ impl CreateGpuModel {
             meshopt::remap_vertex_buffer(&target.geometry, target.geometry.len(), &remap);
         target.attributes =
             meshopt::remap_vertex_buffer(&target.attributes, target.attributes.len(), &remap);
-        let mesh_index = context.model.static_meshes.len() as u32;
+        let mesh_index = model_context.model.static_meshes.len() as u32;
         let mesh_name = mesh.name().unwrap_or(&format!("GltfMesh_{}", bone)).into();
         target.indices = indices_collect
             .iter()
             .map(|x| *x as u16)
             .collect::<Vec<_>>();
-        context.model.static_meshes.push(target);
-        context.model.mesh_names.insert(mesh_name, mesh_index);
-        context.model.node_to_mesh.push((bone, mesh_index));
-        context.processed_meshes.insert(mesh.index(), mesh_index);
+        model_context.model.static_meshes.push(target);
+        model_context.model.mesh_names.insert(mesh_name, mesh_index);
+        model_context.model.node_to_mesh.push((bone, mesh_index));
+        model_context
+            .processed_meshes
+            .insert(mesh.index(), mesh_index);
     }
 }
 
@@ -458,17 +498,20 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
 }
 
 impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
-    fn process(&self, content: LoadedGltf) -> Result<GpuModel, Error> {
+    fn process(
+        &self,
+        context: &AssetProcessingContext,
+        content: LoadedGltf,
+    ) -> Result<GpuModel, Error> {
         let mut import_context = ModelImportContext {
             base: content.base,
             _path: content.path,
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };
-        content
-            .document
-            .nodes()
-            .for_each(|node| self.process_node(&mut import_context, 0, &node, &content.buffers));
+        content.document.nodes().for_each(|node| {
+            self.process_node(context, &mut import_context, 0, &node, &content.buffers)
+        });
 
         Ok(import_context.model)
     }

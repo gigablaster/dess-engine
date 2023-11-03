@@ -27,10 +27,12 @@ use parking_lot::Mutex;
 mod bundler;
 mod gltf_import;
 mod image_import;
+mod piepline;
 
 pub use bundler::*;
 pub use gltf_import::*;
 pub use image_import::*;
+pub use piepline::*;
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -56,9 +58,9 @@ const ASSET_CACHE_PATH: &str = ".cache";
 #[derive(Debug, Default)]
 struct AssetProcessingContextImpl {
     /// All currently imported models.
-    models: HashMap<PathBuf, AssetRef>,
+    models: HashMap<RelativePathBuf, AssetRef>,
     /// All currently imported images.
-    images: HashMap<PathBuf, AssetRef>,
+    images: HashMap<RelativePathBuf, AssetRef>,
     /// Asset names. Only named assets can be requested.
     names: HashMap<String, AssetRef>,
     /// Models that should be imported.
@@ -68,14 +70,17 @@ struct AssetProcessingContextImpl {
     /// Hashes for all inline assets, to catch and reuse same resources
     assets: HashSet<(AssetRef, Uuid)>,
     /// Asset ownership. Every asset have source, direct or indirect.
-    owners: HashMap<AssetRef, PathBuf>,
+    owners: HashMap<AssetRef, RelativePathBuf>,
 }
 
 unsafe impl Send for AssetProcessingContextImpl {}
 unsafe impl Sync for AssetProcessingContextImpl {}
 
+pub type RelativePath = Path;
+pub type RelativePathBuf = PathBuf;
+
 impl AssetProcessingContextImpl {
-    pub fn import_model(&mut self, model: GltfSource) -> AssetRef {
+    pub fn import_model(&mut self, model: &GltfSource) -> AssetRef {
         let path = get_relative_asset_path(&model.path).unwrap();
         if let Some(asset) = self.models.get(&path) {
             *asset
@@ -87,15 +92,15 @@ impl AssetProcessingContextImpl {
                 path.as_os_str().to_ascii_lowercase().to_str().unwrap(),
             );
             self.models.insert(path.clone(), asset);
-            self.models_to_process.insert(asset, model);
+            self.models_to_process.insert(asset, model.clone());
             self.assets.insert((asset, GpuModel::TYPE_ID));
-            self.owners.insert(asset, path);
+            self.add_source(asset, &path);
 
             asset
         }
     }
 
-    pub fn import_image(&mut self, image: ImageSource, owner: Option<&Path>) -> AssetRef {
+    pub fn import_image(&mut self, image: &ImageSource, owner: Option<&RelativePath>) -> AssetRef {
         match &image.source {
             ImageDataSource::File(path) => {
                 let path = get_relative_asset_path(path).unwrap();
@@ -105,10 +110,11 @@ impl AssetProcessingContextImpl {
                     let asset = AssetRef::from_path(&path);
                     info!("Requested image import {:?} ref: {:?}", path, asset);
                     self.images.insert(path.clone(), asset);
-                    self.images_to_process.insert(asset, image);
+                    self.images_to_process.insert(asset, image.clone());
                     self.assets.insert((asset, GpuImage::TYPE_ID));
                     let owner = owner.unwrap_or(&path);
-                    self.owners.insert(asset, owner.into());
+                    self.add_source(asset, owner);
+
                     asset
                 }
             }
@@ -117,11 +123,13 @@ impl AssetProcessingContextImpl {
                 if self.assets.contains(&(asset, GpuImage::TYPE_ID)) {
                     asset
                 } else {
-                    info!("Added image from blob ref {:?}", asset);
+                    let owner =
+                        get_relative_asset_path(owner.expect("Can't add image without owner"))
+                            .unwrap();
+                    info!("Added image from blob ref {} owner {:?}", asset, owner);
                     self.assets.insert((asset, GpuImage::TYPE_ID));
-                    self.images_to_process.insert(asset, image);
-                    self.owners
-                        .insert(asset, owner.expect("Can't add asset without owner").into());
+                    self.images_to_process.insert(asset, image.clone());
+                    self.add_source(asset, &owner);
 
                     asset
                 }
@@ -151,6 +159,20 @@ impl AssetProcessingContextImpl {
             .map(|(x, y)| (x.clone(), *y))
             .collect::<Vec<_>>()
     }
+
+    pub fn get_owner(&self, asset: AssetRef) -> Option<RelativePathBuf> {
+        self.owners.get(&asset).cloned()
+    }
+
+    pub fn add_source(&mut self, asset: AssetRef, owner: &RelativePath) {
+        self.owners.insert(asset, owner.into());
+    }
+
+    pub fn get_model_id(&self, path: &Path) -> Option<AssetRef> {
+        self.models
+            .get(&get_relative_asset_path(path).unwrap())
+            .copied()
+    }
 }
 
 #[derive(Debug, Default)]
@@ -161,11 +183,11 @@ pub struct AssetProcessingContext {
 unsafe impl Sync for AssetProcessingContext {}
 
 impl AssetProcessingContext {
-    pub fn import_model(&self, model: GltfSource) -> AssetRef {
+    pub fn import_model(&self, model: &GltfSource) -> AssetRef {
         self.inner.lock().import_model(model)
     }
 
-    pub fn import_image(&self, image: ImageSource, owner: Option<&Path>) -> AssetRef {
+    pub fn import_image(&self, image: &ImageSource, owner: Option<&Path>) -> AssetRef {
         self.inner.lock().import_image(image, owner)
     }
 
@@ -184,6 +206,14 @@ impl AssetProcessingContext {
     pub fn all_names(&self) -> Vec<(String, AssetRef)> {
         self.inner.lock().all_names()
     }
+
+    pub fn get_owner(&self, asset: AssetRef) -> Option<PathBuf> {
+        self.inner.lock().get_owner(asset)
+    }
+
+    pub fn get_model_id(&self, path: &Path) -> Option<AssetRef> {
+        self.inner.lock().get_model_id(path)
+    }
 }
 
 pub trait Content {}
@@ -192,11 +222,11 @@ pub trait ContentImporter<T: Content> {
     fn import(&self) -> Result<T, Error>;
 }
 
-pub trait ContentProcessor<T: Content, U: Asset> {
-    fn process(&self, content: T) -> Result<U, Error>;
+pub trait ContentProcessor<T: Content, U: Asset>: Default {
+    fn process(&self, context: &AssetProcessingContext, content: T) -> Result<U, Error>;
 }
 
-pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
+pub(crate) fn get_relative_asset_path(path: &Path) -> Result<RelativePathBuf, Error> {
     if path.is_absolute() {
         let prefix = env::current_dir()?.join(ROOT_DATA_PATH);
         if !path.starts_with(&prefix) {
@@ -223,6 +253,6 @@ where
     Ok(data)
 }
 
-fn cached_asset_name(asset: AssetRef) -> PathBuf {
+fn cached_asset_path(asset: AssetRef) -> PathBuf {
     Path::new(ASSET_CACHE_PATH).join(Path::new(&format!("{}.bin", asset)))
 }
