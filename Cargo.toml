@@ -1,11 +1,11 @@
 [workspace]
 members=[
-    "crates/common",
-    "crates/vfs",
-    "crates/render",
-    "crates/assets",
-    "crates/asset-pipeline",
-    "tools/packer",
+    "crates/lib/common",
+    "crates/lib/vfs",
+    "crates/lib/render",
+    "crates/lib/assets",
+    "crates/lib/asset-pipeline",
+    "crates/bin/packer",
 ]
 
 resolver = "2"
