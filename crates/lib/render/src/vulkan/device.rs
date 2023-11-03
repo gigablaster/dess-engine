@@ -103,7 +103,6 @@ impl Device {
         let device_extension_names = vec![
             khr::Swapchain::name().as_ptr(),
             vk::KhrImagelessFramebufferFn::name().as_ptr(),
-            khr::BufferDeviceAddress::name().as_ptr(),
         ];
 
         for ext in &device_extension_names {
@@ -119,11 +118,9 @@ impl Device {
             )
             .ok_or(RenderError::NoSuitableQueue)?;
 
-        let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
         let mut imageless_frame_buffer = vk::PhysicalDeviceImagelessFramebufferFeatures::default();
 
         let mut features = vk::PhysicalDeviceFeatures2::builder()
-            .push_next(&mut buffer_device_address)
             .push_next(&mut imageless_frame_buffer)
             .build();
 
