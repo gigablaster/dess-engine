@@ -24,11 +24,11 @@ use dess_assets::{Asset, AssetRef, GpuImage, GpuModel};
 use log::info;
 use parking_lot::Mutex;
 
-mod bundle_builder;
+mod bundler;
 mod gltf_import;
 mod image_import;
 
-pub use bundle_builder::*;
+pub use bundler::*;
 pub use gltf_import::*;
 pub use image_import::*;
 use uuid::Uuid;
