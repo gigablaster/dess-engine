@@ -148,9 +148,9 @@ impl BcMode {
 }
 
 impl CreateGpuImage {
-    fn process_dds(image: &Dds) -> anyhow::Result<GpuImage> {
+    fn process_dds(image: &Dds) -> Result<GpuImage, Error> {
         if let Some(format) = Self::get_vk_format(image) {
-            let data = image.get_data(0)?;
+            let data = image.get_data(0).map_err(|_| Error::ProcessingFailed)?;
             let pitch_height = image.get_pitch_height();
             let mut offset = 0;
             let mips = (0..image.get_num_mipmap_levels())
@@ -171,11 +171,11 @@ impl CreateGpuImage {
                 mips,
             })
         } else {
-            Err(anyhow::format_err!("Can't extract format from dds file"))
+            Err(Error::BadSourceData)
         }
     }
 
-    fn process_rgba(image: &ImageRgba8Data, purpose: ImagePurpose) -> anyhow::Result<GpuImage> {
+    fn process_rgba(image: &ImageRgba8Data, purpose: ImagePurpose) -> Result<GpuImage, Error> {
         let dimensions = image.dimensions;
 
         let need_compression = purpose != ImagePurpose::Sprite
@@ -298,7 +298,7 @@ impl CreateGpuImage {
 }
 
 impl ContentProcessor<RawImage, GpuImage> for CreateGpuImage {
-    fn process(&self, content: RawImage) -> anyhow::Result<GpuImage> {
+    fn process(&self, content: RawImage) -> Result<GpuImage, Error> {
         match content.data {
             RawImageData::Dds(dds) => Self::process_dds(&dds),
             RawImageData::Rgba(image) => Self::process_rgba(&image, content.purpose),

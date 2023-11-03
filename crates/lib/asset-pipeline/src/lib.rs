@@ -39,6 +39,8 @@ pub enum Error {
     ImportFailed,
     Unsupported,
     WrongDependency,
+    ProcessingFailed,
+    BadSourceData,
     Io(io::Error),
 }
 
@@ -191,7 +193,7 @@ pub trait ContentImporter<T: Content> {
 }
 
 pub trait ContentProcessor<T: Content, U: Asset> {
-    fn process(&self, content: T) -> anyhow::Result<U>;
+    fn process(&self, content: T) -> Result<U, Error>;
 }
 
 pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {

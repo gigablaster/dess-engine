@@ -15,16 +15,10 @@
 
 use std::io::{self, Read, Write};
 
-use xml::EventReader;
-
 pub trait BinaryDeserialization: Sized {
     fn deserialize(r: &mut impl Read) -> io::Result<Self>;
 }
 
 pub trait BinarySerialization {
     fn serialize(&self, w: &mut impl Write) -> io::Result<()>;
-}
-
-pub trait XmlDeserialization: Sized {
-    fn read<R: Read>(parser: &EventReader<R>) -> Self;
 }

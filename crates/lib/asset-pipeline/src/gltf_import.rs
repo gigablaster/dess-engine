@@ -458,7 +458,7 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
 }
 
 impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
-    fn process(&self, content: LoadedGltf) -> anyhow::Result<GpuModel> {
+    fn process(&self, content: LoadedGltf) -> Result<GpuModel, Error> {
         let mut import_context = ModelImportContext {
             base: content.base,
             _path: content.path,
