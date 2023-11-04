@@ -14,20 +14,23 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
+    collections::HashMap,
     fs::File,
-    io::{self, Seek, Write},
+    io::{self, Cursor, Seek, Write},
     path::Path,
 };
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use dess_assets::{
-    Asset, BundleDesc, GpuModel, LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_FILE_VERSION,
-    LOCAL_BUNDLE_MAGIC,
+    BundleDesc, LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
 };
 use dess_common::traits::BinarySerialization;
 use log::{error, info};
 
 use crate::{cached_asset_path, read_to_end, AssetProcessingContext};
+
+const DICT_SIZE: usize = 64536 * 2;
+const TRAIN_SAMPLE_SIZE: usize = 256;
 
 /// Builds local asset bundle
 ///
@@ -36,6 +39,7 @@ use crate::{cached_asset_path, read_to_end, AssetProcessingContext};
 pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Result<()> {
     let mut target = File::create(target)?;
     let mut desc = LocalBundleDesc::default();
+    let mut dicts = HashMap::default();
     LOCAL_BUNDLE_MAGIC.serialize(&mut target)?;
     LOCAL_BUNDLE_FILE_VERSION.serialize(&mut target)?;
     let all_assets = context.all_assets();
@@ -44,11 +48,27 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
         if src_path.exists() {
             let data = read_to_end(src_path)?;
             let size = data.len() as u32;
-            let data = if size > LOCAL_BUNDLE_ALIGN as u32 && !skip_compression(info.ty) {
-                info!("Compress {}", info.asset);
-                lz4_flex::compress(&data)
+            let dict = if let Some(dict) = dicts.get(&info.ty) {
+                dict
             } else {
-                info!("Write {}", info.asset);
+                info!("Generate zstd dictionary for asset type {}", info.ty);
+                let dict = prepare_dict(&data)?;
+                dicts.insert(info.ty, dict);
+
+                dicts.get(&info.ty).unwrap()
+            };
+            let data = if size >= LOCAL_BUNDLE_ALIGN as u32 {
+                info!("Compress {}", info.asset);
+                let mut result = Vec::new();
+                let writer = Cursor::new(&mut result);
+                let mut encoder = zstd::Encoder::with_dictionary(writer, 22, dict)?;
+                encoder.set_pledged_src_size(Some(size as _))?;
+                encoder.write_all(&data)?;
+                encoder.do_finish()?;
+
+                result
+            } else {
+                info!("Write small asset {}", info.asset);
                 data
             };
             let offset = try_align(&mut target)?;
@@ -63,14 +83,23 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
         .iter()
         .for_each(|(name, asset)| desc.set_name(*asset, name));
     let offset = try_align(&mut target)?;
+    dicts.serialize(&mut target)?;
     desc.serialize(&mut target)?;
     target.write_u64::<LittleEndian>(offset)?;
 
     Ok(())
 }
 
-fn skip_compression(ty: uuid::Uuid) -> bool {
-    ty == GpuModel::TYPE_ID
+fn prepare_dict(data: &[u8]) -> io::Result<Vec<u8>> {
+    let mut samples = Vec::new();
+    let mut size = data.len();
+    while size > TRAIN_SAMPLE_SIZE {
+        samples.push(TRAIN_SAMPLE_SIZE);
+        size -= TRAIN_SAMPLE_SIZE;
+    }
+    samples.push(size);
+
+    zstd::dict::from_continuous(data, &samples, DICT_SIZE)
 }
 
 fn try_align<W: Write + Seek>(w: &mut W) -> io::Result<u64> {

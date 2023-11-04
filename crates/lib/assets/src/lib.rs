@@ -84,7 +84,7 @@ pub trait Asset: Send + Sync {
 }
 
 pub trait AssetBundle: Sync {
-    fn load<T: Asset>(&self, asset: AssetRef) -> io::Result<Vec<u8>>;
+    fn load(&self, asset: AssetRef, expect_ty: Uuid) -> io::Result<Vec<u8>>;
     fn asset_by_name(&self, name: &str) -> Option<AssetRef>;
 }
 

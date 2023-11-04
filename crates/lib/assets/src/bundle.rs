@@ -15,7 +15,7 @@
 
 use std::{
     collections::HashMap,
-    io::{self, Cursor, Seek},
+    io::{self, Cursor, Read, Seek},
     mem::size_of,
     path::Path,
 };
@@ -143,46 +143,49 @@ impl BinaryDeserialization for LocalBundleDesc {
 
 pub struct LocalBundle {
     file: MappedFile,
+    dicts: HashMap<Uuid, Vec<u8>>,
     desc: LocalBundleDesc,
 }
-
-unsafe impl Send for LocalBundle {}
-unsafe impl Sync for LocalBundle {}
 
 impl AssetBundle for LocalBundle {
     fn asset_by_name(&self, name: &str) -> Option<AssetRef> {
         self.desc.names.get(name).copied()
     }
 
-    fn load<T: Asset>(&self, asset: AssetRef) -> io::Result<Vec<u8>> {
+    fn load(&self, asset: AssetRef, expect_ty: Uuid) -> io::Result<Vec<u8>> {
         if let Ok(index) = self
             .desc
             .assets
             .binary_search_by(|x| x.id.as_u128().cmp(&asset.as_u128()))
         {
             let entry = &self.desc.assets[index];
-            if entry.ty != T::TYPE_ID {
+            if entry.ty != expect_ty {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Wrong asset type: expected {} got {}", T::TYPE_ID, entry.ty),
+                    format!("Wrong asset type: expected {} got {}", expect_ty, entry.ty),
                 ));
             }
             let size = entry.size as usize;
             let packed = entry.packed as usize;
             let offset = entry.offset as usize;
             let slice = &self.file.as_ref()[offset..offset + packed];
-            let data = if packed != size {
-                lz4_flex::decompress(slice, size).map_err(|x| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("Decompression failed: {:?}", x),
-                    )
-                })?
-            } else {
-                Vec::from(slice)
-            };
+            if packed != size {
+                let dict = self.dicts.get(&expect_ty).ok_or(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!(
+                        "Decompression dictionary doesn't exist for asset type {:?}",
+                        expect_ty
+                    ),
+                ))?;
+                let reader = Cursor::new(slice);
+                let mut decoder = zstd::Decoder::with_dictionary(reader, dict)?;
+                let mut result = vec![0u8; size];
+                decoder.read_exact(&mut result)?;
 
-            Ok(data)
+                Ok(result)
+            } else {
+                Ok(Vec::from(slice))
+            }
         } else {
             Err(io::Error::new(
                 io::ErrorKind::NotFound,
@@ -209,8 +212,9 @@ impl LocalBundle {
         cursor.seek(io::SeekFrom::Start(size - size_of::<u64>() as u64))?;
         let offset = cursor.read_u64::<LittleEndian>()?;
         cursor.seek(io::SeekFrom::Start(offset as _))?;
+        let dicts = HashMap::deserialize(&mut cursor)?;
         let desc = LocalBundleDesc::deserialize(&mut cursor)?;
 
-        Ok(LocalBundle { file, desc })
+        Ok(LocalBundle { file, dicts, desc })
     }
 }
