@@ -13,3 +13,4 @@ target/
 # Compiled asset cache
 .cache/
 *.pak
+*.bundle

@@ -77,6 +77,7 @@ impl ContentImporter<LoadedGltf> for GltfSource {
 struct ModelImportContext {
     model: GpuModel,
     base: PathBuf,
+    asset: AssetRef,
     _path: PathBuf,
     processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
 }
@@ -187,7 +188,11 @@ impl CreateGpuModel {
         match texture.source().source() {
             gltf::image::Source::Uri { uri, .. } => {
                 let image_path = model_context.base.join(uri).normalize();
-                context.import_image(&ImageSource::from_file(image_path, purpose), None)
+                let asset =
+                    context.import_image(&ImageSource::from_file(image_path, purpose), None);
+                context.add_dependency(model_context.asset, asset);
+
+                asset
             }
             _ => AssetRef::default(),
         }
@@ -503,15 +508,18 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
 impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
     fn process(
         &self,
+        asset: AssetRef,
         context: &AssetProcessingContext,
         content: LoadedGltf,
     ) -> Result<GpuModel, Error> {
         let mut import_context = ModelImportContext {
             base: content.base,
+            asset,
             _path: content.path,
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };
+        context.clear_dependencies(asset);
         content.document.nodes().for_each(|node| {
             self.process_node(context, &mut import_context, 0, &node, &content.buffers)
         });

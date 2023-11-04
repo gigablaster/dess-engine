@@ -39,23 +39,23 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
     LOCAL_BUNDLE_MAGIC.serialize(&mut target)?;
     LOCAL_BUNDLE_FILE_VERSION.serialize(&mut target)?;
     let all_assets = context.all_assets();
-    for (asset, ty) in all_assets {
-        let src_path = cached_asset_path(asset);
+    for info in all_assets {
+        let src_path = cached_asset_path(info.asset);
         if src_path.exists() {
             let data = read_to_end(src_path)?;
             let size = data.len() as u32;
-            let data = if size > LOCAL_BUNDLE_ALIGN as u32 && !skip_compression(ty) {
-                info!("Compress {}", asset);
+            let data = if size > LOCAL_BUNDLE_ALIGN as u32 && !skip_compression(info.ty) {
+                info!("Compress {}", info.asset);
                 lz4_flex::compress(&data)
             } else {
-                info!("Write {}", asset);
+                info!("Write {}", info.asset);
                 data
             };
             let offset = try_align(&mut target)?;
             target.write_all(&data)?;
-            desc.add_asset(asset, ty, offset, size, data.len() as _);
+            desc.add_asset(info.asset, info.ty, offset, size, data.len() as _);
         } else {
-            error!("Asset {} doesn't exist - skip", asset);
+            error!("Asset {} doesn't exist - skip", info.asset);
         }
     }
     context

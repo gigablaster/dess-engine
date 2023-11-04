@@ -17,6 +17,7 @@ use std::{
     collections::{HashMap, HashSet},
     hash::Hash,
     io::{self, Read, Write},
+    path::PathBuf,
 };
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -61,6 +62,24 @@ impl BinaryDeserialization for Option<String> {
         } else {
             Ok(None)
         }
+    }
+}
+
+impl BinarySerialization for PathBuf {
+    fn serialize(&self, w: &mut impl Write) -> io::Result<()> {
+        if let Some(str) = self.to_str() {
+            str.to_owned().serialize(w)
+        } else {
+            "".to_owned().serialize(w)
+        }
+    }
+}
+
+impl BinaryDeserialization for PathBuf {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let path = String::deserialize(r)?;
+
+        Ok(PathBuf::from(path))
     }
 }
 

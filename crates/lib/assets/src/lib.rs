@@ -73,7 +73,7 @@ impl BinarySerialization for AssetRef {
 impl BinaryDeserialization for AssetRef {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         Ok(Self {
-            uuid: Uuid::from_u128_le(r.read_u128::<LittleEndian>()?),
+            uuid: Uuid::from_u128(r.read_u128::<LittleEndian>()?),
         })
     }
 }

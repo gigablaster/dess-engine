@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use ash::vk;
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
-use dess_assets::GpuImage;
+use dess_assets::{AssetRef, GpuImage};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
@@ -305,6 +305,7 @@ impl CreateGpuImage {
 impl ContentProcessor<RawImage, GpuImage> for CreateGpuImage {
     fn process(
         &self,
+        _asset: AssetRef,
         _context: &AssetProcessingContext,
         content: RawImage,
     ) -> Result<GpuImage, Error> {

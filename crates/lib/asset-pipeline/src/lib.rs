@@ -16,12 +16,13 @@
 use std::{
     collections::{HashMap, HashSet},
     env,
-    fs::{self},
-    io::{self, Read},
+    fs::{self, File},
+    io::{self, BufReader, BufWriter, Read},
     path::{Path, PathBuf},
 };
 
 use dess_assets::{Asset, AssetRef, GpuImage, GpuModel};
+use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use log::info;
 use parking_lot::Mutex;
 
@@ -69,14 +70,35 @@ struct AssetProcessingContextImpl {
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
     /// Hashes for all inline assets, to catch and reuse same resources
-    assets: HashSet<(AssetRef, Uuid)>,
+    assets: HashSet<AssetInfo>,
     /// Asset ownership. Every asset have source, direct or indirect.
     owners: HashMap<AssetRef, PathBuf>,
+    /// Asset dependencies
+    dependencies: HashMap<AssetRef, HashSet<AssetRef>>,
 }
 
 unsafe impl Sync for AssetProcessingContextImpl {}
 
 impl AssetProcessingContextImpl {
+    pub fn from_database(asset_database: &AssetDatabase) -> Self {
+        Self {
+            names: asset_database.names.clone(),
+            assets: asset_database.assets.clone(),
+            owners: asset_database.owners.clone(),
+            dependencies: asset_database.dependencies.clone(),
+            ..Default::default()
+        }
+    }
+
+    pub fn to_database(&self) -> AssetDatabase {
+        AssetDatabase {
+            assets: self.assets.clone(),
+            dependencies: self.dependencies.clone(),
+            names: self.names.clone(),
+            owners: self.owners.clone(),
+        }
+    }
+
     pub fn import_model(&mut self, model: &GltfSource) -> AssetRef {
         let path = get_relative_asset_path(&model.path).unwrap();
         if let Some(asset) = self.models.get(&path) {
@@ -90,7 +112,7 @@ impl AssetProcessingContextImpl {
             );
             self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model.clone());
-            self.assets.insert((asset, GpuModel::TYPE_ID));
+            self.assets.insert(AssetInfo::new::<GpuModel>(asset));
             self.add_source(asset, &path);
 
             asset
@@ -108,7 +130,7 @@ impl AssetProcessingContextImpl {
                     info!("Requested image import {:?} ref: {}", path, asset);
                     self.images.insert(path.clone(), asset);
                     self.images_to_process.insert(asset, image.clone());
-                    self.assets.insert((asset, GpuImage::TYPE_ID));
+                    self.assets.insert(AssetInfo::new::<GpuImage>(asset));
                     let owner = owner.unwrap_or(&path);
                     self.add_source(asset, owner);
 
@@ -117,14 +139,14 @@ impl AssetProcessingContextImpl {
             }
             ImageDataSource::Bytes(bytes) => {
                 let asset = AssetRef::from_bytes(bytes);
-                if self.assets.contains(&(asset, GpuImage::TYPE_ID)) {
+                if self.assets.contains(&AssetInfo::new::<GpuImage>(asset)) {
                     asset
                 } else {
                     let owner =
                         get_relative_asset_path(owner.expect("Can't add image without owner"))
                             .unwrap();
                     info!("Added image from blob ref {} owner {:?}", asset, owner);
-                    self.assets.insert((asset, GpuImage::TYPE_ID));
+                    self.assets.insert(AssetInfo::new::<GpuImage>(asset));
                     self.images_to_process.insert(asset, image.clone());
                     self.add_source(asset, &owner);
 
@@ -132,6 +154,14 @@ impl AssetProcessingContextImpl {
                 }
             }
         }
+    }
+
+    pub fn clear_dependencies(&mut self, asset: AssetRef) {
+        self.dependencies.remove(&asset);
+    }
+
+    pub fn add_dependency(&mut self, from: AssetRef, to: AssetRef) {
+        self.dependencies.entry(from).or_default().insert(to);
     }
 
     pub fn set_name(&mut self, asset: AssetRef, name: &str) {
@@ -146,7 +176,7 @@ impl AssetProcessingContextImpl {
         self.images_to_process.drain().collect()
     }
 
-    pub fn all_assets(&self) -> Vec<(AssetRef, Uuid)> {
+    pub fn all_assets(&self) -> Vec<AssetInfo> {
         self.assets.iter().copied().collect()
     }
 
@@ -170,6 +200,14 @@ impl AssetProcessingContextImpl {
             .get(&get_relative_asset_path(path).unwrap())
             .copied()
     }
+
+    pub fn get_dependencies(&self, asset: AssetRef) -> Vec<AssetRef> {
+        if let Some(deps) = self.dependencies.get(&asset) {
+            deps.iter().copied().collect()
+        } else {
+            Vec::default()
+        }
+    }
 }
 
 #[derive(Debug, Default)]
@@ -180,6 +218,16 @@ pub struct AssetProcessingContext {
 unsafe impl Sync for AssetProcessingContext {}
 
 impl AssetProcessingContext {
+    pub fn from_database(asset_database: &AssetDatabase) -> Self {
+        Self {
+            inner: Mutex::new(AssetProcessingContextImpl::from_database(asset_database)),
+        }
+    }
+
+    pub fn to_database(&self) -> AssetDatabase {
+        self.inner.lock().to_database()
+    }
+
     pub fn import_model(&self, model: &GltfSource) -> AssetRef {
         self.inner.lock().import_model(model)
     }
@@ -196,7 +244,7 @@ impl AssetProcessingContext {
         self.inner.lock().drain_images_to_process()
     }
 
-    pub fn all_assets(&self) -> Vec<(AssetRef, Uuid)> {
+    pub fn all_assets(&self) -> Vec<AssetInfo> {
         self.inner.lock().all_assets()
     }
 
@@ -211,6 +259,18 @@ impl AssetProcessingContext {
     pub fn get_model_id(&self, path: &Path) -> Option<AssetRef> {
         self.inner.lock().get_model_id(path)
     }
+
+    pub fn clear_dependencies(&self, asset: AssetRef) {
+        self.inner.lock().clear_dependencies(asset);
+    }
+
+    pub fn add_dependency(&self, from: AssetRef, to: AssetRef) {
+        self.inner.lock().add_dependency(from, to);
+    }
+
+    pub fn get_dependencies(&self, asset: AssetRef) -> Vec<AssetRef> {
+        self.inner.lock().get_dependencies(asset)
+    }
 }
 
 pub trait Content {}
@@ -220,7 +280,12 @@ pub trait ContentImporter<T: Content> {
 }
 
 pub trait ContentProcessor<T: Content, U: Asset>: Default {
-    fn process(&self, context: &AssetProcessingContext, content: T) -> Result<U, Error>;
+    fn process(
+        &self,
+        asset: AssetRef,
+        context: &AssetProcessingContext,
+        content: T,
+    ) -> Result<U, Error>;
 }
 
 pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
@@ -258,4 +323,90 @@ where
 
 fn cached_asset_path(asset: AssetRef) -> PathBuf {
     Path::new(ASSET_CACHE_PATH).join(Path::new(&format!("{}.bin", asset)))
+}
+
+#[derive(Debug, Default)]
+pub struct AssetDatabase {
+    pub assets: HashSet<AssetInfo>,
+    pub dependencies: HashMap<AssetRef, HashSet<AssetRef>>,
+    pub names: HashMap<String, AssetRef>,
+    pub owners: HashMap<AssetRef, PathBuf>,
+}
+
+impl AssetDatabase {
+    pub fn try_load() -> Option<AssetDatabase> {
+        if let Ok(file) = File::open(Path::new(ASSET_CACHE_PATH).join("assets.db")) {
+            let mut buf = BufReader::new(&file);
+            if let Ok(database) = AssetDatabase::deserialize(&mut buf) {
+                return Some(database);
+            }
+        }
+        None
+    }
+
+    pub fn save(&self) -> io::Result<()> {
+        self.serialize(&mut BufWriter::new(File::create(
+            Path::new(ASSET_CACHE_PATH).join("assets.db"),
+        )?))
+    }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+pub struct AssetInfo {
+    pub asset: AssetRef,
+    pub ty: Uuid,
+}
+
+impl AssetInfo {
+    pub fn new<T: Asset>(asset: AssetRef) -> Self {
+        Self {
+            asset,
+            ty: T::TYPE_ID,
+        }
+    }
+}
+
+impl BinaryDeserialization for AssetInfo {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        Ok(Self {
+            asset: AssetRef::deserialize(r)?,
+            ty: Uuid::deserialize(r)?,
+        })
+    }
+}
+
+impl BinarySerialization for AssetInfo {
+    fn serialize(&self, w: &mut impl io::Write) -> io::Result<()> {
+        self.asset.serialize(w)?;
+        self.ty.serialize(w)?;
+
+        Ok(())
+    }
+}
+
+impl BinaryDeserialization for AssetDatabase {
+    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
+        let assets = HashSet::deserialize(r)?;
+        let dependencies = HashMap::deserialize(r)?;
+        let names = HashMap::deserialize(r)?;
+        let owners = HashMap::deserialize(r)?;
+
+        Ok(Self {
+            assets,
+            dependencies,
+            names,
+            owners,
+        })
+    }
+}
+
+impl BinarySerialization for AssetDatabase {
+    fn serialize(&self, w: &mut impl io::Write) -> io::Result<()> {
+        self.assets.serialize(w)?;
+        self.dependencies.serialize(w)?;
+        self.names.serialize(w)?;
+        self.owners.serialize(w)?;
+
+        Ok(())
+    }
 }

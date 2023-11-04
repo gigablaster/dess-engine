@@ -5,17 +5,35 @@ use dess_common::traits::BinarySerialization;
 use log::{error, info};
 
 use crate::{
-    build_bundle, cached_asset_path, AssetProcessingContext, Content, ContentImporter,
-    ContentProcessor, CreateGpuImage, CreateGpuModel, Error, GltfSource, ImageSource, LoadedGltf,
-    RawImage, ROOT_DATA_PATH,
+    build_bundle, cached_asset_path, AssetDatabase, AssetProcessingContext, Content,
+    ContentImporter, ContentProcessor, CreateGpuImage, CreateGpuModel, Error, GltfSource,
+    ImageSource, LoadedGltf, RawImage, ROOT_DATA_PATH,
 };
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct AssetPipeline {
     context: AssetProcessingContext,
 }
 
+impl Default for AssetPipeline {
+    fn default() -> Self {
+        if let Some(db) = AssetDatabase::try_load() {
+            Self {
+                context: AssetProcessingContext::from_database(&db),
+            }
+        } else {
+            Self {
+                context: AssetProcessingContext::default(),
+            }
+        }
+    }
+}
+
 impl AssetPipeline {
+    pub fn save_db(&self) -> io::Result<()> {
+        self.context.to_database().save()
+    }
+
     pub fn import_model(&self, path: &Path) -> AssetRef {
         self.context.import_model(&GltfSource::new(path))
     }
@@ -69,7 +87,7 @@ impl AssetPipeline {
         P: ContentProcessor<C, T> + Default,
     {
         info!("Processing content {:?} into asset {}", importer, asset);
-        let data = P::default().process(&self.context, importer.import()?)?;
+        let data = P::default().process(asset, &self.context, importer.import()?)?;
         data.serialize(&mut File::create(cached_asset_path(asset))?)?;
 
         Ok(())
