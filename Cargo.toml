@@ -5,7 +5,6 @@ members=[
     "crates/lib/render",
     "crates/lib/assets",
     "crates/lib/asset-pipeline",
-    "crates/bin/packer",
     "crates/bin/builder"
 ]
 
