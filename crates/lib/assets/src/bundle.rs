@@ -26,7 +26,7 @@ use four_cc::FourCC;
 use sorted_vec::SortedSet;
 use uuid::Uuid;
 
-use crate::{Asset, AssetBundle, AssetRef, MappedFile};
+use crate::{AssetBundle, AssetRef, MappedFile};
 
 pub const LOCAL_BUNDLE_ALIGN: u64 = 4096;
 pub const LOCAL_BUNDLE_MAGIC: FourCC = FourCC(*b"BNDL");
