@@ -1,0 +1,14 @@
+
+[package]
+name = "builder"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dess-common = { path = "../../lib/common" }
+dess-asset-pipeline = { path = "../../lib/asset-pipeline" }
+log = "0.4"
+simple_logger = "4.1"
+clap = "4.2"

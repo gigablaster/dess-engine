@@ -6,6 +6,7 @@ members=[
     "crates/lib/assets",
     "crates/lib/asset-pipeline",
     "crates/bin/packer",
+    "crates/bin/builder"
 ]
 
 resolver = "2"

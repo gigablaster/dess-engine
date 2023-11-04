@@ -53,8 +53,8 @@ impl From<io::Error> for Error {
     }
 }
 
-const ROOT_DATA_PATH: &str = "data";
-const ASSET_CACHE_PATH: &str = ".cache";
+pub const ROOT_DATA_PATH: &str = "data";
+pub const ASSET_CACHE_PATH: &str = ".cache";
 
 #[derive(Debug, Default)]
 struct AssetProcessingContextImpl {
