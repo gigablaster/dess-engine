@@ -105,7 +105,7 @@ impl AssetProcessingContextImpl {
                     *asset
                 } else {
                     let asset = AssetRef::from_path(&path);
-                    info!("Requested image import {:?} ref: {:?}", path, asset);
+                    info!("Requested image import {:?} ref: {}", path, asset);
                     self.images.insert(path.clone(), asset);
                     self.images_to_process.insert(asset, image.clone());
                     self.assets.insert((asset, GpuImage::TYPE_ID));
@@ -224,10 +224,21 @@ pub trait ContentProcessor<T: Content, U: Asset>: Default {
 }
 
 pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
-    let path = path.canonicalize()?;
     let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
+    // Is this path relative to data folder? Check this option.
+    let path = if !path.exists() {
+        root.join(path)
+    } else {
+        path.into()
+    };
+    let path = path.canonicalize()?;
 
     Ok(path.strip_prefix(root).unwrap().into())
+}
+
+pub(crate) fn get_absolute_asset_path(path: &Path) -> Result<PathBuf, Error> {
+    let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
+    Ok(root.join(get_relative_asset_path(path)?))
 }
 
 pub(crate) fn read_to_end<P>(path: P) -> io::Result<Vec<u8>>

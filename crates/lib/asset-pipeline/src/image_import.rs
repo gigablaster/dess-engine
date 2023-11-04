@@ -23,7 +23,8 @@ use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, R
 use intel_tex_2::{bc5, bc7};
 
 use crate::{
-    read_to_end, AssetProcessingContext, Content, ContentImporter, ContentProcessor, Error,
+    get_absolute_asset_path, read_to_end, AssetProcessingContext, Content, ContentImporter,
+    ContentProcessor, Error,
 };
 
 #[derive(Debug)]
@@ -77,7 +78,9 @@ impl ContentImporter<RawImage> for ImageSource {
     fn import(&self) -> Result<RawImage, Error> {
         let bytes = match &self.source {
             ImageDataSource::Bytes(bytes) => Bytes::clone(bytes),
-            ImageDataSource::File(path) => Bytes::copy_from_slice(&read_to_end(path)?),
+            ImageDataSource::File(path) => {
+                Bytes::copy_from_slice(&read_to_end(get_absolute_asset_path(path)?)?)
+            }
         };
         if let Ok(dds) = Dds::read(bytes.as_ref()) {
             Ok(RawImage {

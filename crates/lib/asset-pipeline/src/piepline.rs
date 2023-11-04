@@ -68,7 +68,7 @@ impl AssetPipeline {
         C: Content,
         P: ContentProcessor<C, T> + Default,
     {
-        info!("Processing content {:?} into asset {:?}", importer, asset);
+        info!("Processing content {:?} into asset {}", importer, asset);
         let data = P::default().process(&self.context, importer.import()?)?;
         data.serialize(&mut File::create(cached_asset_path(asset))?)?;
 

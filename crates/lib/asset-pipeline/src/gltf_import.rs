@@ -30,8 +30,8 @@ use normalize_path::NormalizePath;
 use numquant::linear::quantize;
 
 use crate::{
-    get_relative_asset_path, AssetProcessingContext, Content, ContentImporter, ContentProcessor,
-    Error, ImagePurpose, ImageSource,
+    get_absolute_asset_path, get_relative_asset_path, AssetProcessingContext, Content,
+    ContentImporter, ContentProcessor, Error, ImagePurpose, ImageSource,
 };
 
 #[derive(Debug, Clone, Hash)]
@@ -59,8 +59,11 @@ impl Content for LoadedGltf {}
 impl ContentImporter<LoadedGltf> for GltfSource {
     fn import(&self) -> Result<LoadedGltf, Error> {
         let (document, buffers, images) =
-            gltf::import(&self.path).map_err(|_| Error::ImportFailed)?;
-        let base = get_relative_asset_path(&self.path)?;
+            gltf::import(get_absolute_asset_path(&self.path)?).map_err(|_| Error::ImportFailed)?;
+        let base = get_relative_asset_path(&self.path)?
+            .parent()
+            .unwrap()
+            .into();
         Ok(LoadedGltf {
             path: self.path.clone(),
             document,
