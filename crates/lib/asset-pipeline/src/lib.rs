@@ -15,7 +15,8 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    env, fs,
+    env,
+    fs::{self},
     io::{self, Read},
     path::{Path, PathBuf},
 };
@@ -58,9 +59,9 @@ const ASSET_CACHE_PATH: &str = ".cache";
 #[derive(Debug, Default)]
 struct AssetProcessingContextImpl {
     /// All currently imported models.
-    models: HashMap<RelativePathBuf, AssetRef>,
+    models: HashMap<PathBuf, AssetRef>,
     /// All currently imported images.
-    images: HashMap<RelativePathBuf, AssetRef>,
+    images: HashMap<PathBuf, AssetRef>,
     /// Asset names. Only named assets can be requested.
     names: HashMap<String, AssetRef>,
     /// Models that should be imported.
@@ -70,14 +71,10 @@ struct AssetProcessingContextImpl {
     /// Hashes for all inline assets, to catch and reuse same resources
     assets: HashSet<(AssetRef, Uuid)>,
     /// Asset ownership. Every asset have source, direct or indirect.
-    owners: HashMap<AssetRef, RelativePathBuf>,
+    owners: HashMap<AssetRef, PathBuf>,
 }
 
-unsafe impl Send for AssetProcessingContextImpl {}
 unsafe impl Sync for AssetProcessingContextImpl {}
-
-pub type RelativePath = Path;
-pub type RelativePathBuf = PathBuf;
 
 impl AssetProcessingContextImpl {
     pub fn import_model(&mut self, model: &GltfSource) -> AssetRef {
@@ -100,7 +97,7 @@ impl AssetProcessingContextImpl {
         }
     }
 
-    pub fn import_image(&mut self, image: &ImageSource, owner: Option<&RelativePath>) -> AssetRef {
+    pub fn import_image(&mut self, image: &ImageSource, owner: Option<&Path>) -> AssetRef {
         match &image.source {
             ImageDataSource::File(path) => {
                 let path = get_relative_asset_path(path).unwrap();
@@ -160,11 +157,11 @@ impl AssetProcessingContextImpl {
             .collect::<Vec<_>>()
     }
 
-    pub fn get_owner(&self, asset: AssetRef) -> Option<RelativePathBuf> {
+    pub fn get_owner(&self, asset: AssetRef) -> Option<PathBuf> {
         self.owners.get(&asset).cloned()
     }
 
-    pub fn add_source(&mut self, asset: AssetRef, owner: &RelativePath) {
+    pub fn add_source(&mut self, asset: AssetRef, owner: &Path) {
         self.owners.insert(asset, owner.into());
     }
 
@@ -226,16 +223,11 @@ pub trait ContentProcessor<T: Content, U: Asset>: Default {
     fn process(&self, context: &AssetProcessingContext, content: T) -> Result<U, Error>;
 }
 
-pub(crate) fn get_relative_asset_path(path: &Path) -> Result<RelativePathBuf, Error> {
-    if path.is_absolute() {
-        let prefix = env::current_dir()?.join(ROOT_DATA_PATH);
-        if !path.starts_with(&prefix) {
-            return Err(Error::OutOfDataPath(path.into()));
-        }
-        Ok(path.strip_prefix(prefix).unwrap().into())
-    } else {
-        Ok(path.strip_prefix(ROOT_DATA_PATH).unwrap().into())
-    }
+pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
+    let path = path.canonicalize()?;
+    let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
+
+    Ok(path.strip_prefix(root).unwrap().into())
 }
 
 pub(crate) fn read_to_end<P>(path: P) -> io::Result<Vec<u8>>
