@@ -25,6 +25,7 @@ mod gpumesh;
 mod gpumodel;
 mod image;
 mod material;
+mod shader;
 
 pub use bundle::*;
 pub use gpumesh::*;
