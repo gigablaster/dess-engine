@@ -1,13 +1,13 @@
-use std::{fs::File, io, path::Path};
+use std::{fmt::Debug, fs::File, io, path::Path};
 
 use dess_assets::{Asset, AssetRef, GpuImage, GpuModel};
 use dess_common::traits::BinarySerialization;
-use log::error;
+use log::{error, info};
 
 use crate::{
     build_bundle, cached_asset_path, AssetProcessingContext, Content, ContentImporter,
     ContentProcessor, CreateGpuImage, CreateGpuModel, Error, GltfSource, ImageSource, LoadedGltf,
-    RawImage,
+    RawImage, ROOT_DATA_PATH,
 };
 
 #[derive(Debug, Default)]
@@ -16,30 +16,25 @@ pub struct AssetPipeline {
 }
 
 impl AssetPipeline {
-    pub fn import_model(&self, path: &Path) -> Result<AssetRef, Error> {
-        if self.need_update(path, |context, path| context.get_model_id(path)) {
-            let source = GltfSource::new(path);
-            let asset = self.context.import_model(&source);
-
-            Ok(asset)
-        } else {
-            Ok(self.context.get_model_id(path).unwrap())
-        }
+    pub fn import_model(&self, path: &Path) -> AssetRef {
+        self.context.import_model(&GltfSource::new(path))
     }
 
-    fn need_update<F>(&self, path: &Path, asset_fn: F) -> bool
-    where
-        F: FnOnce(&AssetProcessingContext, &Path) -> Option<AssetRef>,
-    {
-        let source_changed = path.metadata().unwrap().modified().unwrap();
-        if let Some(asset) = asset_fn(&self.context, path) {
-            // If newer than any of it's products
-            cached_asset_path(asset)
+    fn need_update(&self, asset: AssetRef) -> bool {
+        if let Some(path) = self.context.get_owner(asset) {
+            let source_timestamp = Path::new(ROOT_DATA_PATH)
+                .join(path)
                 .metadata()
                 .unwrap()
-                .created()
-                .unwrap()
-                < source_changed
+                .modified()
+                .unwrap();
+
+            let asset_path = cached_asset_path(asset);
+            if asset_path.exists() {
+                asset_path.metadata().unwrap().created().unwrap() < source_timestamp
+            } else {
+                true
+            }
         } else {
             // Or has no products, so we need to create it
             true
@@ -66,13 +61,14 @@ impl AssetPipeline {
     fn process_single_asset<T, C, P>(
         &self,
         asset: AssetRef,
-        importer: impl ContentImporter<C>,
+        importer: impl ContentImporter<C> + Debug,
     ) -> Result<(), Error>
     where
         T: Asset + BinarySerialization,
         C: Content,
         P: ContentProcessor<C, T> + Default,
     {
+        info!("Processing content {:?} into asset {:?}", importer, asset);
         let data = P::default().process(&self.context, importer.import()?)?;
         data.serialize(&mut File::create(cached_asset_path(asset))?)?;
 
@@ -84,16 +80,18 @@ impl AssetPipeline {
         T: Asset + BinarySerialization,
         C: Content,
         P: ContentProcessor<C, T> + Default,
-        I: ContentImporter<C> + Send + Sync,
+        I: ContentImporter<C> + Send + Debug,
     {
         let mut data = data;
         rayon::scope(|s| {
             data.drain(..).for_each(|(asset, importer)| {
-                s.spawn(move |_| {
-                    if let Err(err) = self.process_single_asset::<T, C, P>(asset, importer) {
-                        error!("Asset processing failed: {:?}", err);
-                    };
-                })
+                if self.need_update(asset) {
+                    s.spawn(move |_| {
+                        if let Err(err) = self.process_single_asset::<T, C, P>(asset, importer) {
+                            error!("Asset processing failed: {:?}", err);
+                        };
+                    })
+                }
             });
         });
     }
