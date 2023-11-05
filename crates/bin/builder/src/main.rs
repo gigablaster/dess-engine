@@ -11,9 +11,16 @@ fn process_assets(pipeline: &AssetPipeline, root: &Path) -> Result<(), io::Error
         if path.is_symlink() {
             continue;
         }
-        if path.is_file() && have_extension(&path, "gltf") {
-            let asset = pipeline.import_model(&path);
-            info!("Found asset {} in {:?}", asset, path);
+        if path.is_file() {
+            if ends_with(&path, ".gltf") {
+                pipeline.import_model(&path);
+            }
+            if ends_with(&path, "_vs.hlsl") {
+                pipeline.import_vertex_shader(&path);
+            }
+            if ends_with(&path, "_ps.hlsl") {
+                pipeline.import_fragment_shader(&path);
+            }
         }
         if path.is_dir() {
             process_assets(pipeline, &path)?;
@@ -23,9 +30,9 @@ fn process_assets(pipeline: &AssetPipeline, root: &Path) -> Result<(), io::Error
     Ok(())
 }
 
-fn have_extension(path: &Path, e: &str) -> bool {
-    if let Some(ext) = path.extension() {
-        ext.to_ascii_lowercase().to_str().unwrap() == e
+fn ends_with(path: &Path, e: &str) -> bool {
+    if let Some(ext) = path.to_str() {
+        ext.to_ascii_lowercase().ends_with(e)
     } else {
         false
     }

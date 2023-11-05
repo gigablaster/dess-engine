@@ -1,13 +1,14 @@
 use std::{fmt::Debug, fs::File, io, path::Path};
 
-use dess_assets::{Asset, AssetRef, GpuImage, GpuModel};
+use dess_assets::{Asset, AssetRef, GpuImage, GpuModel, GpuShader, GpuShaderStage};
 use dess_common::traits::BinarySerialization;
 use log::{error, info};
 
 use crate::{
-    build_bundle, cached_asset_path, AssetDatabase, AssetProcessingContext, Content,
-    ContentImporter, ContentProcessor, CreateGpuImage, CreateGpuModel, Error, GltfSource,
-    ImageSource, LoadedGltf, RawImage, ROOT_DATA_PATH,
+    build_bundle, cached_asset_path, compile_shaders::ShaderSource, AssetDatabase,
+    AssetProcessingContext, CompileShader, Content, ContentImporter, ContentProcessor,
+    CreateGpuImage, CreateGpuModel, Error, GltfSource, ImageSource, LoadedGltf, LoadedShaderCode,
+    RawImage, ROOT_DATA_PATH,
 };
 
 #[derive(Debug)]
@@ -36,6 +37,20 @@ impl AssetPipeline {
 
     pub fn import_model(&self, path: &Path) -> AssetRef {
         self.context.import_model(&GltfSource::new(path))
+    }
+
+    pub fn import_vertex_shader(&self, path: &Path) -> AssetRef {
+        self.context.import_shader(&ShaderSource {
+            stage: GpuShaderStage::Vertex,
+            path: path.into(),
+        })
+    }
+
+    pub fn import_fragment_shader(&self, path: &Path) -> AssetRef {
+        self.context.import_shader(&ShaderSource {
+            stage: GpuShaderStage::Fragment,
+            path: path.into(),
+        })
     }
 
     fn need_update(&self, asset: AssetRef) -> bool {
@@ -72,6 +87,11 @@ impl AssetPipeline {
             need_work |= !images_to_process.is_empty();
             self.process_assets::<GpuImage, RawImage, CreateGpuImage, ImageSource>(
                 images_to_process,
+            );
+            let shades_to_process = self.context.drain_shaders_to_process();
+            need_work |= !shades_to_process.is_empty();
+            self.process_assets::<GpuShader, LoadedShaderCode, CompileShader, ShaderSource>(
+                shades_to_process,
             );
         }
     }

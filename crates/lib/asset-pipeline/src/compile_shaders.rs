@@ -8,14 +8,15 @@ use normalize_path::NormalizePath;
 
 use crate::{get_absolute_asset_path, Content, ContentImporter, ContentProcessor, Error};
 
+#[derive(Debug, Clone)]
 pub struct ShaderSource {
-    stage: GpuShaderStage,
-    path: PathBuf,
+    pub stage: GpuShaderStage,
+    pub path: PathBuf,
 }
 
 pub struct LoadedShaderCode {
-    stage: GpuShaderStage,
-    code: String,
+    pub stage: GpuShaderStage,
+    pub code: String,
 }
 
 impl Content for LoadedShaderCode {}
@@ -63,7 +64,7 @@ impl ContentImporter<LoadedShaderCode> for ShaderSource {
 }
 
 #[derive(Debug, Default)]
-struct CompileShader;
+pub struct CompileShader;
 
 impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
     fn process(

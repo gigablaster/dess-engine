@@ -21,7 +21,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dess_assets::{Asset, AssetRef, GpuImage, GpuModel};
+use compile_shaders::ShaderSource;
+use dess_assets::{Asset, AssetRef, GpuImage, GpuModel, GpuShader};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use log::info;
 use parking_lot::Mutex;
@@ -33,6 +34,7 @@ mod image_import;
 mod pipeline;
 
 pub use bundler::*;
+pub use compile_shaders::*;
 pub use gltf_import::*;
 pub use image_import::*;
 pub use pipeline::*;
@@ -64,12 +66,16 @@ struct AssetProcessingContextImpl {
     models: HashMap<PathBuf, AssetRef>,
     /// All currently imported images.
     images: HashMap<PathBuf, AssetRef>,
+    /// All currently imported shaders
+    shaders: HashMap<PathBuf, AssetRef>,
     /// Asset names. Only named assets can be requested.
     names: HashMap<String, AssetRef>,
     /// Models that should be imported.
     models_to_process: HashMap<AssetRef, GltfSource>,
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
+    /// Shaders that should be imported
+    shaders_to_process: HashMap<AssetRef, ShaderSource>,
     /// Hashes for all inline assets, to catch and reuse same resources
     assets: HashSet<AssetInfo>,
     /// Asset ownership. Every asset have source, direct or indirect.
@@ -157,6 +163,21 @@ impl AssetProcessingContextImpl {
         }
     }
 
+    pub fn import_shader(&mut self, shader: &ShaderSource) -> AssetRef {
+        let path = get_relative_asset_path(&shader.path).unwrap();
+        if let Some(asset) = self.shaders.get(&path) {
+            *asset
+        } else {
+            let asset = AssetRef::from_path(&path);
+            info!("Requested shader import {:?} ref: {}", shader, asset);
+            self.assets.insert(AssetInfo::new::<GpuShader>(asset));
+            self.shaders_to_process.insert(asset, shader.clone());
+            self.add_source(asset, &path);
+
+            asset
+        }
+    }
+
     pub fn clear_dependencies(&mut self, asset: AssetRef) {
         self.dependencies.remove(&asset);
     }
@@ -175,6 +196,10 @@ impl AssetProcessingContextImpl {
 
     pub fn drain_images_to_process(&mut self) -> Vec<(AssetRef, ImageSource)> {
         self.images_to_process.drain().collect()
+    }
+
+    pub fn drain_shaders_to_process(&mut self) -> Vec<(AssetRef, ShaderSource)> {
+        self.shaders_to_process.drain().collect()
     }
 
     pub fn all_assets(&self) -> Vec<AssetInfo> {
@@ -237,12 +262,20 @@ impl AssetProcessingContext {
         self.inner.lock().import_image(image, owner)
     }
 
+    pub fn import_shader(&self, shader: &ShaderSource) -> AssetRef {
+        self.inner.lock().import_shader(shader)
+    }
+
     pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
         self.inner.lock().drain_models_to_process()
     }
 
     pub fn drain_images_to_process(&self) -> Vec<(AssetRef, ImageSource)> {
         self.inner.lock().drain_images_to_process()
+    }
+
+    pub fn drain_shaders_to_process(&self) -> Vec<(AssetRef, ShaderSource)> {
+        self.inner.lock().drain_shaders_to_process()
     }
 
     pub fn all_assets(&self) -> Vec<AssetInfo> {
