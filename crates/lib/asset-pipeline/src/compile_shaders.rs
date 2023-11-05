@@ -1,13 +1,10 @@
 use std::{
     fs,
-    io::{BufReader, Write},
     path::{Path, PathBuf},
-    process::{Command, Stdio},
 };
 
 use byte_slice_cast::AsSliceOf;
 use dess_assets::{GpuShader, GpuShaderStage};
-use log::info;
 use normalize_path::NormalizePath;
 use spirv_tools::{error::MessageCallback, opt::Optimizer};
 
@@ -74,7 +71,7 @@ pub struct CompileShader;
 struct OptCallbacks;
 
 impl MessageCallback for OptCallbacks {
-    fn on_message(&mut self, msg: spirv_tools::error::Message) {}
+    fn on_message(&mut self, _msg: spirv_tools::error::Message) {}
 }
 
 impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {

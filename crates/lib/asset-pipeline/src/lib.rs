@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use compile_shaders::ShaderSource;
 use dess_assets::{Asset, AssetRef, GpuImage, GpuModel, GpuShader};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use log::info;
