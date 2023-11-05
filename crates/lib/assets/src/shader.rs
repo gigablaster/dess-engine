@@ -1,11 +1,11 @@
-use std::{collections::HashMap, hash::Hash};
+use std::{collections::HashMap, fmt::Display};
 
 use byteorder::{ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
 use crate::Asset;
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum GpuShaderStage {
     Vertex,
     Fragment,
@@ -15,6 +15,15 @@ pub enum GpuShaderStage {
 pub enum Error {
     DefinitionDontExist(String),
     ShaderVariationNotFound,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::DefinitionDontExist(def) => write!(f, "Definition {} doesn't exist", def),
+            Self::ShaderVariationNotFound => write!(f, "Shader variation not found"),
+        }
+    }
 }
 
 pub struct GpuShader {

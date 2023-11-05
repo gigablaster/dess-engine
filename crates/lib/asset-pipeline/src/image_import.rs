@@ -88,7 +88,8 @@ impl ContentImporter<RawImage> for ImageSource {
                 purpose: self.purpose,
             })
         } else {
-            let image = image::load_from_memory(&bytes).map_err(|_| Error::ImportFailed)?;
+            let image = image::load_from_memory(&bytes)
+                .map_err(|err| Error::ImportFailed(err.to_string()))?;
             let dimensions = [image.dimensions().0, image.dimensions().1];
             let image = image.to_rgba8();
 
@@ -155,7 +156,9 @@ impl BcMode {
 impl CreateGpuImage {
     fn process_dds(image: &Dds) -> Result<GpuImage, Error> {
         if let Some(format) = Self::get_vk_format(image) {
-            let data = image.get_data(0).map_err(|_| Error::ProcessingFailed)?;
+            let data = image
+                .get_data(0)
+                .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
             let pitch_height = image.get_pitch_height();
             let mut offset = 0;
             let mips = (0..image.get_num_mipmap_levels())

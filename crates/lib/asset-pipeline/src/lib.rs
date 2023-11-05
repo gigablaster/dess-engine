@@ -27,23 +27,24 @@ use log::info;
 use parking_lot::Mutex;
 
 mod bundler;
+mod compile_shaders;
 mod gltf_import;
 mod image_import;
-mod piepline;
+mod pipeline;
 
 pub use bundler::*;
 pub use gltf_import::*;
 pub use image_import::*;
-pub use piepline::*;
+pub use pipeline::*;
 use uuid::Uuid;
 
 #[derive(Debug)]
 pub enum Error {
     OutOfDataPath(PathBuf),
-    ImportFailed,
+    ImportFailed(String),
     Unsupported,
     WrongDependency,
-    ProcessingFailed,
+    ProcessingFailed(String),
     BadSourceData,
     Io(io::Error),
 }

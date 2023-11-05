@@ -32,6 +32,7 @@ pub use gpumesh::*;
 pub use gpumodel::*;
 pub use image::*;
 pub use material::*;
+pub use shader::*;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct AssetRef {

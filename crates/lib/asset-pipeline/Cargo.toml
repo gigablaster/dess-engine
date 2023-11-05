@@ -27,3 +27,5 @@ normalize-path = "0.2.1"
 parking_lot = "0.12.1"
 rayon = "1.8.0"
 zstd = { version = "0.13.0", features = ["zdict_builder"] }
+failure = "0.1.8"
+hassle-rs = "0.11.0"

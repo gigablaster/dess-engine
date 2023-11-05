@@ -58,8 +58,8 @@ impl Content for LoadedGltf {}
 
 impl ContentImporter<LoadedGltf> for GltfSource {
     fn import(&self) -> Result<LoadedGltf, Error> {
-        let (document, buffers, images) =
-            gltf::import(get_absolute_asset_path(&self.path)?).map_err(|_| Error::ImportFailed)?;
+        let (document, buffers, images) = gltf::import(get_absolute_asset_path(&self.path)?)
+            .map_err(|err| Error::ImportFailed(err.to_string()))?;
         let base = get_relative_asset_path(&self.path)?
             .parent()
             .unwrap()
