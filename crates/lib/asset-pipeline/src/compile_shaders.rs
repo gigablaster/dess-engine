@@ -5,8 +5,13 @@ use std::{
 
 use byte_slice_cast::AsSliceOf;
 use dess_assets::{GpuShader, GpuShaderStage};
+use log::{debug, error, info, warn};
 use normalize_path::NormalizePath;
-use spirv_tools::{error::MessageCallback, opt::Optimizer};
+use spirv_tools::{
+    error::{MessageCallback, MessageLevel},
+    opt::Optimizer,
+    val::Validator,
+};
 
 use crate::{get_absolute_asset_path, Content, ContentImporter, ContentProcessor, Error};
 
@@ -71,7 +76,16 @@ pub struct CompileShader;
 struct OptCallbacks;
 
 impl MessageCallback for OptCallbacks {
-    fn on_message(&mut self, _msg: spirv_tools::error::Message) {}
+    fn on_message(&mut self, msg: spirv_tools::error::Message) {
+        match msg.level {
+            MessageLevel::Info => info!("{} - {}", msg.line, msg.message),
+            MessageLevel::Debug => debug!("{} - {}", msg.line, msg.message),
+            MessageLevel::Error | MessageLevel::Fatal | MessageLevel::InternalError => {
+                error!("{} - {}", msg.line, msg.message)
+            }
+            MessageLevel::Warning => warn!("{} - {}", msg.line, msg.message),
+        }
+    }
 }
 
 impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
@@ -107,7 +121,12 @@ impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
         let data = spirv.as_slice_of::<u32>().unwrap();
         let spirv = optimizer
             .optimize(data, &mut OptCallbacks {}, None)
-            .unwrap();
+            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
+
+        let validator = spirv_tools::val::create(Some(spirv_tools::TargetEnv::Vulkan_1_1));
+        validator
+            .validate(spirv.as_words(), None)
+            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
 
         shader
             .add_shader_variant(&[], spirv.as_bytes())
