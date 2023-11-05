@@ -88,21 +88,16 @@ impl MessageCallback for OptCallbacks {
     }
 }
 
-impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
-    fn process(
-        &self,
-        _asset: dess_assets::AssetRef,
-        _context: &crate::AssetProcessingContext,
-        content: LoadedShaderCode,
-    ) -> Result<GpuShader, Error> {
-        let profile = match content.stage {
+impl CompileShader {
+    fn compile_shader(stage: GpuShaderStage, code: &str, flags: &[&str]) -> Result<Vec<u8>, Error> {
+        let profile = match stage {
             GpuShaderStage::Vertex => "vs_6_4",
             GpuShaderStage::Fragment => "ps_6_4",
         };
-        let mut shader = GpuShader::new(content.stage, &[]);
+        let defines = flags.iter().map(|x| (*x, Some("1"))).collect::<Vec<_>>();
         let spirv = hassle_rs::compile_hlsl(
             "",
-            &content.code,
+            code,
             "main",
             profile,
             &[
@@ -112,7 +107,7 @@ impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
                 "-Ges",
                 "-HV 2021",
             ],
-            &[],
+            &defines,
         )
         .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
 
@@ -128,8 +123,24 @@ impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
             .validate(spirv.as_words(), None)
             .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
 
+        Ok(spirv.as_bytes().to_vec())
+    }
+}
+
+impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
+    fn process(
+        &self,
+        _asset: dess_assets::AssetRef,
+        _context: &crate::AssetProcessingContext,
+        content: LoadedShaderCode,
+    ) -> Result<GpuShader, Error> {
+        let mut shader = GpuShader::new(content.stage, &[]);
+
         shader
-            .add_shader_variant(&[], spirv.as_bytes())
+            .add_shader_variant(
+                &[],
+                &Self::compile_shader(content.stage, &content.code, &[])?,
+            )
             .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
 
         Ok(shader)
