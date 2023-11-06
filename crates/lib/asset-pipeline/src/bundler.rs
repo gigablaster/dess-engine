@@ -22,14 +22,15 @@ use std::{
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use dess_assets::{
-    BundleDesc, LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
+    BundleDesc, LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_DICT_SIZE,
+    LOCAL_BUNDLE_DICT_USAGE_LIMIT, LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
 };
 use dess_common::traits::BinarySerialization;
 use log::{error, info};
+use uuid::Uuid;
 
 use crate::{cached_asset_path, read_to_end, AssetProcessingContext};
 
-const DICT_SIZE: usize = 64536 * 2;
 const TRAIN_SAMPLE_SIZE: usize = 256;
 
 /// Builds local asset bundle
@@ -48,20 +49,11 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
         if src_path.exists() {
             let data = read_to_end(src_path)?;
             let size = data.len() as u32;
-            let dict = if let Some(dict) = dicts.get(&info.ty) {
-                dict
-            } else {
-                info!("Generate zstd dictionary for asset type {}", info.ty);
-                let dict = prepare_dict(&data)?;
-                dicts.insert(info.ty, dict);
-
-                dicts.get(&info.ty).unwrap()
-            };
             let data = if size >= LOCAL_BUNDLE_ALIGN as u32 {
                 info!("Compress {}", info.asset);
                 let mut result = Vec::new();
                 let writer = Cursor::new(&mut result);
-                let mut encoder = zstd::Encoder::with_dictionary(writer, 22, dict)?;
+                let mut encoder = create_encoder(writer, &data, info.ty, &mut dicts)?;
                 encoder.set_pledged_src_size(Some(size as _))?;
                 encoder.write_all(&data)?;
                 encoder.do_finish()?;
@@ -74,6 +66,9 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
             let offset = try_align(&mut target)?;
             target.write_all(&data)?;
             desc.add_asset(info.asset, info.ty, offset, size, data.len() as _);
+            if let Some(dependencies) = context.get_dependencies(info.asset) {
+                desc.set_dependencies(info.asset, &dependencies);
+            }
         } else {
             error!("Asset {} doesn't exist - skip", info.asset);
         }
@@ -90,6 +85,28 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
     Ok(())
 }
 
+fn create_encoder<'a, W: Write>(
+    w: W,
+    data: &'a [u8],
+    ty: Uuid,
+    dicts: &'a mut HashMap<Uuid, Vec<u8>>,
+) -> io::Result<zstd::Encoder<'a, W>> {
+    if data.len() <= LOCAL_BUNDLE_DICT_USAGE_LIMIT {
+        zstd::Encoder::new(w, 22)
+    } else {
+        let dict = if let Some(dict) = dicts.get(&ty) {
+            dict
+        } else {
+            info!("Generate zstd dictionary for asset type {}", ty);
+            let dict = prepare_dict(data)?;
+            dicts.insert(ty, dict);
+
+            dicts.get(&ty).unwrap()
+        };
+        zstd::Encoder::with_dictionary(w, 22, dict)
+    }
+}
+
 fn prepare_dict(data: &[u8]) -> io::Result<Vec<u8>> {
     let mut samples = Vec::new();
     let mut size = data.len();
@@ -99,7 +116,7 @@ fn prepare_dict(data: &[u8]) -> io::Result<Vec<u8>> {
     }
     samples.push(size);
 
-    zstd::dict::from_continuous(data, &samples, DICT_SIZE)
+    zstd::dict::from_continuous(data, &samples, LOCAL_BUNDLE_DICT_SIZE)
 }
 
 fn try_align<W: Write + Seek>(w: &mut W) -> io::Result<u64> {

@@ -15,7 +15,7 @@
 
 use std::{
     collections::HashMap,
-    io::{self, Cursor, Read, Seek},
+    io::{self, BufRead, Cursor, Read, Seek},
     mem::size_of,
     path::Path,
 };
@@ -31,6 +31,8 @@ use crate::{AssetBundle, AssetRef, MappedFile};
 pub const LOCAL_BUNDLE_ALIGN: u64 = 4096;
 pub const LOCAL_BUNDLE_MAGIC: FourCC = FourCC(*b"BNDL");
 pub const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
+pub const LOCAL_BUNDLE_DICT_SIZE: usize = 64536;
+pub const LOCAL_BUNDLE_DICT_USAGE_LIMIT: usize = LOCAL_BUNDLE_DICT_SIZE * 2;
 
 #[derive(Debug, Eq, Clone, Copy)]
 struct BundleDirectoryEntry {
@@ -104,11 +106,13 @@ impl BinaryDeserialization for BundleDirectoryEntry {
 #[derive(Debug, Default)]
 pub struct LocalBundleDesc {
     assets: SortedSet<BundleDirectoryEntry>,
+    dependencies: HashMap<AssetRef, Vec<AssetRef>>,
     names: HashMap<String, AssetRef>,
 }
 
 pub trait BundleDesc: BinarySerialization + BinaryDeserialization {
     fn add_asset(&mut self, asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32);
+    fn set_dependencies(&mut self, asset: AssetRef, dependencies: &[AssetRef]);
     fn set_name(&mut self, asset: AssetRef, name: &str);
 }
 
@@ -121,11 +125,16 @@ impl BundleDesc for LocalBundleDesc {
     fn set_name(&mut self, asset: AssetRef, name: &str) {
         self.names.insert(name.into(), asset);
     }
+
+    fn set_dependencies(&mut self, asset: AssetRef, dependencies: &[AssetRef]) {
+        self.dependencies.insert(asset, dependencies.to_vec());
+    }
 }
 
 impl BinarySerialization for LocalBundleDesc {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.assets.serialize(w)?;
+        self.dependencies.serialize(w)?;
         self.names.serialize(w)?;
 
         Ok(())
@@ -135,9 +144,14 @@ impl BinarySerialization for LocalBundleDesc {
 impl BinaryDeserialization for LocalBundleDesc {
     fn deserialize(r: &mut impl std::io::Read) -> io::Result<Self> {
         let assets = SortedSet::deserialize(r)?;
+        let dependencies = HashMap::deserialize(r)?;
         let names = HashMap::deserialize(r)?;
 
-        Ok(Self { assets, names })
+        Ok(Self {
+            assets,
+            dependencies,
+            names,
+        })
     }
 }
 
@@ -170,15 +184,8 @@ impl AssetBundle for LocalBundle {
             let offset = entry.offset as usize;
             let slice = &self.file.as_ref()[offset..offset + packed];
             if packed != size {
-                let dict = self.dicts.get(&expect_ty).ok_or(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "Decompression dictionary doesn't exist for asset type {:?}",
-                        expect_ty
-                    ),
-                ))?;
                 let reader = Cursor::new(slice);
-                let mut decoder = zstd::Decoder::with_dictionary(reader, dict)?;
+                let mut decoder = self.create_decoder(reader, expect_ty, size)?;
                 let mut result = vec![0u8; size];
                 decoder.read_exact(&mut result)?;
 
@@ -192,6 +199,10 @@ impl AssetBundle for LocalBundle {
                 format!("Asset id {} isn't found", asset.uuid),
             ))
         }
+    }
+
+    fn dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]> {
+        self.desc.dependencies.get(&asset).map(|x| x.as_ref())
     }
 }
 
@@ -216,5 +227,25 @@ impl LocalBundle {
         let desc = LocalBundleDesc::deserialize(&mut cursor)?;
 
         Ok(LocalBundle { file, dicts, desc })
+    }
+
+    fn create_decoder<R: BufRead>(
+        &self,
+        r: R,
+        ty: Uuid,
+        unpacked: usize,
+    ) -> io::Result<zstd::Decoder<R>> {
+        if unpacked <= LOCAL_BUNDLE_DICT_USAGE_LIMIT {
+            zstd::Decoder::with_buffer(r)
+        } else {
+            let dict = self.dicts.get(&ty).ok_or(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "Decompression dictionary doesn't exist for asset type {:?}",
+                    ty
+                ),
+            ))?;
+            zstd::Decoder::with_dictionary(r, dict)
+        }
     }
 }

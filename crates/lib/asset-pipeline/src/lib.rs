@@ -226,12 +226,10 @@ impl AssetProcessingContextImpl {
             .copied()
     }
 
-    pub fn get_dependencies(&self, asset: AssetRef) -> Vec<AssetRef> {
-        if let Some(deps) = self.dependencies.get(&asset) {
-            deps.iter().copied().collect()
-        } else {
-            Vec::default()
-        }
+    pub fn get_dependencies(&self, asset: AssetRef) -> Option<Vec<AssetRef>> {
+        self.dependencies
+            .get(&asset)
+            .map(|deps| deps.iter().copied().collect())
     }
 }
 
@@ -301,7 +299,7 @@ impl AssetProcessingContext {
         self.inner.lock().add_dependency(from, to);
     }
 
-    pub fn get_dependencies(&self, asset: AssetRef) -> Vec<AssetRef> {
+    pub fn get_dependencies(&self, asset: AssetRef) -> Option<Vec<AssetRef>> {
         self.inner.lock().get_dependencies(asset)
     }
 }
