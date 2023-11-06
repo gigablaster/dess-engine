@@ -119,7 +119,7 @@ fn prepare_dict(data: &[u8]) -> io::Result<Vec<u8>> {
     zstd::dict::from_continuous(data, &samples, LOCAL_BUNDLE_DICT_SIZE)
 }
 
-fn try_align<W: Write + Seek>(w: &mut W) -> io::Result<u64> {
+fn try_align<W: Seek>(w: &mut W) -> io::Result<u64> {
     let offset = w.stream_position()?;
     let offset_align = (offset & !(LOCAL_BUNDLE_ALIGN - 1)) + LOCAL_BUNDLE_ALIGN;
 
