@@ -22,8 +22,8 @@ use std::{
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use dess_assets::{
-    BundleDesc, LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_DICT_SIZE,
-    LOCAL_BUNDLE_DICT_USAGE_LIMIT, LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
+    LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_DICT_SIZE, LOCAL_BUNDLE_DICT_USAGE_LIMIT,
+    LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
 };
 use dess_common::traits::BinarySerialization;
 use log::{error, info};

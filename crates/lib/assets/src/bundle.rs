@@ -23,7 +23,6 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use four_cc::FourCC;
-use sorted_vec::SortedSet;
 use uuid::Uuid;
 
 use crate::{AssetBundle, AssetRef, MappedFile};
@@ -34,9 +33,8 @@ pub const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
 pub const LOCAL_BUNDLE_DICT_SIZE: usize = 64536;
 pub const LOCAL_BUNDLE_DICT_USAGE_LIMIT: usize = LOCAL_BUNDLE_DICT_SIZE * 2;
 
-#[derive(Debug, Eq, Clone, Copy)]
-struct BundleDirectoryEntry {
-    id: Uuid,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BundleDirectoryEntry {
     ty: Uuid,
     offset: u64,
     size: u32,
@@ -44,9 +42,8 @@ struct BundleDirectoryEntry {
 }
 
 impl BundleDirectoryEntry {
-    pub fn new(asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32) -> Self {
+    pub fn new(ty: Uuid, offset: u64, size: u32, packed: u32) -> Self {
         Self {
-            id: asset.uuid,
             ty,
             offset,
             size,
@@ -55,27 +52,8 @@ impl BundleDirectoryEntry {
     }
 }
 
-impl PartialEq for BundleDirectoryEntry {
-    fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
-    }
-}
-
-impl PartialOrd for BundleDirectoryEntry {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for BundleDirectoryEntry {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.id.as_u128().cmp(&other.id.as_u128())
-    }
-}
-
 impl BinarySerialization for BundleDirectoryEntry {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        self.id.serialize(w)?;
         self.ty.serialize(w)?;
         w.write_u64::<LittleEndian>(self.offset)?;
         w.write_u32::<LittleEndian>(self.size)?;
@@ -87,14 +65,12 @@ impl BinarySerialization for BundleDirectoryEntry {
 
 impl BinaryDeserialization for BundleDirectoryEntry {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let id = Uuid::deserialize(r)?;
         let ty = Uuid::deserialize(r)?;
         let offset = r.read_u64::<LittleEndian>()?;
         let size = r.read_u32::<LittleEndian>()?;
         let packed = r.read_u32::<LittleEndian>()?;
 
         Ok(Self {
-            id,
             ty,
             offset,
             size,
@@ -105,29 +81,35 @@ impl BinaryDeserialization for BundleDirectoryEntry {
 
 #[derive(Debug, Default)]
 pub struct LocalBundleDesc {
-    assets: SortedSet<BundleDirectoryEntry>,
+    assets: HashMap<AssetRef, BundleDirectoryEntry>,
     dependencies: HashMap<AssetRef, Vec<AssetRef>>,
     names: HashMap<String, AssetRef>,
 }
 
-pub trait BundleDesc: BinarySerialization + BinaryDeserialization {
-    fn add_asset(&mut self, asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32);
-    fn set_dependencies(&mut self, asset: AssetRef, dependencies: &[AssetRef]);
-    fn set_name(&mut self, asset: AssetRef, name: &str);
-}
-
-impl BundleDesc for LocalBundleDesc {
-    fn add_asset(&mut self, asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32) {
+impl LocalBundleDesc {
+    pub fn add_asset(&mut self, asset: AssetRef, ty: Uuid, offset: u64, size: u32, packed: u32) {
         self.assets
-            .push(BundleDirectoryEntry::new(asset, ty, offset, size, packed));
+            .insert(asset, BundleDirectoryEntry::new(ty, offset, size, packed));
     }
 
-    fn set_name(&mut self, asset: AssetRef, name: &str) {
+    pub fn set_name(&mut self, asset: AssetRef, name: &str) {
         self.names.insert(name.into(), asset);
     }
 
-    fn set_dependencies(&mut self, asset: AssetRef, dependencies: &[AssetRef]) {
+    pub fn set_dependencies(&mut self, asset: AssetRef, dependencies: &[AssetRef]) {
         self.dependencies.insert(asset, dependencies.to_vec());
+    }
+
+    pub fn get_by_name(&self, name: &str) -> Option<AssetRef> {
+        self.names.get(name).copied()
+    }
+
+    pub fn get_asset(&self, asset: AssetRef) -> Option<BundleDirectoryEntry> {
+        self.assets.get(&asset).copied()
+    }
+
+    pub fn get_dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]> {
+        self.dependencies.get(&asset).map(|x| x.as_ref())
     }
 }
 
@@ -143,7 +125,7 @@ impl BinarySerialization for LocalBundleDesc {
 
 impl BinaryDeserialization for LocalBundleDesc {
     fn deserialize(r: &mut impl std::io::Read) -> io::Result<Self> {
-        let assets = SortedSet::deserialize(r)?;
+        let assets = HashMap::deserialize(r)?;
         let dependencies = HashMap::deserialize(r)?;
         let names = HashMap::deserialize(r)?;
 
@@ -167,37 +149,29 @@ impl AssetBundle for LocalBundle {
     }
 
     fn load(&self, asset: AssetRef, expect_ty: Uuid) -> io::Result<Vec<u8>> {
-        if let Ok(index) = self
-            .desc
-            .assets
-            .binary_search_by(|x| x.id.as_u128().cmp(&asset.as_u128()))
-        {
-            let entry = &self.desc.assets[index];
-            if entry.ty != expect_ty {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Wrong asset type: expected {} got {}", expect_ty, entry.ty),
-                ));
-            }
-            let size = entry.size as usize;
-            let packed = entry.packed as usize;
-            let offset = entry.offset as usize;
-            let slice = &self.file.as_ref()[offset..offset + packed];
-            if packed != size {
-                let reader = Cursor::new(slice);
-                let mut decoder = self.create_decoder(reader, expect_ty, size)?;
-                let mut result = vec![0u8; size];
-                decoder.read_exact(&mut result)?;
+        let entry = self.desc.get_asset(asset).ok_or(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Asset id {} isn't found", asset.uuid),
+        ))?;
+        if entry.ty != expect_ty {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Wrong asset type: expected {} got {}", expect_ty, entry.ty),
+            ));
+        }
+        let size = entry.size as usize;
+        let packed = entry.packed as usize;
+        let offset = entry.offset as usize;
+        let slice = &self.file.as_ref()[offset..offset + packed];
+        if packed != size {
+            let reader = Cursor::new(slice);
+            let mut decoder = self.create_decoder(reader, expect_ty, size)?;
+            let mut result = vec![0u8; size];
+            decoder.read_exact(&mut result)?;
 
-                Ok(result)
-            } else {
-                Ok(Vec::from(slice))
-            }
+            Ok(result)
         } else {
-            Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!("Asset id {} isn't found", asset.uuid),
-            ))
+            Ok(Vec::from(slice))
         }
     }
 
@@ -247,5 +221,59 @@ impl LocalBundle {
             ))?;
             zstd::Decoder::with_dictionary(r, dict)
         }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use std::io::Cursor;
+
+    use dess_common::traits::{BinaryDeserialization, BinarySerialization};
+    use uuid::Uuid;
+
+    use crate::{AssetRef, BundleDirectoryEntry, LocalBundleDesc};
+
+    #[test]
+    fn write_read_bundle_desc() {
+        let mut desc = LocalBundleDesc::default();
+        let uuid1 = uuid::uuid!("36a400d6-1e50-443e-9e4c-b87bd92364ea");
+        let uuid2 = uuid::uuid!("7134edb0-1f41-423a-a00e-1d8596d60460");
+        let asset1 = AssetRef::from_uuid(uuid1);
+        let asset2 = AssetRef::from_uuid(uuid2);
+        desc.add_asset(asset1, uuid2, 0, 100, 50);
+        desc.add_asset(asset2, uuid1, 200, 200, 200);
+        desc.set_name(asset1, "abc");
+        desc.set_dependencies(asset1, &[asset2]);
+
+        let mut target = Vec::<u8>::new();
+        let mut writer = Cursor::new(&mut target);
+
+        desc.serialize(&mut writer).unwrap();
+
+        let mut reader = Cursor::new(target);
+        let desc = LocalBundleDesc::deserialize(&mut reader).unwrap();
+        assert_eq!(Some(asset1), desc.get_by_name("abc"));
+        assert_eq!(None, desc.get_by_name("fuck"));
+        assert_eq!(Some(vec![asset2].as_ref()), desc.get_dependencies(asset1));
+        assert_eq!(None, desc.get_dependencies(asset2));
+        assert_eq!(
+            BundleDirectoryEntry {
+                ty: uuid2,
+                offset: 0,
+                size: 100,
+                packed: 50
+            },
+            desc.get_asset(asset1).unwrap()
+        );
+        assert_eq!(
+            BundleDirectoryEntry {
+                ty: uuid1,
+                offset: 200,
+                size: 200,
+                packed: 200
+            },
+            desc.get_asset(asset2).unwrap()
+        );
+        assert_eq!(None, desc.get_asset(AssetRef::from_uuid(Uuid::nil())));
     }
 }

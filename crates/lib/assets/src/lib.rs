@@ -40,6 +40,10 @@ pub struct AssetRef {
 }
 
 impl AssetRef {
+    pub fn from_uuid(uuid: Uuid) -> Self {
+        Self { uuid }
+    }
+
     pub fn from_path(path: &Path) -> Self {
         Self::from_bytes(path.to_str().unwrap().as_bytes())
     }

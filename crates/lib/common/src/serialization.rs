@@ -23,7 +23,6 @@ use std::{
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use four_cc::FourCC;
 
-use sorted_vec::SortedSet;
 use uuid::Uuid;
 
 use crate::traits::{BinaryDeserialization, BinarySerialization};
@@ -411,28 +410,5 @@ impl BinarySerialization for u32 {
 impl BinaryDeserialization for u32 {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         r.read_u32::<LittleEndian>()
-    }
-}
-
-impl<T: BinarySerialization + Ord> BinarySerialization for SortedSet<T> {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        w.write_u32::<LittleEndian>(self.len() as u32)?;
-        for item in self.iter() {
-            item.serialize(w)?;
-        }
-
-        Ok(())
-    }
-}
-
-impl<T: BinaryDeserialization + Ord> BinaryDeserialization for SortedSet<T> {
-    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
-        let count = r.read_u32::<LittleEndian>()?;
-        let mut data = SortedSet::with_capacity(count as _);
-        for _ in 0..count {
-            data.push(T::deserialize(r)?);
-        }
-
-        Ok(data)
     }
 }
