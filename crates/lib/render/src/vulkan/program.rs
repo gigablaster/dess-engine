@@ -32,12 +32,14 @@ use super::{Device, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
+const DYNAMIC_BINDING_SLOT: u32 = 3;
+
 // Slots are
 // 0 - per pass
 // 1 - per material
 // 2 - per object
-// 4 - big dynamic shit
-static DESCRIPTORS_PER_SLOT: [u32; MAX_SETS] = [4, 64, 512, 128];
+// 3 - dynamic shit
+static DESCRIPTORS_PER_SLOT: [u32; MAX_SETS] = [4, 64, 256, 512];
 
 type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
 type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
@@ -53,11 +55,13 @@ pub struct DescriptorSetInfo {
 impl DescriptorSetInfo {
     pub fn new(
         device: &Device,
+        set_index: u32,
         stage: vk::ShaderStageFlags,
         set: &BTreeMap<u32, DescriptorInfo>,
         expected_count: u32,
     ) -> Result<Self, RenderError> {
         let mut uniform_buffers_count = 0;
+        let mut dynamic_uniform_buffers_count = 0;
         let mut combined_samplers_count = 0;
         let mut sampled_images_count = 0;
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
@@ -69,8 +73,19 @@ impl DescriptorSetInfo {
                 | rspirv_reflect::DescriptorType::STORAGE_IMAGE
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    bindings.insert(*index, Self::create_uniform_binding(*index, stage, binding));
-                    uniform_buffers_count += 1;
+                    let binding = Self::create_uniform_binding(
+                        *index,
+                        stage,
+                        binding,
+                        set_index == DYNAMIC_BINDING_SLOT, // Force last slot to have dynamic bindings
+                    );
+
+                    bindings.insert(*index, binding);
+                    if binding.descriptor_type == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
+                        dynamic_uniform_buffers_count += 1
+                    } else {
+                        uniform_buffers_count += 1;
+                    }
                 }
                 rspirv_reflect::DescriptorType::SAMPLED_IMAGE => {
                     bindings.insert(
@@ -138,7 +153,7 @@ impl DescriptorSetInfo {
                 storage_texel_buffer: 0,
                 uniform_buffer: uniform_buffers_count * expected_count,
                 storage_buffer: 0,
-                uniform_buffer_dynamic: 0,
+                uniform_buffer_dynamic: dynamic_uniform_buffers_count * expected_count,
                 storage_buffer_dynamic: 0,
                 input_attachment: 0,
                 acceleration_structure: 0,
@@ -152,9 +167,15 @@ impl DescriptorSetInfo {
         index: u32,
         stage: vk::ShaderStageFlags,
         binding: &DescriptorInfo,
+        force_dynamic: bool,
     ) -> vk::DescriptorSetLayoutBinding {
         let descriptor_type = match binding.ty {
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER => vk::DescriptorType::UNIFORM_BUFFER,
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if !force_dynamic => {
+                vk::DescriptorType::UNIFORM_BUFFER
+            }
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if force_dynamic => {
+                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+            }
             rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
                 vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
@@ -359,6 +380,7 @@ impl Program {
                 Some(set) => {
                     layouts.push(DescriptorSetInfo::new(
                         device,
+                        set_index,
                         stages,
                         set,
                         DESCRIPTORS_PER_SLOT[set_index as usize],

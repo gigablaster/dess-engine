@@ -22,20 +22,25 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 
 use crate::{
     uniforms::Uniforms,
-    vulkan::{DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc},
+    vulkan::{DescriptorSet, DescriptorSetInfo, Device},
     RenderError,
 };
 
 #[derive(Debug, Clone, Copy)]
-struct BindedImage {
+struct BindImage {
     layout: vk::ImageLayout,
     view: vk::ImageView,
 }
 
 #[derive(Debug, Clone, Copy)]
-struct BindedBuffer {
+struct BindStaticUniform {
     offset: u32,
     size: u32,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BindDynamicUniform {
+    buffer: vk::Buffer,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -53,15 +58,18 @@ pub struct Descriptor {
 #[derive(Debug)]
 pub struct DescriptorData {
     descriptor: Option<DescriptorSet>,
-    buffers: Vec<BindingPoint<BindedBuffer>>,
-    images: Vec<BindingPoint<BindedImage>>,
+    static_buffers: Vec<BindingPoint<BindStaticUniform>>,
+    dynamic_buffers: Vec<BindingPoint<BindDynamicUniform>>,
+    images: Vec<BindingPoint<BindImage>>,
     count: DescriptorTotalCount,
     layout: vk::DescriptorSetLayout,
 }
 
 impl DescriptorData {
     pub fn is_valid(&self) -> bool {
-        self.buffers.iter().all(|buffer| buffer.data.is_some())
+        self.static_buffers
+            .iter()
+            .all(|buffer| buffer.data.is_some())
             && self.images.iter().all(|image| image.data.is_some())
             && self.descriptor.is_some()
     }
@@ -81,6 +89,7 @@ pub struct DescriptorCache {
     dirty: HashSet<DescriptorHandle>,
     retired_descriptors: Vec<Descriptor>,
     retired_uniforms: Vec<u32>,
+    unforms_to_dealloc: Vec<u32>,
     uniforms: Uniforms,
 }
 
@@ -94,17 +103,18 @@ impl DescriptorCache {
             dirty: HashSet::new(),
             retired_descriptors: Vec::new(),
             retired_uniforms: Vec::new(),
+            unforms_to_dealloc: Vec::new(),
             uniforms: Uniforms::new(device)?,
         })
     }
 
     pub fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, RenderError> {
-        let buffers = set
+        let static_buffers = set
             .types
             .iter()
             .filter_map(|(index, ty)| {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER {
-                    Some(BindingPoint::<BindedBuffer> {
+                    Some(BindingPoint::<BindStaticUniform> {
                         binding: *index,
                         data: None,
                     })
@@ -118,7 +128,21 @@ impl DescriptorCache {
             .iter()
             .filter_map(|(index, ty)| {
                 if *ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER {
-                    Some(BindingPoint::<BindedImage> {
+                    Some(BindingPoint::<BindImage> {
+                        binding: *index,
+                        data: None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let dynamic_buffers = set
+            .types
+            .iter()
+            .filter_map(|(index, ty)| {
+                if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
+                    Some(BindingPoint::<BindDynamicUniform> {
                         binding: *index,
                         data: None,
                     })
@@ -129,14 +153,15 @@ impl DescriptorCache {
             .collect::<Vec<_>>();
         let count = DescriptorTotalCount {
             combined_image_sampler: images.len() as _,
-            uniform_buffer: buffers.len() as _,
+            uniform_buffer: static_buffers.len() as _,
             ..Default::default()
         };
         let handle = self.container.push(Descriptor {
             raw: vk::DescriptorSet::null(),
             data: Box::new(DescriptorData {
                 descriptor: None,
-                buffers,
+                static_buffers,
+                dynamic_buffers,
                 images,
                 count,
                 layout: set.layout,
@@ -155,7 +180,7 @@ impl DescriptorCache {
         if let Some(value) = self.container.remove(handle) {
             value
                 .data
-                .buffers
+                .static_buffers
                 .iter()
                 .filter_map(|x| x.data)
                 .for_each(|x| self.retired_uniforms.push(x.offset));
@@ -167,8 +192,7 @@ impl DescriptorCache {
         &mut self,
         handle: DescriptorHandle,
         binding: u32,
-        value: &Arc<Image>,
-        aspect: vk::ImageAspectFlags,
+        view: vk::ImageView,
         layout: vk::ImageLayout,
     ) -> Result<(), RenderError> {
         if let Some(desc) = self.container.get_mut(handle) {
@@ -177,9 +201,8 @@ impl DescriptorCache {
                 .images
                 .iter_mut()
                 .find(|point| point.binding == binding);
-            let view = value.get_or_create_view(ImageViewDesc::default().aspect_mask(aspect))?;
-            if let Some(image) = image {
-                image.data = Some(BindedImage { layout, view });
+            if let Some(point) = image {
+                point.data = Some(BindImage { layout, view });
                 self.dirty.insert(handle);
             }
         }
@@ -194,13 +217,13 @@ impl DescriptorCache {
         data: &T,
     ) -> Result<(), RenderError> {
         if let Some(desc) = self.container.get_mut(handle) {
-            let buffer = desc
+            let desc = desc
                 .data
-                .buffers
+                .static_buffers
                 .iter_mut()
                 .find(|point| point.binding == binding);
-            if let Some(buffer) = buffer {
-                if let Some(old) = buffer.data.replace(BindedBuffer {
+            if let Some(point) = desc {
+                if let Some(old) = point.data.replace(BindStaticUniform {
                     offset: self.uniforms.push(data)?,
                     size: size_of::<T>() as u32,
                 }) {
@@ -212,14 +235,38 @@ impl DescriptorCache {
         Ok(())
     }
 
+    pub fn set_dynamic_uniform(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: u32,
+        buffer: vk::Buffer,
+    ) -> Result<(), RenderError> {
+        if let Some(desc) = self.container.get_mut(handle) {
+            let desc = desc
+                .data
+                .dynamic_buffers
+                .iter_mut()
+                .find(|point| point.binding == binding);
+            if let Some(point) = desc {
+                point.data = Some(BindDynamicUniform { buffer });
+                self.dirty.insert(handle);
+            }
+        }
+        Ok(())
+    }
+
     pub fn update_descriptors(&mut self) -> Result<(), RenderError> {
         puffin::profile_scope!("Update descriptors");
         let drop_list = &mut self.device.drop_list();
         let allocator = &mut self.device.descriptor_allocator();
         // Free uniforms from last update
-        self.retired_uniforms
+        self.unforms_to_dealloc
             .drain(..)
             .for_each(|x| self.uniforms.dealloc(x));
+        // Mark retired unifroms into 'to delete' list
+        self.retired_uniforms
+            .drain(..)
+            .for_each(|x| self.unforms_to_dealloc.push(x));
 
         let device = self.device.raw();
         {
@@ -310,7 +357,7 @@ impl DescriptorCache {
                     })
                     .for_each(|x| writes.push(x));
                 desc.data
-                    .buffers
+                    .static_buffers
                     .iter()
                     .map(|binding| {
                         let buffer = binding.data.unwrap();
@@ -326,6 +373,25 @@ impl DescriptorCache {
                             .dst_binding(binding.binding)
                             .dst_set(*descriptor.raw())
                             .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
+                            .build()
+                    })
+                    .for_each(|x| writes.push(x));
+                desc.data
+                    .dynamic_buffers
+                    .iter()
+                    .map(|binding| {
+                        let data = binding.data.unwrap().buffer;
+                        let buffer = vk::DescriptorBufferInfo::builder()
+                            .buffer(data)
+                            .offset(0)
+                            .range(vk::WHOLE_SIZE)
+                            .build();
+
+                        vk::WriteDescriptorSet::builder()
+                            .buffer_info(slice::from_ref(buffers.add(buffer)))
+                            .dst_binding(binding.binding)
+                            .dst_set(*descriptor.raw())
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                             .build()
                     })
                     .for_each(|x| writes.push(x));
