@@ -16,12 +16,12 @@
 use std::{ptr::NonNull, sync::Arc};
 
 use ash::vk::{self, BufferCreateInfo};
-use gpu_alloc::{Dedicated, MemoryBlock, Request, UsageFlags};
+use gpu_alloc::{Dedicated, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::RenderError;
 
-use super::Device;
+use super::{Device, GpuMemory, MemoryAllocationInfo};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferDesc {
@@ -79,7 +79,7 @@ pub struct Buffer {
     device: Arc<Device>,
     raw: vk::Buffer,
     desc: BufferDesc,
-    allocation: Option<MemoryBlock<vk::DeviceMemory>>,
+    allocation: Option<GpuMemory>,
 }
 
 unsafe impl Send for Buffer {}
@@ -163,6 +163,14 @@ impl Buffer {
 
     pub fn name(&self, name: &str) {
         self.device.set_object_name(self.raw, name);
+    }
+
+    pub fn allocation_info(&self) -> Option<MemoryAllocationInfo> {
+        self.allocation.as_ref().map(|memory| MemoryAllocationInfo {
+            memory: memory.memory(),
+            offset: memory.offset(),
+            size: memory.size(),
+        })
     }
 }
 

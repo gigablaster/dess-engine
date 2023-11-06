@@ -40,6 +40,12 @@ pub use program::*;
 pub use render_pass::*;
 pub use swapchain::*;
 
+pub struct MemoryAllocationInfo<'a> {
+    pub memory: &'a vk::DeviceMemory,
+    pub offset: u64,
+    pub size: u64,
+}
+
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
 pub type DescriptorAllocator =

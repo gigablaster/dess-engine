@@ -22,7 +22,7 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 
 use crate::{
     uniforms::Uniforms,
-    vulkan::{DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc, SubmitWait},
+    vulkan::{DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc},
     RenderError,
 };
 
@@ -212,7 +212,7 @@ impl DescriptorCache {
         Ok(())
     }
 
-    pub fn update_descriptors(&mut self) -> Result<Option<SubmitWait>, RenderError> {
+    pub fn update_descriptors(&mut self) -> Result<(), RenderError> {
         puffin::profile_scope!("Update descriptors");
         let drop_list = &mut self.device.drop_list();
         let allocator = &mut self.device.descriptor_allocator();

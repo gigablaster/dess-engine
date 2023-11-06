@@ -24,14 +24,14 @@ use ash::vk;
 use dess_common::memory::BlockAllocator;
 
 use crate::{
-    vulkan::{Buffer, BufferDesc, CommandBuffer, CommandPool, Device, Semaphore, SubmitWait},
-    GpuResource, RenderError,
+    vulkan::{Buffer, BufferDesc, Device},
+    RenderError,
 };
 
 const BUCKET_SIZE: u32 = 0xFFFF;
 const MIN_UNIFORM_SIZE: u32 = 0x100;
 const MAX_UNIFORM_SIZE: u32 = 0x4000;
-const UNIFORM_BUFFER_SIZE: u32 = 64 * 1024 * 1024;
+const UNIFORM_BUFFER_SIZE: u32 = 8 * 1024 * 1024;
 const BUCKET_COUNT: u32 = UNIFORM_BUFFER_SIZE / BUCKET_SIZE;
 const SIZE_RANGES: [(u32, u32); 7] = [
     (8192, 16384),
@@ -103,11 +103,7 @@ impl Bucket {
 pub struct Uniforms {
     device: Arc<Device>,
     buffer: Arc<Buffer>,
-    staging: Arc<Buffer>,
-    pool: CommandPool,
-    cb: CommandBuffer,
-    semaphore: Semaphore,
-    writes: Vec<vk::BufferCopy>,
+    writes: Vec<vk::MappedMemoryRange>,
     mapping: NonNull<u8>,
     buckets: Vec<Bucket>,
     free_buckets: Vec<usize>,
@@ -115,39 +111,23 @@ pub struct Uniforms {
 
 impl Uniforms {
     pub fn new(device: &Arc<Device>) -> Result<Self, RenderError> {
-        let buffer = Buffer::new(
+        let mut buffer = Buffer::new(
             device,
-            BufferDesc::gpu_only(
+            BufferDesc::upload(
                 UNIFORM_BUFFER_SIZE as _,
-                vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
+                vk::BufferUsageFlags::UNIFORM_BUFFER,
             )
             .dedicated(true),
         )?;
-        let mut staging = Buffer::new(
-            device,
-            BufferDesc::host_only(UNIFORM_BUFFER_SIZE as _, vk::BufferUsageFlags::TRANSFER_SRC),
-        )?;
         buffer.name("Unified uniform buffer");
-        staging.name("Uniform buffer staging");
-        let mapping = Arc::get_mut(&mut staging).unwrap().map()?;
-        let mut pool = CommandPool::new(
-            device.raw(),
-            device.queue_index(),
-            vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
-        )
-        .unwrap();
-        let cb = pool.get_or_create(device.raw()).unwrap();
+        let mapping = Arc::get_mut(&mut buffer).unwrap().map()?;
         Ok(Self {
             device: device.clone(),
             buffer,
-            staging,
             writes: Vec::with_capacity(1024),
-            cb,
-            pool,
             mapping,
             buckets: Vec::new(),
             free_buckets: Vec::new(),
-            semaphore: Semaphore::new(device.raw())?,
         })
     }
 
@@ -168,10 +148,11 @@ impl Uniforms {
                         size as usize,
                     )
                 }
+                let memory = self.buffer.allocation_info().unwrap();
                 self.writes.push(
-                    vk::BufferCopy::builder()
-                        .src_offset(offset as _)
-                        .dst_offset(offset as _)
+                    vk::MappedMemoryRange::builder()
+                        .memory(*memory.memory)
+                        .offset(memory.offset + offset as u64)
                         .size(size as _)
                         .build(),
                 );
@@ -196,27 +177,13 @@ impl Uniforms {
         self.buffer.raw()
     }
 
-    pub fn flush(&mut self) -> Result<Option<SubmitWait>, RenderError> {
-        self.cb.wait(self.device.raw())?;
-        self.cb.reset(self.device.raw())?;
-        if self.writes.is_empty() {
-            return Ok(None);
+    pub fn flush(&mut self) -> Result<(), RenderError> {
+        if !self.writes.is_empty() {
+            unsafe { self.device.raw().flush_mapped_memory_ranges(&self.writes) }?;
+            self.writes.clear();
         }
-        self.cb.record(self.device.raw(), |recorder| {
-            unsafe {
-                let _label = self.device.scoped_label(*recorder.cb, "Submiting uniforms");
-                recorder.device.cmd_copy_buffer(
-                    *recorder.cb,
-                    self.staging.raw(),
-                    self.buffer.raw(),
-                    &self.writes,
-                )
-            };
-        })?;
-        self.device.submit(&self.cb, &[], &[self.semaphore])?;
-        self.writes.clear();
 
-        Ok(Some(SubmitWait::Transfer(self.semaphore)))
+        Ok(())
     }
 
     fn find_bucket_index(&self, size: u32) -> Option<usize> {
@@ -245,12 +212,5 @@ impl Uniforms {
             .find(|(min, max)| size > *min && size <= *max)
             .copied()
             .unwrap()
-    }
-}
-
-impl Drop for Uniforms {
-    fn drop(&mut self) {
-        self.cb.free(self.device.raw());
-        self.pool.free(self.device.raw());
     }
 }
