@@ -33,34 +33,29 @@ pub struct GpuShader {
 }
 
 impl GpuShader {
-    pub fn new(stage: GpuShaderStage, possible_definitions: &[&str]) -> Self {
+    pub fn new(stage: GpuShaderStage, possible_definitions: &[String]) -> Self {
         assert!(possible_definitions.len() <= 32);
         Self {
             stage,
-            defines: possible_definitions.iter().map(|x| x.to_string()).collect(),
+            defines: possible_definitions.to_vec(),
             variations: HashMap::new(),
         }
     }
 
-    pub fn get_shader_variant(&self, definitions: &[&str]) -> Result<&[u8], Error> {
+    pub fn get_shader_variant(&self, key: u32) -> Result<&[u8], Error> {
         self.variations
-            .get(&self.get_key(definitions)?)
+            .get(&key)
             .map(|x| x.as_slice())
             .ok_or(Error::ShaderVariationNotFound)
     }
 
-    pub fn add_shader_variant(
-        &mut self,
-        definitions: &[&str],
-        bytecode: &[u8],
-    ) -> Result<(), Error> {
-        self.variations
-            .insert(self.get_key(definitions)?, bytecode.into());
+    pub fn add_shader_variant(&mut self, key: u32, bytecode: &[u8]) -> Result<(), Error> {
+        self.variations.insert(key, bytecode.into());
 
         Ok(())
     }
 
-    fn get_key(&self, definitions: &[&str]) -> Result<u32, Error> {
+    pub fn get_key(&self, definitions: &[&str]) -> Result<u32, Error> {
         let mut key = 0;
         for definition in definitions.iter() {
             let index = self

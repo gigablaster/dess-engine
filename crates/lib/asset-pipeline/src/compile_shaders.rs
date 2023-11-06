@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -88,13 +89,53 @@ impl MessageCallback for OptCallbacks {
     }
 }
 
+// regex shat itself.
+struct Parser<'a> {
+    tokens: Vec<&'a str>,
+    current: usize,
+}
+
+impl<'a> Parser<'a> {
+    pub fn new(code: &'a str) -> Self {
+        let tokens = code.split_whitespace().collect::<Vec<_>>();
+        Self { tokens, current: 0 }
+    }
+
+    pub fn find_one_of(&mut self, tokens: &[&str]) -> Option<&'a str> {
+        while self.current < self.tokens.len() {
+            let current_token = self.tokens[self.current];
+            if tokens.iter().any(|x| *x == current_token) {
+                return Some(current_token);
+            }
+            self.current += 1;
+        }
+
+        None
+    }
+
+    pub fn get_next(&self) -> Option<&'a str> {
+        self.tokens.get(self.current + 1).copied()
+    }
+
+    pub fn move_forward(&mut self) {
+        self.current += 1;
+    }
+}
+
 impl CompileShader {
-    fn compile_shader(stage: GpuShaderStage, code: &str, flags: &[&str]) -> Result<Vec<u8>, Error> {
+    fn compile_shader(
+        stage: GpuShaderStage,
+        code: &str,
+        flags: &[String],
+    ) -> Result<Vec<u8>, Error> {
         let profile = match stage {
             GpuShaderStage::Vertex => "vs_6_4",
             GpuShaderStage::Fragment => "ps_6_4",
         };
-        let defines = flags.iter().map(|x| (*x, Some("1"))).collect::<Vec<_>>();
+        let defines = flags
+            .iter()
+            .map(|x| (x.as_ref(), Some("1")))
+            .collect::<Vec<_>>();
         let spirv = hassle_rs::compile_hlsl(
             "",
             code,
@@ -125,6 +166,21 @@ impl CompileShader {
 
         Ok(spirv.as_bytes().to_vec())
     }
+
+    fn extract_flags(code: &str) -> Vec<String> {
+        let mut defines = HashSet::new();
+        let mut parser = Parser::new(code);
+        while parser.find_one_of(&["#ifdef", "#if", "#ifndef"]).is_some() {
+            if let Some(def) = parser.get_next() {
+                parser.move_forward();
+                if def.starts_with("HAVE_") || def.starts_with("USE_") {
+                    defines.insert(def);
+                }
+            }
+        }
+
+        defines.iter().map(|x| x.to_string()).collect::<Vec<_>>()
+    }
 }
 
 impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
@@ -134,14 +190,26 @@ impl ContentProcessor<LoadedShaderCode, GpuShader> for CompileShader {
         _context: &crate::AssetProcessingContext,
         content: LoadedShaderCode,
     ) -> Result<GpuShader, Error> {
-        let mut shader = GpuShader::new(content.stage, &[]);
+        let defines = Self::extract_flags(&content.code);
+        let mut shader = GpuShader::new(content.stage, &defines);
+        let variation_count = (1 << defines.len()) as u32;
 
-        shader
-            .add_shader_variant(
-                &[],
-                &Self::compile_shader(content.stage, &content.code, &[])?,
-            )
-            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
+        for index in 0..variation_count {
+            let mut current_defines = Vec::new();
+            for (shift, def) in defines.iter().enumerate() {
+                let mask = 1 << shift;
+                if index & mask == mask {
+                    current_defines.push(def.clone());
+                }
+            }
+
+            shader
+                .add_shader_variant(
+                    index,
+                    &Self::compile_shader(content.stage, &content.code, &current_defines)?,
+                )
+                .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
+        }
 
         Ok(shader)
     }
