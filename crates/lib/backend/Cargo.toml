@@ -1,5 +1,5 @@
 [package]
-name = "dess-render"
+name = "dess-backend"
 version = "0.1.0"
 edition = "2021"
 

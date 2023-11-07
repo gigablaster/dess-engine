@@ -478,19 +478,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dess-common"
-version = "0.1.0"
-dependencies = [
- "arrayvec",
- "byteorder",
- "four-cc",
- "glam 0.24.2",
- "log",
- "uuid",
-]
-
-[[package]]
-name = "dess-render"
+name = "dess-backend"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
@@ -510,6 +498,18 @@ dependencies = [
  "rspirv-reflect",
  "sorted-vec",
  "vk-sync",
+]
+
+[[package]]
+name = "dess-common"
+version = "0.1.0"
+dependencies = [
+ "arrayvec",
+ "byteorder",
+ "four-cc",
+ "glam 0.24.2",
+ "log",
+ "uuid",
 ]
 
 [[package]]
