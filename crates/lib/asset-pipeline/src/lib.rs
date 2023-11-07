@@ -171,6 +171,10 @@ impl AssetProcessingContextImpl {
             info!("Requested shader import {:?} ref: {}", shader, asset);
             self.assets.insert(AssetInfo::new::<GpuShader>(asset));
             self.shaders_to_process.insert(asset, shader.clone());
+            self.set_name(
+                asset,
+                path.as_os_str().to_ascii_lowercase().to_str().unwrap(),
+            );
             self.add_source(asset, &path);
 
             asset
@@ -186,7 +190,7 @@ impl AssetProcessingContextImpl {
     }
 
     pub fn set_name(&mut self, asset: AssetRef, name: &str) {
-        self.names.insert(name.into(), asset);
+        self.names.insert(name.replace('\\', "/"), asset);
     }
 
     pub fn drain_models_to_process(&mut self) -> Vec<(AssetRef, GltfSource)> {
