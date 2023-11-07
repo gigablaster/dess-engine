@@ -178,10 +178,14 @@ impl AssetBundle for LocalBundle {
     fn dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]> {
         self.desc.dependencies.get(&asset).map(|x| x.as_ref())
     }
+
+    fn contains(&self, asset: AssetRef) -> bool {
+        self.desc.assets.contains_key(&asset)
+    }
 }
 
 impl LocalBundle {
-    pub fn load(path: &Path) -> io::Result<Self> {
+    pub fn load(path: &Path) -> io::Result<Box<dyn AssetBundle>> {
         let file = MappedFile::open(path)?;
         let mut cursor = Cursor::new(file.as_ref());
         let magic = FourCC::deserialize(&mut cursor)?;
@@ -200,7 +204,7 @@ impl LocalBundle {
         let dicts = HashMap::deserialize(&mut cursor)?;
         let desc = LocalBundleDesc::deserialize(&mut cursor)?;
 
-        Ok(LocalBundle { file, dicts, desc })
+        Ok(Box::new(LocalBundle { file, dicts, desc }))
     }
 
     fn create_decoder<R: BufRead>(

@@ -32,12 +32,14 @@ use super::{Device, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
-const DYNAMIC_BINDING_SLOT: u32 = 3;
+pub const PASS_BINDING_SLOT: u32 = 0;
+pub const MATERIAL_BINDING_SLOT: u32 = 1;
+pub const DYNAMIC_BINDING_SLOT: u32 = 3;
 
 // Slots are
 // 0 - per pass
 // 1 - per material
-// 2 - per object
+// 2 - per object (optional)
 // 3 - dynamic shit
 static DESCRIPTORS_PER_SLOT: [u32; MAX_SETS] = [4, 64, 256, 512];
 

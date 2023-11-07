@@ -72,6 +72,10 @@ impl<T> Handle<T> {
         }
     }
 
+    pub fn is_valid(&self) -> bool {
+        self.id != u32::MAX
+    }
+
     pub fn index(&self) -> u32 {
         self.id & INDEX_MASK
     }

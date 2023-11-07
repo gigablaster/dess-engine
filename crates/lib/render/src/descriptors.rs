@@ -317,7 +317,8 @@ impl DescriptorCache {
             }
         });
         // Discard old data
-        self.dirty.retain(|x| !Self::is_valid(&self.container, *x));
+        self.dirty
+            .retain(|x| !Self::is_valid_impl(&self.container, *x));
         self.retired_descriptors
             .drain(..)
             .filter_map(|x| x.data.descriptor)
@@ -399,12 +400,63 @@ impl DescriptorCache {
         }
     }
 
-    fn is_valid(container: &HandleContainer<Descriptor>, handle: DescriptorHandle) -> bool {
+    pub fn invalidate_uniform(&mut self, handle: DescriptorHandle, binding: u32) {
+        if let Some(desc) = self.container.get_mut(handle) {
+            let point = desc
+                .data
+                .static_buffers
+                .iter_mut()
+                .find(|point| point.binding == binding);
+            if let Some(point) = point {
+                if let Some(old) = point.data.take() {
+                    self.retired_uniforms.push(old.offset);
+                    desc.raw = vk::DescriptorSet::null();
+                }
+                self.dirty.insert(handle);
+            }
+        }
+    }
+
+    pub fn invalidate_image(&mut self, handle: DescriptorHandle, binding: u32) {
+        if let Some(desc) = self.container.get_mut(handle) {
+            let point = desc
+                .data
+                .images
+                .iter_mut()
+                .find(|point| point.binding == binding);
+            if let Some(point) = point {
+                point.data.take();
+                desc.raw = vk::DescriptorSet::null();
+                self.dirty.insert(handle);
+            }
+        }
+    }
+
+    pub fn invalidate_dynamic_uniform(&mut self, handle: DescriptorHandle, binding: u32) {
+        if let Some(desc) = self.container.get_mut(handle) {
+            let point = desc
+                .data
+                .dynamic_buffers
+                .iter_mut()
+                .find(|point| point.binding == binding);
+            if let Some(point) = point {
+                point.data.take();
+                desc.raw = vk::DescriptorSet::null();
+                self.dirty.insert(handle);
+            }
+        }
+    }
+
+    fn is_valid_impl(container: &HandleContainer<Descriptor>, handle: DescriptorHandle) -> bool {
         if let Some(desc) = container.get(handle) {
             desc.is_valid()
         } else {
             false
         }
+    }
+
+    pub fn is_valid(&self, handle: DescriptorHandle) -> bool {
+        !handle.is_valid() && Self::is_valid_impl(&self.container, handle)
     }
 }
 

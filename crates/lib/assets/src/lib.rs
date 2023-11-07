@@ -89,10 +89,11 @@ pub trait Asset: Send + Sync {
     fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
 }
 
-pub trait AssetBundle: Sync {
+pub trait AssetBundle: Sync + Send {
     fn load(&self, asset: AssetRef, expect_ty: Uuid) -> io::Result<Vec<u8>>;
     fn dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]>;
     fn asset_by_name(&self, name: &str) -> Option<AssetRef>;
+    fn contains(&self, asset: AssetRef) -> bool;
 }
 
 struct MappedFile {
