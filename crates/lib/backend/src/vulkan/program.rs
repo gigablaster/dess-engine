@@ -321,6 +321,7 @@ impl GpuResource for Shader {
 /// Shader program similar to what we had in OpenGL.
 ///
 /// Contains shader modules and layouts needed to create PSOs and descriptor sets.
+#[derive(Debug)]
 pub struct Program {
     device: Arc<Device>,
     pipeline_layout: vk::PipelineLayout,

@@ -19,11 +19,32 @@ mod staging;
 mod uniforms;
 pub mod vulkan;
 
+use std::marker::PhantomData;
+
 pub use descriptors::*;
 pub use error::*;
 pub use staging::*;
 
-pub type Index = u16;
+pub type IndexType = u16;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Index<T> {
+    value: u32,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> Index<T> {
+    pub fn new(value: u32) -> Self {
+        Self {
+            value,
+            _phantom: PhantomData::<T>,
+        }
+    }
+
+    pub fn value(&self) -> u32 {
+        self.value
+    }
+}
 
 pub(crate) trait GpuResource {
     fn free(&self, device: &ash::Device);

@@ -28,6 +28,7 @@ pub enum RenderError {
     Reflection(rspirv_reflect::ReflectError),
     NoSuitableFormat,
     OutOfUnifromsSpace,
+    PipelineCreatingFailed,
 }
 
 impl From<vk::Result> for RenderError {
