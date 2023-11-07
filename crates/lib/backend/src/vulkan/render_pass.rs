@@ -316,16 +316,14 @@ pub struct PipelineCacheBuilder {
 
 impl PipelineCacheBuilder {
     fn build(self, render_pass: vk::RenderPass) -> Result<Vec<vk::Pipeline>, RenderError> {
-        // I'm sure there's better solution, without Arcs and Mutexes.
-        let mut cache = Arc::new(Mutex::new(vec![vk::Pipeline::null(); self.pipelines.len()]));
-        let pipelines = self.pipelines.clone();
+        let cache = Mutex::new(vec![vk::Pipeline::null(); self.pipelines.len()]);
         rayon::scope(|s| {
             for index in 0..self.pipelines.len() {
-                let cache = cache.clone();
-                let pipelines = pipelines.clone();
+                let cache = &cache;
+                let pipelines = &self.pipelines;
                 s.spawn(move |_| {
                     if let Err(err) =
-                        Self::build_pipeline(render_pass, &pipelines[index], &cache, index)
+                        Self::build_pipeline(render_pass, &pipelines[index], cache, index)
                     {
                         error!("Failed to compile pipeline: {:?}", err);
                     }
@@ -333,8 +331,7 @@ impl PipelineCacheBuilder {
             }
         });
 
-        let cache = Arc::get_mut(&mut cache).unwrap();
-        let cache = cache.lock().clone();
+        let cache = cache.into_inner();
         if cache.iter().any(|x| *x == vk::Pipeline::null()) {
             Err(RenderError::PipelineCreatingFailed)
         } else {
