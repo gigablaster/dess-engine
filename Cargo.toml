@@ -1,7 +1,6 @@
 [workspace]
 members=[
     "crates/lib/common",
-    "crates/lib/vfs",
     "crates/lib/render",
     "crates/lib/assets",
     "crates/lib/asset-pipeline",
