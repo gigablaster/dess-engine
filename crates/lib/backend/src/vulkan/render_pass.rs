@@ -309,12 +309,20 @@ impl PipelineCreateDesc {
 /// we can push multiple of them into RenderPass, but new pipelines ones will override old
 /// ones. Best way is to collect all shaders that should be used on for each render pass
 /// and build them all at once.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PipelineCacheBuilder {
     pipelines: Vec<PipelineCreateDesc>,
+    cache: vk::PipelineCache,
 }
 
 impl PipelineCacheBuilder {
+    pub fn new(cache: vk::PipelineCache) -> Self {
+        Self {
+            pipelines: Vec::default(),
+            cache,
+        }
+    }
+
     fn build(self, render_pass: vk::RenderPass) -> Result<Vec<vk::Pipeline>, RenderError> {
         let cache = Mutex::new(vec![vk::Pipeline::null(); self.pipelines.len()]);
         rayon::scope(|s| {
@@ -322,9 +330,13 @@ impl PipelineCacheBuilder {
                 let cache = &cache;
                 let pipelines = &self.pipelines;
                 s.spawn(move |_| {
-                    if let Err(err) =
-                        Self::build_pipeline(render_pass, &pipelines[index], cache, index)
-                    {
+                    if let Err(err) = Self::build_pipeline(
+                        render_pass,
+                        self.cache,
+                        &pipelines[index],
+                        cache,
+                        index,
+                    ) {
                         error!("Failed to compile pipeline: {:?}", err);
                     }
                 })
@@ -341,6 +353,7 @@ impl PipelineCacheBuilder {
 
     fn build_pipeline(
         render_pass: vk::RenderPass,
+        cache: vk::PipelineCache,
         desc: &PipelineCreateDesc,
         pipelines: &Mutex<Vec<vk::Pipeline>>,
         index: usize,
@@ -467,7 +480,7 @@ impl PipelineCacheBuilder {
 
         let pipeline = unsafe {
             desc.program.device().raw().create_graphics_pipelines(
-                vk::PipelineCache::null(),
+                cache,
                 slice::from_ref(&pipeline_create_info),
                 None,
             )
