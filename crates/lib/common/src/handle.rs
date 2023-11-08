@@ -95,6 +95,7 @@ impl<T, U> Default for Handle<T, U> {
     }
 }
 
+#[derive(Debug)]
 pub struct HandleContainer<T, U> {
     hot: Vec<Option<T>>,
     cold: Vec<Option<U>>,
@@ -229,11 +230,45 @@ impl<T, U> HandleContainer<T, U> {
         let index = handle.index as usize;
         index < self.generations.len() && self.generations[index] == handle.generation()
     }
+
+    pub fn iter(&self) -> Iter<T, U> {
+        Iter {
+            container: self,
+            current: 0,
+        }
+    }
 }
 
 impl<T, U> Default for HandleContainer<T, U> {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[derive(Debug)]
+pub struct Iter<'a, T, U> {
+    container: &'a HandleContainer<T, U>,
+    current: usize,
+}
+
+impl<'a, T, U> Iterator for Iter<'a, T, U> {
+    type Item = (&'a T, &'a U);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current != self.container.hot.len() && self.container.hot[self.current].is_none()
+        {
+            self.current += 1;
+        }
+        if self.current == self.container.hot.len() {
+            return None;
+        }
+        let result = Some((
+            self.container.hot[self.current].as_ref().unwrap(),
+            self.container.cold[self.current].as_ref().unwrap(),
+        ));
+        self.current += 1;
+
+        result
     }
 }
 
@@ -292,5 +327,33 @@ mod test {
         assert_eq!(Some(2), container.replace_hot(handle, 3));
         assert_eq!(Some(-2), container.replace_cold(handle, -3));
         assert_eq!(Some((&3, &-3)), container.get(handle));
+    }
+
+    #[test]
+    fn iterate_empty() {
+        let container = HandleContainer::<u32, i32>::new();
+        let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
+        assert!(cont.is_empty());
+    }
+
+    #[test]
+    fn iterate_full() {
+        let mut container = HandleContainer::<u32, i32>::new();
+        container.push(1, -1);
+        container.push(2, -2);
+        container.push(3, -3);
+        let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
+        assert_eq!([(1u32, -1i32), (2, -2), (3, -3)].to_vec(), cont);
+    }
+
+    #[test]
+    fn iterate_hole() {
+        let mut container = HandleContainer::<u32, i32>::new();
+        container.push(1, -1);
+        let handle = container.push(2, -2);
+        container.push(3, -3);
+        container.remove(handle);
+        let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
+        assert_eq!([(1u32, -1i32), (3, -3)].to_vec(), cont);
     }
 }
