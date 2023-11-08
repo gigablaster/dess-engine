@@ -6,6 +6,9 @@
                 "source": "data/images/test_d.png",
                 "purpose": "sprite"
             }
+        },
+        "helmet" : {
+            "model": "data/models/FlightHelmet/glTF/FlightHelmet.gltf"
         }
     }
 }
