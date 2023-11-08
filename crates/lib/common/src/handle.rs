@@ -18,24 +18,18 @@ use std::{hash::Hash, marker::PhantomData};
 const DEFAULT_SPACE: usize = 4096;
 
 #[derive(Debug)]
-pub struct Handle<T, U>
-where
-    T: Copy,
-{
+pub struct Handle<T, U> {
     index: u32,
     generation: u32,
     _phantom1: PhantomData<T>,
     _phantom2: PhantomData<U>,
 }
 
-unsafe impl<T: Copy, U> Send for Handle<T, U> {}
-unsafe impl<T: Copy, U> Sync for Handle<T, U> {}
+unsafe impl<T, U> Send for Handle<T, U> {}
+unsafe impl<T, U> Sync for Handle<T, U> {}
 
 #[allow(clippy::incorrect_clone_impl_on_copy_type)]
-impl<T, U> Clone for Handle<T, U>
-where
-    T: Copy,
-{
+impl<T, U> Clone for Handle<T, U> {
     fn clone(&self) -> Self {
         Self {
             index: self.index,
@@ -48,10 +42,7 @@ where
 
 impl<T, U> Copy for Handle<T, U> where T: Copy {}
 
-impl<T, U> PartialEq for Handle<T, U>
-where
-    T: Copy,
-{
+impl<T, U> PartialEq for Handle<T, U> {
     fn eq(&self, other: &Self) -> bool {
         self.index == other.index
     }
@@ -59,20 +50,14 @@ where
 
 impl<T, U> Eq for Handle<T, U> where T: Copy {}
 
-impl<T, U> Hash for Handle<T, U>
-where
-    T: Copy,
-{
+impl<T, U> Hash for Handle<T, U> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.index.hash(state);
         self.generation.hash(state);
     }
 }
 
-impl<T, U> Handle<T, U>
-where
-    T: Copy,
-{
+impl<T, U> Handle<T, U> {
     pub fn new(index: u32, generation: u32) -> Self {
         Self {
             index,
@@ -104,29 +89,20 @@ where
     }
 }
 
-impl<T, U> Default for Handle<T, U>
-where
-    T: Copy,
-{
+impl<T, U> Default for Handle<T, U> {
     fn default() -> Self {
         Self::invalid()
     }
 }
 
-pub struct HandleContainer<T, U>
-where
-    T: Copy,
-{
-    hot: Vec<T>,
+pub struct HandleContainer<T, U> {
+    hot: Vec<Option<T>>,
     cold: Vec<Option<U>>,
     generations: Vec<u32>,
     empty: Vec<u32>,
 }
 
-impl<T, U> HandleContainer<T, U>
-where
-    T: Copy,
-{
+impl<T, U> HandleContainer<T, U> {
     pub fn new() -> Self {
         Self {
             hot: Vec::with_capacity(DEFAULT_SPACE),
@@ -138,7 +114,7 @@ where
 
     pub fn push(&mut self, hot: T, cold: U) -> Handle<T, U> {
         if let Some(slot) = self.empty.pop() {
-            self.hot[slot as usize] = hot;
+            self.hot[slot as usize] = Some(hot);
             self.cold[slot as usize] = Some(cold);
             Handle::new(slot, self.generations[slot as usize])
         } else {
@@ -147,7 +123,7 @@ where
                 panic!("Too many items in HandleContainer.");
             }
             self.generations.push(0);
-            self.hot.push(hot);
+            self.hot.push(Some(hot));
             self.cold.push(Some(cold));
             assert_eq!(self.generations.len(), self.hot.len());
             Handle::new(index as u32, 0)
@@ -155,25 +131,28 @@ where
     }
 
     pub fn get(&self, handle: Handle<T, U>) -> Option<(&T, &U)> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some((&self.hot[index], self.cold[index].as_ref().unwrap()))
+            Some((
+                self.hot[index].as_ref().unwrap(),
+                self.cold[index].as_ref().unwrap(),
+            ))
         } else {
             None
         }
     }
 
     pub fn get_hot(&self, handle: Handle<T, U>) -> Option<&T> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some(&self.hot[index])
+            Some(self.hot[index].as_ref().unwrap())
         } else {
             None
         }
     }
 
     pub fn get_cold(&self, handle: Handle<T, U>) -> Option<&U> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
             Some(self.cold[index].as_ref().unwrap())
         } else {
@@ -182,16 +161,16 @@ where
     }
 
     pub fn get_hot_mut(&mut self, handle: Handle<T, U>) -> Option<&mut T> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some(&mut self.hot[index])
+            Some(self.hot[index].as_mut().unwrap())
         } else {
             None
         }
     }
 
     pub fn get_cold_mut(&mut self, handle: Handle<T, U>) -> Option<&mut U> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
             Some(self.cold[index].as_mut().unwrap())
         } else {
@@ -200,32 +179,30 @@ where
     }
 
     pub fn replace(&mut self, handle: Handle<T, U>, hot: T, cold: U) -> Option<(T, U)> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            let old_hot = self.hot[index];
-            self.hot[index] = hot;
-            let old_cold = self.cold[index].replace(cold).unwrap();
 
-            Some((old_hot, old_cold))
+            Some((
+                self.hot[index].replace(hot).unwrap(),
+                self.cold[index].replace(cold).unwrap(),
+            ))
         } else {
             None
         }
     }
 
     pub fn replace_hot(&mut self, handle: Handle<T, U>, hot: T) -> Option<T> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            let old_hot = self.hot[index];
-            self.hot[index] = hot;
 
-            Some(old_hot)
+            Some(self.hot[index].replace(hot).unwrap())
         } else {
             None
         }
     }
 
     pub fn replace_cold(&mut self, handle: Handle<T, U>, cold: U) -> Option<U> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
 
             Some(self.cold[index].replace(cold).unwrap())
@@ -235,26 +212,26 @@ where
     }
 
     pub fn remove(&mut self, handle: Handle<T, U>) -> Option<(T, U)> {
-        if self.is_handle_valid(handle) {
+        if self.is_handle_valid(&handle) {
             let index = handle.index as usize;
             self.generations[index] = self.generations[index].wrapping_add(1);
             self.empty.push(index as _);
-            return Some((self.hot[index], self.cold[index].take().unwrap()));
+            return Some((
+                self.hot[index].take().unwrap(),
+                self.cold[index].take().unwrap(),
+            ));
         }
 
         None
     }
 
-    pub fn is_handle_valid(&self, handle: Handle<T, U>) -> bool {
+    pub fn is_handle_valid(&self, handle: &Handle<T, U>) -> bool {
         let index = handle.index as usize;
         index < self.generations.len() && self.generations[index] == handle.generation()
     }
 }
 
-impl<T, U> Default for HandleContainer<T, U>
-where
-    T: Copy,
-{
+impl<T, U> Default for HandleContainer<T, U> {
     fn default() -> Self {
         Self::new()
     }
