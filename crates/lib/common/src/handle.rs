@@ -15,14 +15,12 @@
 
 use std::{hash::Hash, marker::PhantomData, ptr::replace};
 
-const GENERATOPN_OFFSET: u32 = 20;
-const INDEX_MASK: u32 = (1 << GENERATOPN_OFFSET) - 1;
-const GENERATON_MASK: u32 = u32::MAX & !INDEX_MASK;
 const DEFAULT_SPACE: usize = 1024;
 
 #[derive(Debug)]
 pub struct Handle<T> {
-    id: u32,
+    index: u32,
+    generation: u32,
     _phantom: PhantomData<T>,
 }
 
@@ -33,7 +31,8 @@ unsafe impl<T> Sync for Handle<T> {}
 impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
-            id: self.id,
+            index: self.index,
+            generation: self.generation,
             _phantom: PhantomData,
         }
     }
@@ -43,7 +42,7 @@ impl<T> Copy for Handle<T> {}
 
 impl<T> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.index == other.index
     }
 }
 
@@ -51,37 +50,38 @@ impl<T> Eq for Handle<T> {}
 
 impl<T> Hash for Handle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.id.hash(state);
+        self.index.hash(state);
+        self.generation.hash(state);
     }
 }
 
 impl<T> Handle<T> {
     pub fn new(index: u32, generation: u32) -> Self {
-        assert!(index <= INDEX_MASK);
-        assert!(generation <= GENERATON_MASK >> GENERATOPN_OFFSET);
         Self {
-            id: (generation << GENERATOPN_OFFSET) | index,
+            index,
+            generation,
             _phantom: PhantomData::<T>,
         }
     }
 
     pub fn invalid() -> Self {
         Self {
-            id: u32::MAX,
+            index: u32::MAX,
+            generation: u32::MAX,
             _phantom: PhantomData::<T>,
         }
     }
 
     pub fn is_valid(&self) -> bool {
-        self.id != u32::MAX
+        self.index != u32::MAX && self.generation != u32::MAX
     }
 
     pub fn index(&self) -> u32 {
-        self.id & INDEX_MASK
+        self.index
     }
 
     pub fn generation(&self) -> u32 {
-        (self.id & GENERATON_MASK) >> GENERATOPN_OFFSET
+        self.generation
     }
 }
 
@@ -112,7 +112,7 @@ impl<T> HandleContainer<T> {
             Handle::new(slot, self.generations[slot as usize])
         } else {
             let index = self.generations.len();
-            if index >= INDEX_MASK as _ {
+            if index == u32::MAX as _  {
                 panic!("Too many items in HandleContainer.");
             }
             self.generations.push(0);
