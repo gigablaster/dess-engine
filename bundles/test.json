@@ -1,0 +1,11 @@
+{
+    "name": "test",
+    "assets": {
+        "yamada": {
+            "image": {
+                "source": "data/images/test_d.png",
+                "purpose": "sprite"
+            }
+        }
+    }
+}

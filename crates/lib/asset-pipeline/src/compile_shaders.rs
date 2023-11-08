@@ -55,7 +55,10 @@ impl shader_prepper::IncludeProvider for FileIncludeProvider {
 impl ContentImporter<LoadedShaderCode> for ShaderSource {
     fn import(&self) -> Result<LoadedShaderCode, crate::Error> {
         let chunks = shader_prepper::process_file(
-            self.path.to_str().unwrap(),
+            get_absolute_asset_path(&self.path)
+                .unwrap()
+                .to_str()
+                .unwrap(),
             &mut FileIncludeProvider,
             self.path.clone(),
         )

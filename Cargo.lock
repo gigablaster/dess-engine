@@ -178,8 +178,11 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "dess-asset-pipeline",
+ "dess-assets",
  "dess-common",
  "log",
+ "serde",
+ "serde_json",
  "simple_logger",
 ]
 
@@ -454,6 +457,7 @@ dependencies = [
  "numquant",
  "parking_lot",
  "rayon",
+ "serde",
  "shader-prepper",
  "siphasher",
  "spirv-tools",
@@ -472,6 +476,7 @@ dependencies = [
  "four-cc",
  "glam 0.24.2",
  "memmap2",
+ "serde",
  "siphasher",
  "uuid",
  "zstd",
@@ -1248,15 +1253,18 @@ checksum = "d29ab0c6d3fc0ee92fe66e2d99f700eab17a8d57d1c1d3b748380fb20baa78cd"
 
 [[package]]
 name = "serde"
-version = "1.0.158"
+version = "1.0.192"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "771d4d9c4163ee138805e12c710dd365e4f44be8be0503cb1bb9eb989425d9c9"
+checksum = "bca2a08484b285dcb282d0f67b26cadc0df8b19f8c12502c13d966bf9482f001"
+dependencies = [
+ "serde_derive",
+]
 
 [[package]]
 name = "serde_derive"
-version = "1.0.164"
+version = "1.0.192"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9735b638ccc51c28bf6914d90a2e9725b377144fc612c49a611fddd1b631d68"
+checksum = "d6c7207fbec9faa48073f3e3074cbe553af6ea512d7c21ba46e434e70ea9fbc1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1265,9 +1273,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.99"
+version = "1.0.108"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46266871c240a00b8f503b877622fe33430b3c7d963bdc0f2adc511e54a1eae3"
+checksum = "3d1c7e3eac408d115102c4c24ad393e0821bb3a5df4d506a80f85f7a742a526b"
 dependencies = [
  "itoa",
  "ryu",

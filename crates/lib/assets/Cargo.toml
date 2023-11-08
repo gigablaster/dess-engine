@@ -16,3 +16,4 @@ bytes = "1.5.0"
 memmap2 = "0.9.0"
 zstd = "0.13.0"
 four-cc = "0.3.0"
+serde = { version = "1.0.192", features = ["derive"] }

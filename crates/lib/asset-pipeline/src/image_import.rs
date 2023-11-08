@@ -127,11 +127,16 @@ impl ContentImporter<RawImage> for CreatePlaceholderImage {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "purpose")]
 pub enum ImagePurpose {
+    #[serde(rename = "color")]
     Color,
+    #[serde(rename = "data")]
     NonColor,
+    #[serde(rename = "normals")]
     Normals,
+    #[serde(rename = "sprite")]
     Sprite,
 }
 

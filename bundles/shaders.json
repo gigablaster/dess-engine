@@ -1,0 +1,17 @@
+{
+    "name": "shaders",
+    "assets": {
+        "unlit_vert": {
+            "shader": {
+                "source": "shaders/unlit_vs.hlsl",
+                "stage": "vertex"
+            }
+        },
+        "unlit_frag": {
+            "shader": {
+                "source": "shaders/unlit_ps.hlsl",
+                "stage": "fragment"
+            }
+        }
+    }
+}

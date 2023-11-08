@@ -28,12 +28,14 @@ use parking_lot::Mutex;
 
 mod bundler;
 mod compile_shaders;
+mod desc;
 mod gltf_import;
 mod image_import;
 mod pipeline;
 
 pub use bundler::*;
 pub use compile_shaders::*;
+pub use desc::*;
 pub use gltf_import::*;
 pub use image_import::*;
 pub use pipeline::*;
@@ -58,6 +60,7 @@ impl From<io::Error> for Error {
 
 pub const ROOT_DATA_PATH: &str = "data";
 pub const ASSET_CACHE_PATH: &str = ".cache";
+pub const BUNDLE_DESC_PATH: &str = "bundles";
 
 #[derive(Debug, Default)]
 struct AssetProcessingContextImpl {
@@ -112,10 +115,6 @@ impl AssetProcessingContextImpl {
         } else {
             info!("Requested model import {:?}", path);
             let asset = AssetRef::from_path(&model.path);
-            self.set_name(
-                asset,
-                path.as_os_str().to_ascii_lowercase().to_str().unwrap(),
-            );
             self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model.clone());
             self.assets.insert(AssetInfo::new::<GpuModel>(asset));
@@ -171,10 +170,6 @@ impl AssetProcessingContextImpl {
             info!("Requested shader import {:?} ref: {}", shader, asset);
             self.assets.insert(AssetInfo::new::<GpuShader>(asset));
             self.shaders_to_process.insert(asset, shader.clone());
-            self.set_name(
-                asset,
-                path.as_os_str().to_ascii_lowercase().to_str().unwrap(),
-            );
             self.add_source(asset, &path);
 
             asset
@@ -306,6 +301,10 @@ impl AssetProcessingContext {
     pub fn get_dependencies(&self, asset: AssetRef) -> Option<Vec<AssetRef>> {
         self.inner.lock().get_dependencies(asset)
     }
+
+    pub fn set_name(&self, asset: AssetRef, name: &str) {
+        self.inner.lock().set_name(asset, name);
+    }
 }
 
 pub trait Content {}
@@ -369,8 +368,8 @@ pub struct AssetDatabase {
 }
 
 impl AssetDatabase {
-    pub fn try_load() -> Option<AssetDatabase> {
-        if let Ok(file) = File::open(Path::new(ASSET_CACHE_PATH).join("assets.db")) {
+    pub fn try_load(name: &str) -> Option<AssetDatabase> {
+        if let Ok(file) = File::open(Path::new(ASSET_CACHE_PATH).join(format!("{}.db", name))) {
             let mut buf = BufReader::new(&file);
             if let Ok(database) = AssetDatabase::deserialize(&mut buf) {
                 return Some(database);
@@ -379,9 +378,9 @@ impl AssetDatabase {
         None
     }
 
-    pub fn save(&self) -> io::Result<()> {
+    pub fn save(&self, name: &str) -> io::Result<()> {
         self.serialize(&mut BufWriter::new(File::create(
-            Path::new(ASSET_CACHE_PATH).join("assets.db"),
+            Path::new(ASSET_CACHE_PATH).join(format!("{}.db", name)),
         )?))
     }
 }

@@ -5,9 +5,12 @@ use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 
 use crate::Asset;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "stage")]
 pub enum GpuShaderStage {
+    #[serde(rename = "vertex")]
     Vertex,
+    #[serde(rename = "fragment")]
     Fragment,
 }
 

@@ -1,4 +1,9 @@
-use std::{fmt::Debug, fs::File, io, path::Path};
+use std::{
+    fmt::Debug,
+    fs::{self, File},
+    io,
+    path::Path,
+};
 
 use dess_assets::{Asset, AssetRef, GpuImage, GpuModel, GpuShader, GpuShaderStage};
 use dess_common::traits::BinarySerialization;
@@ -7,32 +12,33 @@ use log::{error, info};
 use crate::{
     build_bundle, cached_asset_path, compile_shaders::ShaderSource, AssetDatabase,
     AssetProcessingContext, CompileShader, Content, ContentImporter, ContentProcessor,
-    CreateGpuImage, CreateGpuModel, Error, GltfSource, ImageSource, LoadedGltf, LoadedShaderCode,
-    RawImage, ROOT_DATA_PATH,
+    CreateGpuImage, CreateGpuModel, Error, GltfSource, ImagePurpose, ImageSource, LoadedGltf,
+    LoadedShaderCode, RawImage, ASSET_CACHE_PATH, ROOT_DATA_PATH,
 };
 
 #[derive(Debug)]
 pub struct AssetPipeline {
     context: AssetProcessingContext,
+    name: String,
 }
 
-impl Default for AssetPipeline {
-    fn default() -> Self {
-        if let Some(db) = AssetDatabase::try_load() {
+impl AssetPipeline {
+    pub fn new(name: &str) -> Self {
+        if let Some(db) = AssetDatabase::try_load(name) {
             Self {
                 context: AssetProcessingContext::from_database(&db),
+                name: name.to_owned(),
             }
         } else {
             Self {
                 context: AssetProcessingContext::default(),
+                name: name.to_owned(),
             }
         }
     }
-}
 
-impl AssetPipeline {
     pub fn save_db(&self) -> io::Result<()> {
-        self.context.to_database().save()
+        self.context.to_database().save(&self.name)
     }
 
     pub fn import_model(&self, path: &Path) -> AssetRef {
@@ -51,6 +57,15 @@ impl AssetPipeline {
             stage: GpuShaderStage::Fragment,
             path: path.into(),
         })
+    }
+
+    pub fn import_image(&self, path: &Path, purpose: ImagePurpose) -> AssetRef {
+        self.context
+            .import_image(&ImageSource::from_file(path, purpose), None)
+    }
+
+    pub fn set_name(&self, asset: AssetRef, name: &str) {
+        self.context.set_name(asset, name);
     }
 
     fn need_update(&self, asset: AssetRef) -> bool {
@@ -74,8 +89,9 @@ impl AssetPipeline {
         }
     }
 
-    pub fn process_pending_assets(&self) {
+    pub fn process_pending_assets(&self) -> io::Result<()> {
         let mut need_work = true;
+        fs::create_dir_all(Path::new(ASSET_CACHE_PATH))?;
         while need_work {
             need_work = false;
             let models_to_process = self.context.drain_models_to_process();
@@ -94,6 +110,8 @@ impl AssetPipeline {
                 shades_to_process,
             );
         }
+
+        Ok(())
     }
 
     fn process_single_asset<T, C, P>(
