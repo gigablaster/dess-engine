@@ -270,6 +270,12 @@ impl<'a, T, U> Iterator for Iter<'a, T, U> {
 
         result
     }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = self.container.hot.len() - self.container.empty.len() - self.current;
+
+        (size, Some(size))
+    }
 }
 
 #[cfg(test)]
