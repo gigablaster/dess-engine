@@ -50,12 +50,6 @@ pub struct BindingPoint<T> {
 }
 
 #[derive(Debug)]
-pub struct Descriptor {
-    pub raw: vk::DescriptorSet,
-    data: Box<DescriptorData>,
-}
-
-#[derive(Debug)]
 pub struct DescriptorData {
     descriptor: Option<DescriptorSet>,
     static_buffers: Vec<BindingPoint<BindStaticUniform>>,
@@ -75,25 +69,17 @@ impl DescriptorData {
     }
 }
 
-impl Descriptor {
-    pub fn is_valid(&self) -> bool {
-        self.raw != vk::DescriptorSet::null()
-    }
-}
-
-pub type DescriptorHandle = Handle<Descriptor>;
+pub type DescriptorHandle = Handle<vk::DescriptorSet, Box<DescriptorData>>;
 
 pub struct DescriptorCache {
     device: Arc<Device>,
-    container: HandleContainer<Descriptor>,
+    container: HandleContainer<vk::DescriptorSet, Box<DescriptorData>>,
     dirty: HashSet<DescriptorHandle>,
-    retired_descriptors: Vec<Descriptor>,
+    retired_descriptors: Vec<DescriptorData>,
     retired_uniforms: Vec<u32>,
     unforms_to_dealloc: Vec<u32>,
     uniforms: Uniforms,
 }
-
-unsafe impl Sync for DescriptorCache {}
 
 impl DescriptorCache {
     pub fn new(device: &Arc<Device>) -> Result<Self, RenderError> {
@@ -156,9 +142,9 @@ impl DescriptorCache {
             uniform_buffer: static_buffers.len() as _,
             ..Default::default()
         };
-        let handle = self.container.push(Descriptor {
-            raw: vk::DescriptorSet::null(),
-            data: Box::new(DescriptorData {
+        let handle = self.container.push(
+            vk::DescriptorSet::null(),
+            Box::new(DescriptorData {
                 descriptor: None,
                 static_buffers,
                 dynamic_buffers,
@@ -166,25 +152,27 @@ impl DescriptorCache {
                 count,
                 layout: set.layout,
             }),
-        });
+        );
 
         self.dirty.insert(handle);
         Ok(handle)
     }
 
-    pub fn get(&self, handle: DescriptorHandle) -> Option<&Descriptor> {
-        self.container.get(handle).filter(|&value| value.is_valid())
+    pub fn resolve(&self, handle: DescriptorHandle) -> Option<vk::DescriptorSet> {
+        self.container
+            .get_hot(handle)
+            .copied()
+            .filter(|value| *value != vk::DescriptorSet::null())
     }
 
     pub fn remove(&mut self, handle: DescriptorHandle) {
-        if let Some(value) = self.container.remove(handle) {
+        if let Some((_, value)) = self.container.remove(handle) {
             value
-                .data
                 .static_buffers
                 .iter()
                 .filter_map(|x| x.data)
                 .for_each(|x| self.retired_uniforms.push(x.offset));
-            self.retired_descriptors.push(value);
+            self.retired_descriptors.push(*value);
         }
     }
 
@@ -195,9 +183,8 @@ impl DescriptorCache {
         view: vk::ImageView,
         layout: vk::ImageLayout,
     ) -> Result<(), RenderError> {
-        if let Some(desc) = self.container.get_mut(handle) {
+        if let Some(desc) = self.container.get_cold_mut(handle) {
             let image = desc
-                .data
                 .images
                 .iter_mut()
                 .find(|point| point.binding == binding);
@@ -216,9 +203,8 @@ impl DescriptorCache {
         binding: u32,
         data: &T,
     ) -> Result<(), RenderError> {
-        if let Some(desc) = self.container.get_mut(handle) {
+        if let Some(desc) = self.container.get_cold_mut(handle) {
             let desc = desc
-                .data
                 .static_buffers
                 .iter_mut()
                 .find(|point| point.binding == binding);
@@ -241,9 +227,8 @@ impl DescriptorCache {
         binding: u32,
         buffer: vk::Buffer,
     ) -> Result<(), RenderError> {
-        if let Some(desc) = self.container.get_mut(handle) {
+        if let Some(desc) = self.container.get_cold_mut(handle) {
             let desc = desc
-                .data
                 .dynamic_buffers
                 .iter_mut()
                 .find(|point| point.binding == binding);
@@ -274,17 +259,17 @@ impl DescriptorCache {
 
             // Then update all dirty descriptors
             for handle in self.dirty.iter() {
-                if let Some(desc) = self.container.get_mut(*handle) {
-                    if let Some(old) = desc.data.descriptor.take() {
+                if let Some(desc) = self.container.get_cold_mut(*handle) {
+                    if let Some(old) = desc.descriptor.take() {
                         drop_list.free_descriptor_set(old);
                     }
-                    desc.data.descriptor = Some(
+                    desc.descriptor = Some(
                         unsafe {
                             allocator.allocate(
                                 AshDescriptorDevice::wrap(self.device.raw()),
-                                &desc.data.layout,
+                                &desc.layout,
                                 DescriptorSetLayoutCreateFlags::empty(),
-                                &desc.data.count,
+                                &desc.count,
                                 1,
                             )
                         }?
@@ -307,11 +292,12 @@ impl DescriptorCache {
             unsafe { device.update_descriptor_sets(&writes, &[]) };
         }
         // Make dirty descriptors valid if they have eveything
-        self.dirty.iter().for_each(|desc| {
-            if let Some(desc) = self.container.get_mut(*desc) {
-                if desc.data.is_valid() {
-                    if let Some(descriptor) = &mut desc.data.descriptor {
-                        desc.raw = *descriptor.raw();
+        self.dirty.iter().for_each(|handle| {
+            if let Some(desc) = self.container.get_cold_mut(*handle) {
+                if desc.is_valid() {
+                    if let Some(descriptor) = &desc.descriptor {
+                        let raw = *descriptor.raw();
+                        self.container.replace_hot(*handle, raw);
                     }
                 }
             }
@@ -321,7 +307,7 @@ impl DescriptorCache {
             .retain(|x| !Self::is_valid_impl(&self.container, *x));
         self.retired_descriptors
             .drain(..)
-            .filter_map(|x| x.data.descriptor)
+            .filter_map(|x| x.descriptor)
             .for_each(|x| drop_list.free_descriptor_set(x));
 
         self.uniforms.flush()
@@ -334,13 +320,12 @@ impl DescriptorCache {
         buffers: &mut TempList<vk::DescriptorBufferInfo>,
         handle: DescriptorHandle,
     ) {
-        if let Some(desc) = self.container.get(handle) {
-            if !desc.data.is_valid() {
+        if let Some(desc) = self.container.get_cold(handle) {
+            if !desc.is_valid() {
                 return;
             }
-            if let Some(descriptor) = &desc.data.descriptor {
-                desc.data
-                    .images
+            if let Some(descriptor) = &desc.descriptor {
+                desc.images
                     .iter()
                     .map(|binding| {
                         let image = binding.data.unwrap();
@@ -357,8 +342,7 @@ impl DescriptorCache {
                             .build()
                     })
                     .for_each(|x| writes.push(x));
-                desc.data
-                    .static_buffers
+                desc.static_buffers
                     .iter()
                     .map(|binding| {
                         let buffer = binding.data.unwrap();
@@ -377,8 +361,7 @@ impl DescriptorCache {
                             .build()
                     })
                     .for_each(|x| writes.push(x));
-                desc.data
-                    .dynamic_buffers
+                desc.dynamic_buffers
                     .iter()
                     .map(|binding| {
                         let data = binding.data.unwrap().buffer;
@@ -401,16 +384,16 @@ impl DescriptorCache {
     }
 
     pub fn invalidate_uniform(&mut self, handle: DescriptorHandle, binding: u32) {
-        if let Some(desc) = self.container.get_mut(handle) {
+        if let Some(desc) = self.container.get_cold_mut(handle) {
             let point = desc
-                .data
                 .static_buffers
                 .iter_mut()
                 .find(|point| point.binding == binding);
             if let Some(point) = point {
                 if let Some(old) = point.data.take() {
                     self.retired_uniforms.push(old.offset);
-                    desc.raw = vk::DescriptorSet::null();
+                    self.container
+                        .replace_hot(handle, vk::DescriptorSet::null());
                 }
                 self.dirty.insert(handle);
             }
@@ -418,37 +401,40 @@ impl DescriptorCache {
     }
 
     pub fn invalidate_image(&mut self, handle: DescriptorHandle, binding: u32) {
-        if let Some(desc) = self.container.get_mut(handle) {
+        if let Some(desc) = self.container.get_cold_mut(handle) {
             let point = desc
-                .data
                 .images
                 .iter_mut()
                 .find(|point| point.binding == binding);
             if let Some(point) = point {
                 point.data.take();
-                desc.raw = vk::DescriptorSet::null();
+                self.container
+                    .replace_hot(handle, vk::DescriptorSet::null());
                 self.dirty.insert(handle);
             }
         }
     }
 
     pub fn invalidate_dynamic_uniform(&mut self, handle: DescriptorHandle, binding: u32) {
-        if let Some(desc) = self.container.get_mut(handle) {
+        if let Some(desc) = self.container.get_cold_mut(handle) {
             let point = desc
-                .data
                 .dynamic_buffers
                 .iter_mut()
                 .find(|point| point.binding == binding);
             if let Some(point) = point {
                 point.data.take();
-                desc.raw = vk::DescriptorSet::null();
+                self.container
+                    .replace_hot(handle, vk::DescriptorSet::null());
                 self.dirty.insert(handle);
             }
         }
     }
 
-    fn is_valid_impl(container: &HandleContainer<Descriptor>, handle: DescriptorHandle) -> bool {
-        if let Some(desc) = container.get(handle) {
+    fn is_valid_impl(
+        container: &HandleContainer<vk::DescriptorSet, Box<DescriptorData>>,
+        handle: DescriptorHandle,
+    ) -> bool {
+        if let Some(desc) = container.get_cold(handle) {
             desc.is_valid()
         } else {
             false
@@ -465,7 +451,7 @@ impl Drop for DescriptorCache {
         let mut drop_list = self.device.drop_list();
         self.retired_descriptors
             .drain(..)
-            .filter_map(|x| x.data.descriptor)
+            .filter_map(|x| x.descriptor)
             .for_each(|x| drop_list.free_descriptor_set(x));
     }
 }

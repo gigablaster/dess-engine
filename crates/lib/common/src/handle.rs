@@ -181,6 +181,24 @@ where
         }
     }
 
+    pub fn get_hot_mut(&mut self, handle: Handle<T, U>) -> Option<&mut T> {
+        if self.is_handle_valid(handle) {
+            let index = handle.index() as usize;
+            Some(&mut self.hot[index])
+        } else {
+            None
+        }
+    }
+
+    pub fn get_cold_mut(&mut self, handle: Handle<T, U>) -> Option<&mut U> {
+        if self.is_handle_valid(handle) {
+            let index = handle.index() as usize;
+            Some(self.cold[index].as_mut().unwrap())
+        } else {
+            None
+        }
+    }
+
     pub fn replace(&mut self, handle: Handle<T, U>, hot: T, cold: U) -> Option<(T, U)> {
         if self.is_handle_valid(handle) {
             let index = handle.index() as usize;
