@@ -29,7 +29,7 @@ pub struct FrameContext {
     pub(crate) main_cb: CommandBuffer,
     pub(crate) presentation_cb: CommandBuffer,
     pub(crate) render_finished: Semaphore,
-    command_pools: Mutex<HashMap<ThreadId, CommandPool>>,
+    secondary_pools: Mutex<HashMap<ThreadId, CommandPool>>,
     main_pool: CommandPool,
     query: u32,
 }
@@ -40,12 +40,17 @@ impl FrameContext {
     pub(crate) fn new(device: &ash::Device, query: u32) -> Result<Self, RenderError> {
         let render_finished = Semaphore::new(device)?;
         let command_pools = Mutex::new(HashMap::new());
-        let mut main_pool = CommandPool::new(device, query, vk::CommandPoolCreateFlags::TRANSIENT)?;
+        let mut main_pool = CommandPool::new(
+            device,
+            query,
+            vk::CommandPoolCreateFlags::TRANSIENT,
+            vk::CommandBufferLevel::PRIMARY,
+        )?;
         let main_cb = main_pool.get_or_create(device)?;
         let presentation_cb = main_pool.get_or_create(device)?;
 
         Ok(Self {
-            command_pools,
+            secondary_pools: command_pools,
             render_finished,
             query,
             main_pool,
@@ -55,7 +60,7 @@ impl FrameContext {
     }
 
     pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), RenderError> {
-        let mut pools = self.command_pools.lock();
+        let mut pools = self.secondary_pools.lock();
         pools.iter_mut().for_each(|(_, pool)| {
             pool.recycle();
             pool.reset(device).unwrap();
@@ -63,14 +68,19 @@ impl FrameContext {
         self.main_pool.reset(device)
     }
 
-    pub fn get_or_create_command_buffer(
+    pub fn get_or_create_secondary_command_buffer(
         &self,
         device: &ash::Device,
     ) -> Result<CommandBufferGuard, RenderError> {
         let thread_id = thread::current().id();
-        let mut pools = self.command_pools.lock();
+        let mut pools = self.secondary_pools.lock();
         if let Entry::Vacant(e) = pools.entry(thread_id) {
-            let pool = CommandPool::new(device, self.query, vk::CommandPoolCreateFlags::TRANSIENT)?;
+            let pool = CommandPool::new(
+                device,
+                self.query,
+                vk::CommandPoolCreateFlags::TRANSIENT,
+                vk::CommandBufferLevel::SECONDARY,
+            )?;
             e.insert(pool);
         }
         Ok(CommandBufferGuard {
@@ -81,7 +91,7 @@ impl FrameContext {
 
     pub(self) fn recycle_command_buffer(&self, cb: CommandBuffer) {
         let thread_id = thread::current().id();
-        let mut pools = self.command_pools.lock();
+        let mut pools = self.secondary_pools.lock();
         pools
             .get_mut(&thread_id)
             .expect("Command buffer must be recycled from same thread it was allocated from")
@@ -113,7 +123,7 @@ impl<'a> Drop for CommandBufferGuard<'a> {
 impl GpuResource for FrameContext {
     fn free(&self, device: &ash::Device) {
         self.render_finished.free(device);
-        let mut pools = self.command_pools.lock();
+        let mut pools = self.secondary_pools.lock();
         pools.iter_mut().for_each(|(_, pool)| pool.free(device));
         pools.clear();
         self.main_cb.free(device);

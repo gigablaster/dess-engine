@@ -76,6 +76,7 @@ impl StagingInner {
             device.raw(),
             device.queue_family_index(),
             vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
+            vk::CommandBufferLevel::PRIMARY,
         )?;
         let mut buffers = (0..STAGES)
             .map(|x| {

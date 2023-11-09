@@ -29,6 +29,7 @@ pub(crate) struct CommandPool {
     pool: vk::CommandPool,
     free_cbs: Vec<CommandBuffer>,
     processing_cbs: Vec<CommandBuffer>,
+    level: vk::CommandBufferLevel,
 }
 
 impl CommandPool {
@@ -36,6 +37,7 @@ impl CommandPool {
         device: &ash::Device,
         queue_family: u32,
         flags: vk::CommandPoolCreateFlags,
+        level: vk::CommandBufferLevel,
     ) -> Result<Self, RenderError> {
         let command_pool_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(queue_family)
@@ -47,13 +49,14 @@ impl CommandPool {
             pool,
             free_cbs: Vec::new(),
             processing_cbs: Vec::new(),
+            level,
         })
     }
     pub fn get_or_create(&mut self, device: &ash::Device) -> Result<CommandBuffer, RenderError> {
         if let Some(cb) = self.free_cbs.pop() {
             Ok(cb)
         } else {
-            Ok(CommandBuffer::new(device, self.pool)?)
+            Ok(CommandBuffer::new(device, self.pool, self.level)?)
         }
     }
 
@@ -92,11 +95,15 @@ pub struct CommandBuffer {
 }
 
 impl CommandBuffer {
-    pub(self) fn new(device: &ash::Device, pool: vk::CommandPool) -> Result<Self, RenderError> {
+    fn new(
+        device: &ash::Device,
+        pool: vk::CommandPool,
+        level: vk::CommandBufferLevel,
+    ) -> Result<Self, RenderError> {
         let command_buffer_allocation_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .command_pool(pool)
-            .level(vk::CommandBufferLevel::PRIMARY)
+            .level(level)
             .build();
 
         let command_buffer =
