@@ -288,7 +288,7 @@ impl<'a> ShaderDesc<'a> {
 }
 
 #[derive(Debug)]
-pub struct Shader {
+pub(crate) struct Shader {
     pub raw: vk::ShaderModule,
     pub stage: vk::ShaderStageFlags,
     pub entry: CString,
@@ -330,17 +330,18 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new(device: &Arc<Device>, shaders: &[ShaderDesc]) -> Result<Arc<Self>, RenderError> {
+    pub fn new(device: &Arc<Device>, shaders: &[ShaderDesc]) -> Result<Self, RenderError> {
+        let mut stages = vk::ShaderStageFlags::empty();
+        shaders.iter().for_each(|x| {
+            stages |= x.stage;
+        });
+
         let shaders = shaders
             .iter()
             .map(|desc| Shader::new(device.raw(), desc).unwrap())
             .collect::<Vec<_>>();
 
-        let sets = Self::create_descriptor_set_layouts(
-            device,
-            vk::ShaderStageFlags::ALL_GRAPHICS,
-            &shaders,
-        )?;
+        let sets = Self::create_descriptor_set_layouts(device, stages, &shaders)?;
 
         let descriptor_layouts = sets
             .iter()
@@ -357,12 +358,12 @@ impl Program {
                 .create_pipeline_layout(&layout_create_info, None)
         }?;
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             device: device.clone(),
             pipeline_layout,
             sets,
             shaders,
-        }))
+        })
     }
 
     fn create_descriptor_set_layouts(
@@ -451,7 +452,7 @@ impl Program {
         &self.device
     }
 
-    pub fn shaders(&self) -> &[Shader] {
+    pub(crate) fn shaders(&self) -> &[Shader] {
         &self.shaders
     }
 
