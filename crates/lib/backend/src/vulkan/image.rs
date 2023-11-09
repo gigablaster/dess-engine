@@ -145,7 +145,7 @@ pub struct Image {
 unsafe impl Send for Image {}
 
 impl Image {
-    pub fn texture(device: &Arc<Device>, desc: ImageDesc) -> Result<Arc<Self>, RenderError> {
+    pub fn texture(device: &Arc<Device>, desc: ImageDesc) -> Result<Self, RenderError> {
         let image = unsafe { device.raw().create_image(&desc.build(), None) }?;
         let requirement = unsafe { device.raw().get_image_memory_requirements(image) };
         let allocation = unsafe {
@@ -165,13 +165,13 @@ impl Image {
                 .bind_image_memory(image, *allocation.memory(), allocation.offset())
         }?;
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             device: device.clone(),
             raw: image,
             desc,
             views: Default::default(),
             allocation: Some(allocation),
-        }))
+        })
     }
 
     pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, RenderError> {

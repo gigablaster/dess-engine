@@ -102,7 +102,7 @@ impl Bucket {
 
 pub struct Uniforms {
     device: Arc<Device>,
-    buffer: Arc<Buffer>,
+    buffer: Buffer,
     writes: Vec<vk::MappedMemoryRange>,
     mapping: NonNull<u8>,
     buckets: Vec<Bucket>,
@@ -120,7 +120,7 @@ impl Uniforms {
             .dedicated(true),
         )?;
         buffer.name("Unified uniform buffer");
-        let mapping = Arc::get_mut(&mut buffer).unwrap().map()?;
+        let mapping = buffer.map()?;
         Ok(Self {
             device: device.clone(),
             buffer,

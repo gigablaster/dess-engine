@@ -15,7 +15,7 @@
 
 use std::{hash::Hash, ptr::NonNull, sync::Arc};
 
-use ash::vk::{self, AccessFlags, BufferCreateInfo, Handle};
+use ash::vk::{self, BufferCreateInfo, Handle};
 use gpu_alloc::{Dedicated, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 use vk_sync::AccessType;
@@ -101,7 +101,7 @@ impl Eq for Buffer {}
 unsafe impl Send for Buffer {}
 
 impl Buffer {
-    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Arc<Self>, RenderError> {
+    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Self, RenderError> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
             .usage(desc.usage)
@@ -142,13 +142,13 @@ impl Buffer {
                 .bind_buffer_memory(buffer, *allocation.memory(), allocation.offset())
         }?;
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             access: Self::create_access_type(&desc),
             device: device.clone(),
             raw: buffer,
             desc,
             allocation: Some(allocation),
-        }))
+        })
     }
 
     fn create_access_type(desc: &BufferDesc) -> Vec<AccessType> {

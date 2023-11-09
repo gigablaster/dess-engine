@@ -59,7 +59,7 @@ struct StagingInner {
     upload_buffers: HashMap<Arc<Buffer>, Vec<vk::BufferCopy>>,
     upload_images: Vec<ImageUploadRequest>,
     mappings: Vec<NonNull<u8>>,
-    buffers: Vec<Arc<Buffer>>,
+    buffers: Vec<Buffer>,
     semaphores: Vec<Semaphore>,
     render_semaphores: Vec<Semaphore>,
     last: Option<usize>,
@@ -118,7 +118,7 @@ impl StagingInner {
         });
         let mappings = buffers
             .iter_mut()
-            .map(|buffer| Arc::get_mut(buffer).unwrap().map().unwrap())
+            .map(|buffer| buffer.map().unwrap())
             .collect::<Vec<_>>();
         Ok(Self {
             device: device.clone(),
