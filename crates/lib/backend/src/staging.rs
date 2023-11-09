@@ -289,13 +289,13 @@ impl StagingInner {
         let render_semaphore = self.render_semaphores[self.current];
 
         if let Some(last) = self.last {
-            self.device.submit_draw(
+            self.device.submit_transfer(
                 &self.tranfser_cbs[self.current],
                 &[SubmitWait::Transfer(self.semaphores[last])],
                 &[semaphore, render_semaphore],
             )?;
         } else {
-            self.device.submit_draw(
+            self.device.submit_transfer(
                 &self.tranfser_cbs[self.current],
                 &[],
                 &[semaphore, render_semaphore],
