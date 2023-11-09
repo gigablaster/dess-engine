@@ -15,6 +15,7 @@
 
 use std::{
     collections::HashMap,
+    fmt::Debug,
     mem::size_of_val,
     ptr::{copy_nonoverlapping, NonNull},
     slice,
@@ -24,6 +25,7 @@ use std::{
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 
+use parking_lot::Mutex;
 use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
 
 use crate::{
@@ -41,20 +43,20 @@ pub struct ImageSubresourceData<'a> {
     pub row_pitch: usize,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Clone)]
 struct ImageUploadRequest {
     pub op: vk::BufferImageCopy,
     pub subresource: vk::ImageSubresourceRange,
-    pub dst: vk::Image,
+    pub dst: Arc<Image>,
 }
 
-pub struct Staging {
+struct StagingInner {
     device: Arc<Device>,
     pool: CommandPool,
     tranfser_cbs: Vec<CommandBuffer>,
     size: u64,
     allocator: BumpAllocator,
-    upload_buffers: HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
+    upload_buffers: HashMap<Arc<Buffer>, Vec<vk::BufferCopy>>,
     upload_images: Vec<ImageUploadRequest>,
     mappings: Vec<NonNull<u8>>,
     buffers: Vec<Arc<Buffer>>,
@@ -65,7 +67,10 @@ pub struct Staging {
     index: u64,
 }
 
-impl Staging {
+unsafe impl Send for StagingInner {}
+unsafe impl Sync for StagingInner {}
+
+impl StagingInner {
     pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, RenderError> {
         let mut pool = CommandPool::new(
             device.raw(),
@@ -144,15 +149,15 @@ impl Staging {
 
     pub fn upload_buffer<T: Sized>(
         &mut self,
-        buffer: &Buffer,
+        buffer: &Arc<Buffer>,
         offset: u64,
         data: &[T],
     ) -> Result<(), RenderError> {
         let size = size_of_val(data);
         assert!(size as u64 <= self.size);
-        if !self.try_push_buffer(buffer.raw(), offset, size, data.as_ptr() as *const u8) {
+        if !self.try_push_buffer(buffer, offset, size, data.as_ptr() as *const u8) {
             self.upload()?;
-            if !self.try_push_buffer(buffer.raw(), offset, size, data.as_ptr() as *const u8) {
+            if !self.try_push_buffer(buffer, offset, size, data.as_ptr() as *const u8) {
                 panic!(
                     "Despite just pushing entire staging buffer we still can't push data in it."
                 );
@@ -164,7 +169,7 @@ impl Staging {
 
     pub fn upload_image(
         &mut self,
-        image: &Image,
+        image: &Arc<Image>,
         data: &[&ImageSubresourceData],
     ) -> Result<(), RenderError> {
         for (mip, data) in data.iter().enumerate() {
@@ -181,7 +186,12 @@ impl Staging {
         Ok(())
     }
 
-    fn try_push_image_mip(&mut self, image: &Image, mip: u32, data: &ImageSubresourceData) -> bool {
+    fn try_push_image_mip(
+        &mut self,
+        image: &Arc<Image>,
+        mip: u32,
+        data: &ImageSubresourceData,
+    ) -> bool {
         if let Some(staging_offset) = self.allocator.allocate(data.data.len() as _) {
             unsafe {
                 copy_nonoverlapping(
@@ -207,7 +217,7 @@ impl Staging {
 
             let request = ImageUploadRequest {
                 op,
-                dst: image.raw(),
+                dst: image.clone(),
                 subresource: image
                     .subresource_range(SubImage::LayerAndMip(0, mip), vk::ImageAspectFlags::COLOR),
             };
@@ -220,7 +230,7 @@ impl Staging {
 
     fn try_push_buffer(
         &mut self,
-        buffer: vk::Buffer,
+        buffer: &Arc<Buffer>,
         offset: u64,
         size: usize,
         data: *const u8,
@@ -240,7 +250,10 @@ impl Staging {
                 dst_offset: offset,
                 size: size as u64,
             };
-            self.upload_buffers.entry(buffer).or_default().push(op);
+            self.upload_buffers
+                .entry(buffer.clone())
+                .or_default()
+                .push(op);
             true
         } else {
             false
@@ -311,7 +324,7 @@ impl Staging {
                 previous_layout: vk_sync::ImageLayout::Optimal,
                 next_layout: vk_sync::ImageLayout::Optimal,
                 discard_contents: true,
-                image: request.dst,
+                image: request.dst.raw(),
                 range: request.subresource,
             })
             .collect::<Vec<_>>();
@@ -330,7 +343,7 @@ impl Staging {
                 previous_layout: vk_sync::ImageLayout::Optimal,
                 next_layout: vk_sync::ImageLayout::Optimal,
                 discard_contents: false,
-                image: request.dst,
+                image: request.dst.raw(),
                 range: request.subresource,
             })
             .collect::<Vec<_>>();
@@ -341,14 +354,14 @@ impl Staging {
     fn copy_buffers(
         &self,
         recorder: &CommandBufferRecorder,
-        requests: &HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
+        requests: &HashMap<Arc<Buffer>, Vec<vk::BufferCopy>>,
     ) {
         requests.iter().for_each(|(buffer, requests)| {
             unsafe {
                 recorder.device.cmd_copy_buffer(
                     *recorder.cb,
                     self.buffers[self.current].raw(),
-                    *buffer,
+                    buffer.raw(),
                     requests,
                 )
             };
@@ -360,7 +373,7 @@ impl Staging {
             recorder.device.cmd_copy_buffer_to_image(
                 *recorder.cb,
                 self.buffers[self.current].raw(),
-                requests.dst,
+                requests.dst.raw(),
                 vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                 slice::from_ref(&requests.op),
             )
@@ -368,7 +381,7 @@ impl Staging {
     }
 }
 
-impl Drop for Staging {
+impl Drop for StagingInner {
     fn drop(&mut self) {
         self.tranfser_cbs
             .drain(..)
@@ -380,5 +393,42 @@ impl Drop for Staging {
         self.render_semaphores
             .iter()
             .for_each(|semaphore| semaphore.free(self.device.raw()));
+    }
+}
+
+pub struct Staging {
+    inner: Mutex<StagingInner>,
+}
+
+impl Staging {
+    pub fn new(device: &Arc<Device>, size: usize) -> Result<Arc<Self>, RenderError> {
+        Ok(Arc::new(Self {
+            inner: Mutex::new(StagingInner::new(device, size)?),
+        }))
+    }
+
+    pub fn upload_buffer<T: Sized>(
+        &self,
+        buffer: &Arc<Buffer>,
+        offset: u64,
+        data: &[T],
+    ) -> Result<(), RenderError> {
+        self.inner.lock().upload_buffer(buffer, offset, data)
+    }
+
+    pub fn upload_image(
+        &self,
+        image: &Arc<Image>,
+        data: &[&ImageSubresourceData],
+    ) -> Result<(), RenderError> {
+        self.inner.lock().upload_image(image, data)
+    }
+
+    pub fn upload(&self) -> Result<Option<SubmitWait>, RenderError> {
+        self.inner.lock().upload()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.inner.lock().is_empty()
     }
 }

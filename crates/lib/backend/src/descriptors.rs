@@ -22,14 +22,16 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 
 use crate::{
     uniforms::Uniforms,
-    vulkan::{DescriptorSet, DescriptorSetInfo, Device},
+    vulkan::{Buffer, DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc},
     RenderError,
 };
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct BindImage {
     layout: vk::ImageLayout,
     view: vk::ImageView,
+    #[allow(dead_code)]
+    image: Arc<Image>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,9 +40,9 @@ struct BindStaticUniform {
     size: u32,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct BindDynamicUniform {
-    buffer: vk::Buffer,
+    buffer: Arc<Buffer>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -180,16 +182,20 @@ impl DescriptorCache {
         &mut self,
         handle: DescriptorHandle,
         binding: u32,
-        view: vk::ImageView,
+        image: &Arc<Image>,
         layout: vk::ImageLayout,
     ) -> Result<(), RenderError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
-            let image = desc
+            let image_bind = desc
                 .images
                 .iter_mut()
                 .find(|point| point.binding == binding);
-            if let Some(point) = image {
-                point.data = Some(BindImage { layout, view });
+            if let Some(point) = image_bind {
+                point.data = Some(BindImage {
+                    layout,
+                    view: image.get_or_create_view(ImageViewDesc::default())?,
+                    image: image.clone(),
+                });
                 self.dirty.insert(handle);
             }
         }
@@ -225,7 +231,7 @@ impl DescriptorCache {
         &mut self,
         handle: DescriptorHandle,
         binding: u32,
-        buffer: vk::Buffer,
+        buffer: &Arc<Buffer>,
     ) -> Result<(), RenderError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let desc = desc
@@ -233,7 +239,9 @@ impl DescriptorCache {
                 .iter_mut()
                 .find(|point| point.binding == binding);
             if let Some(point) = desc {
-                point.data = Some(BindDynamicUniform { buffer });
+                point.data = Some(BindDynamicUniform {
+                    buffer: buffer.clone(),
+                });
                 self.dirty.insert(handle);
             }
         }
@@ -328,7 +336,7 @@ impl DescriptorCache {
                 desc.images
                     .iter()
                     .map(|binding| {
-                        let image = binding.data.unwrap();
+                        let image = binding.data.as_ref().unwrap();
                         let image = vk::DescriptorImageInfo::builder()
                             .image_layout(image.layout)
                             .image_view(image.view)
@@ -364,9 +372,9 @@ impl DescriptorCache {
                 desc.dynamic_buffers
                     .iter()
                     .map(|binding| {
-                        let data = binding.data.unwrap().buffer;
+                        let data = &binding.data.as_ref().unwrap().buffer;
                         let buffer = vk::DescriptorBufferInfo::builder()
-                            .buffer(data)
+                            .buffer(data.raw())
                             .offset(0)
                             .range(vk::WHOLE_SIZE)
                             .build();

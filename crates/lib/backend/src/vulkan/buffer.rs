@@ -13,9 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{ptr::NonNull, sync::Arc};
+use std::{hash::Hash, ptr::NonNull, sync::Arc};
 
-use ash::vk::{self, BufferCreateInfo};
+use ash::vk::{self, BufferCreateInfo, Handle};
 use gpu_alloc::{Dedicated, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
@@ -81,6 +81,20 @@ pub struct Buffer {
     desc: BufferDesc,
     allocation: Option<GpuMemory>,
 }
+
+impl Hash for Buffer {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        state.write_u64(self.raw.as_raw());
+    }
+}
+
+impl PartialEq for Buffer {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+
+impl Eq for Buffer {}
 
 unsafe impl Send for Buffer {}
 
