@@ -26,7 +26,7 @@ use ash::vk;
 use dess_common::memory::BumpAllocator;
 
 use parking_lot::Mutex;
-use vk_sync::{cmd::pipeline_barrier, AccessType, ImageBarrier};
+use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::{
     vulkan::{
@@ -277,10 +277,10 @@ impl StagingInner {
                 &format!("Sending staging queue #{}", self.index),
             );
 
-            self.barrier_pre(&recorder, &self.upload_images);
-            self.copy_buffers(&recorder, &self.upload_buffers);
-            self.copy_images(&recorder, &self.upload_images);
-            self.barrier_after(&recorder, &self.upload_images);
+            self.barrier_pre(&recorder);
+            self.copy_buffers(&recorder);
+            self.copy_images(&recorder);
+            self.barrier_after(&recorder);
 
             self.device
                 .cmd_end_label(self.tranfser_cbs[self.current].raw());
@@ -313,8 +313,9 @@ impl StagingInner {
         Ok(Some(SubmitWait::Transfer(render_semaphore)))
     }
 
-    fn barrier_pre(&self, recorder: &CommandBufferRecorder, images: &[ImageUploadRequest]) {
-        let image_barriers = images
+    fn barrier_pre(&self, recorder: &CommandBufferRecorder) {
+        let image_barriers = self
+            .upload_images
             .iter()
             .map(|request| ImageBarrier {
                 previous_accesses: &[AccessType::Nothing],
@@ -329,11 +330,34 @@ impl StagingInner {
             })
             .collect::<Vec<_>>();
 
-        pipeline_barrier(recorder.device, *recorder.cb, None, &[], &image_barriers);
+        let size = self.upload_buffers.values().map(|x| x.len()).sum::<usize>();
+        let mut buffer_barriers = Vec::with_capacity(size);
+        for (target, requests) in &self.upload_buffers {
+            requests.iter().for_each(|buffer| {
+                buffer_barriers.push(BufferBarrier {
+                    previous_accesses: target.access_type(),
+                    next_accesses: &[AccessType::TransferWrite],
+                    src_queue_family_index: self.device.queue_index(),
+                    dst_queue_family_index: self.device.queue_index(),
+                    buffer: target.raw(),
+                    offset: buffer.dst_offset as usize,
+                    size: buffer.size as usize,
+                });
+            })
+        }
+
+        pipeline_barrier(
+            recorder.device,
+            *recorder.cb,
+            None,
+            &buffer_barriers,
+            &image_barriers,
+        );
     }
 
-    fn barrier_after(&self, recorder: &CommandBufferRecorder, images: &[ImageUploadRequest]) {
-        let image_barriers = images
+    fn barrier_after(&self, recorder: &CommandBufferRecorder) {
+        let image_barriers = self
+            .upload_images
             .iter()
             .map(|request| ImageBarrier {
                 previous_accesses: &[AccessType::TransferWrite],
@@ -348,15 +372,33 @@ impl StagingInner {
             })
             .collect::<Vec<_>>();
 
-        pipeline_barrier(recorder.device, *recorder.cb, None, &[], &image_barriers);
+        let size = self.upload_buffers.values().map(|x| x.len()).sum::<usize>();
+        let mut buffer_barriers = Vec::with_capacity(size);
+        for (target, requests) in &self.upload_buffers {
+            requests.iter().for_each(|buffer| {
+                buffer_barriers.push(BufferBarrier {
+                    previous_accesses: &[AccessType::TransferWrite],
+                    next_accesses: target.access_type(),
+                    src_queue_family_index: self.device.queue_index(),
+                    dst_queue_family_index: self.device.queue_index(),
+                    buffer: target.raw(),
+                    offset: buffer.dst_offset as usize,
+                    size: buffer.size as usize,
+                });
+            })
+        }
+
+        pipeline_barrier(
+            recorder.device,
+            *recorder.cb,
+            None,
+            &buffer_barriers,
+            &image_barriers,
+        );
     }
 
-    fn copy_buffers(
-        &self,
-        recorder: &CommandBufferRecorder,
-        requests: &HashMap<Arc<Buffer>, Vec<vk::BufferCopy>>,
-    ) {
-        requests.iter().for_each(|(buffer, requests)| {
+    fn copy_buffers(&self, recorder: &CommandBufferRecorder) {
+        self.upload_buffers.iter().for_each(|(buffer, requests)| {
             unsafe {
                 recorder.device.cmd_copy_buffer(
                     *recorder.cb,
@@ -368,8 +410,8 @@ impl StagingInner {
         });
     }
 
-    fn copy_images(&self, recorder: &CommandBufferRecorder, requests: &[ImageUploadRequest]) {
-        requests.iter().for_each(|requests| unsafe {
+    fn copy_images(&self, recorder: &CommandBufferRecorder) {
+        self.upload_images.iter().for_each(|requests| unsafe {
             recorder.device.cmd_copy_buffer_to_image(
                 *recorder.cb,
                 self.buffers[self.current].raw(),

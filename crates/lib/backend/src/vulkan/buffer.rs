@@ -15,9 +15,10 @@
 
 use std::{hash::Hash, ptr::NonNull, sync::Arc};
 
-use ash::vk::{self, BufferCreateInfo, Handle};
+use ash::vk::{self, AccessFlags, BufferCreateInfo, Handle};
 use gpu_alloc::{Dedicated, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
+use vk_sync::AccessType;
 
 use crate::RenderError;
 
@@ -80,6 +81,7 @@ pub struct Buffer {
     raw: vk::Buffer,
     desc: BufferDesc,
     allocation: Option<GpuMemory>,
+    access: Vec<AccessType>,
 }
 
 impl Hash for Buffer {
@@ -141,11 +143,40 @@ impl Buffer {
         }?;
 
         Ok(Arc::new(Self {
+            access: Self::create_access_type(&desc),
             device: device.clone(),
             raw: buffer,
             desc,
             allocation: Some(allocation),
         }))
+    }
+
+    fn create_access_type(desc: &BufferDesc) -> Vec<AccessType> {
+        let mut flags = Vec::new();
+        if desc.usage.contains(vk::BufferUsageFlags::VERTEX_BUFFER) {
+            flags.push(AccessType::VertexBuffer);
+        }
+        if desc.usage.contains(vk::BufferUsageFlags::INDEX_BUFFER) {
+            flags.push(AccessType::IndexBuffer);
+        }
+        if desc.usage.contains(vk::BufferUsageFlags::UNIFORM_BUFFER) {
+            flags.push(AccessType::AnyShaderReadUniformBuffer);
+        }
+        if desc.usage.contains(vk::BufferUsageFlags::INDIRECT_BUFFER) {
+            flags.push(AccessType::IndirectBuffer);
+        }
+        if desc.usage.contains(vk::BufferUsageFlags::TRANSFER_DST) {
+            flags.push(AccessType::TransferWrite);
+        }
+        if desc.usage.contains(vk::BufferUsageFlags::TRANSFER_SRC) {
+            flags.push(AccessType::TransferRead);
+        }
+
+        flags
+    }
+
+    pub fn access_type(&self) -> &[AccessType] {
+        &self.access
     }
 
     pub fn map(&mut self) -> Result<NonNull<u8>, RenderError> {
