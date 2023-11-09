@@ -34,11 +34,11 @@ pub(crate) struct CommandPool {
 impl CommandPool {
     pub fn new(
         device: &ash::Device,
-        query: u32,
+        queue_family: u32,
         flags: vk::CommandPoolCreateFlags,
     ) -> Result<Self, RenderError> {
         let command_pool_info = vk::CommandPoolCreateInfo::builder()
-            .queue_family_index(query)
+            .queue_family_index(queue_family)
             .flags(flags)
             .build();
         let pool = unsafe { device.create_command_pool(&command_pool_info, None) }?;
