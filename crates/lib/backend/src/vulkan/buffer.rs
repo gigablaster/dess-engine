@@ -20,7 +20,7 @@ use gpu_alloc::{Dedicated, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 use vk_sync::AccessType;
 
-use crate::RenderError;
+use crate::BackendError;
 
 use super::{Device, GpuMemory, MemoryAllocationInfo};
 
@@ -101,7 +101,7 @@ impl Eq for Buffer {}
 unsafe impl Send for Buffer {}
 
 impl Buffer {
-    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Self, RenderError> {
+    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Self, BackendError> {
         let buffer_create_info = BufferCreateInfo::builder()
             .size(desc.size as _)
             .usage(desc.usage)
@@ -179,7 +179,7 @@ impl Buffer {
         &self.access
     }
 
-    pub fn map(&mut self) -> Result<NonNull<u8>, RenderError> {
+    pub fn map(&mut self) -> Result<NonNull<u8>, BackendError> {
         if let Some(allocation) = &mut self.allocation {
             let ptr = unsafe {
                 allocation.map(AshMemoryDevice::wrap(self.device.raw()), 0, self.desc.size)

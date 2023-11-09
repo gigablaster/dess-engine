@@ -16,7 +16,7 @@
 use ash::vk;
 
 #[derive(Debug)]
-pub enum RenderError {
+pub enum BackendError {
     Vulkan(vk::Result),
     Loading(ash::LoadingError),
     MemoryAllocation(gpu_alloc::AllocationError),
@@ -31,38 +31,38 @@ pub enum RenderError {
     PipelineCreatingFailed,
 }
 
-impl From<vk::Result> for RenderError {
+impl From<vk::Result> for BackendError {
     fn from(value: vk::Result) -> Self {
-        RenderError::Vulkan(value)
+        BackendError::Vulkan(value)
     }
 }
 
-impl From<gpu_alloc::AllocationError> for RenderError {
+impl From<gpu_alloc::AllocationError> for BackendError {
     fn from(value: gpu_alloc::AllocationError) -> Self {
-        RenderError::MemoryAllocation(value)
+        BackendError::MemoryAllocation(value)
     }
 }
 
-impl From<gpu_alloc::MapError> for RenderError {
+impl From<gpu_alloc::MapError> for BackendError {
     fn from(value: gpu_alloc::MapError) -> Self {
-        RenderError::MemoryMap(value)
+        BackendError::MemoryMap(value)
     }
 }
 
-impl From<ash::LoadingError> for RenderError {
+impl From<ash::LoadingError> for BackendError {
     fn from(value: ash::LoadingError) -> Self {
-        RenderError::Loading(value)
+        BackendError::Loading(value)
     }
 }
 
-impl From<rspirv_reflect::ReflectError> for RenderError {
+impl From<rspirv_reflect::ReflectError> for BackendError {
     fn from(value: rspirv_reflect::ReflectError) -> Self {
-        RenderError::Reflection(value)
+        BackendError::Reflection(value)
     }
 }
 
-impl From<gpu_descriptor::AllocationError> for RenderError {
+impl From<gpu_descriptor::AllocationError> for BackendError {
     fn from(value: gpu_descriptor::AllocationError) -> Self {
-        RenderError::DescriptorAllocation(value)
+        BackendError::DescriptorAllocation(value)
     }
 }

@@ -19,7 +19,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self, CommandBufferUsageFlags, FenceCreateFlags};
 use vk_sync::{cmd::pipeline_barrier, BufferBarrier, GlobalBarrier, ImageBarrier};
 
-use crate::{GpuResource, RenderError};
+use crate::{BackendError, GpuResource};
 
 use super::{
     FboCacheKey, Image, ImageViewDesc, RenderPass, MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
@@ -38,7 +38,7 @@ impl CommandPool {
         queue_family: u32,
         flags: vk::CommandPoolCreateFlags,
         level: vk::CommandBufferLevel,
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, BackendError> {
         let command_pool_info = vk::CommandPoolCreateInfo::builder()
             .queue_family_index(queue_family)
             .flags(flags)
@@ -52,7 +52,7 @@ impl CommandPool {
             level,
         })
     }
-    pub fn get_or_create(&mut self, device: &ash::Device) -> Result<CommandBuffer, RenderError> {
+    pub fn get_or_create(&mut self, device: &ash::Device) -> Result<CommandBuffer, BackendError> {
         if let Some(cb) = self.free_cbs.pop() {
             Ok(cb)
         } else {
@@ -68,7 +68,7 @@ impl CommandPool {
         self.processing_cbs.push(cb);
     }
 
-    pub fn reset(&self, device: &ash::Device) -> Result<(), RenderError> {
+    pub fn reset(&self, device: &ash::Device) -> Result<(), BackendError> {
         unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
 
         Ok(())
@@ -99,7 +99,7 @@ impl CommandBuffer {
         device: &ash::Device,
         pool: vk::CommandPool,
         level: vk::CommandBufferLevel,
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, BackendError> {
         let command_buffer_allocation_info = vk::CommandBufferAllocateInfo::builder()
             .command_buffer_count(1)
             .command_pool(pool)
@@ -122,12 +122,12 @@ impl CommandBuffer {
         })
     }
 
-    pub fn wait(&self, device: &ash::Device) -> Result<(), RenderError> {
+    pub fn wait(&self, device: &ash::Device) -> Result<(), BackendError> {
         unsafe { device.wait_for_fences(slice::from_ref(&self.fence), true, u64::MAX) }?;
         Ok(())
     }
 
-    pub fn reset(&self, device: &ash::Device) -> Result<(), RenderError> {
+    pub fn reset(&self, device: &ash::Device) -> Result<(), BackendError> {
         unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
         Ok(())
     }
@@ -136,7 +136,7 @@ impl CommandBuffer {
         &self,
         device: &ash::Device,
         cb: F,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         let recorder = CommandBufferRecorder::new(device, &self.raw)?;
         cb(recorder);
 
@@ -195,7 +195,7 @@ impl<'a> CommandBufferRecorder<'a> {
     pub(self) fn new(
         device: &'a ash::Device,
         cb: &'a vk::CommandBuffer,
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, BackendError> {
         let begin_info = vk::CommandBufferBeginInfo::builder()
             .flags(CommandBufferUsageFlags::ONE_TIME_SUBMIT)
             .build();
@@ -209,7 +209,7 @@ impl<'a> CommandBufferRecorder<'a> {
         color_attachments: &[RenderPassAttachment],
         depth_attachment: Option<&RenderPassAttachment>,
         cb: F,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         let clear_values = color_attachments
             .iter()
             .chain(depth_attachment)
@@ -392,7 +392,7 @@ pub struct Semaphore {
 }
 
 impl Semaphore {
-    pub fn new(device: &ash::Device) -> Result<Semaphore, RenderError> {
+    pub fn new(device: &ash::Device) -> Result<Semaphore, BackendError> {
         let info = vk::SemaphoreCreateInfo::builder().build();
         Ok(Semaphore {
             raw: unsafe { device.create_semaphore(&info, None) }?,

@@ -15,7 +15,7 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, slice, sync::Arc};
 
-use crate::{Index, RenderError};
+use crate::{BackendError, Index};
 
 use super::{Device, ImageDesc, Program};
 use arrayvec::ArrayVec;
@@ -165,7 +165,7 @@ impl FboCache {
         &self,
         device: &Device,
         key: FboCacheKey,
-    ) -> Result<vk::Framebuffer, RenderError> {
+    ) -> Result<vk::Framebuffer, BackendError> {
         let mut entries = self.entries.lock();
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
@@ -180,7 +180,7 @@ impl FboCache {
         &self,
         device: &Device,
         key: &FboCacheKey,
-    ) -> Result<vk::Framebuffer, RenderError> {
+    ) -> Result<vk::Framebuffer, BackendError> {
         let formats = TempList::new();
         let [width, height] = key.dims;
 
@@ -323,7 +323,7 @@ impl PipelineCacheBuilder {
         }
     }
 
-    fn build(self, render_pass: vk::RenderPass) -> Result<Vec<vk::Pipeline>, RenderError> {
+    fn build(self, render_pass: vk::RenderPass) -> Result<Vec<vk::Pipeline>, BackendError> {
         let cache = Mutex::new(vec![vk::Pipeline::null(); self.pipelines.len()]);
         rayon::scope(|s| {
             for index in 0..self.pipelines.len() {
@@ -345,7 +345,7 @@ impl PipelineCacheBuilder {
 
         let cache = cache.into_inner();
         if cache.iter().any(|x| *x == vk::Pipeline::null()) {
-            Err(RenderError::PipelineCreatingFailed)
+            Err(BackendError::PipelineCreatingFailed)
         } else {
             Ok(cache)
         }
@@ -357,7 +357,7 @@ impl PipelineCacheBuilder {
         desc: &PipelineCreateDesc,
         pipelines: &Mutex<Vec<vk::Pipeline>>,
         index: usize,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         let shader_create_info = desc
             .program
             .shaders()
@@ -485,7 +485,7 @@ impl PipelineCacheBuilder {
                 None,
             )
         }
-        .map_err(|(_, error)| RenderError::from(error))?[0];
+        .map_err(|(_, error)| BackendError::from(error))?[0];
 
         pipelines.lock()[index] = pipeline;
 
@@ -523,7 +523,7 @@ impl RenderPass {
         device: &Arc<Device>,
         layout: RenderPassLayout,
         pipelines: PipelineCacheBuilder,
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, BackendError> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -588,7 +588,7 @@ impl RenderPass {
     }
 
     /// Creates new FBO, or returns already created with same key.
-    pub fn get_or_create_fbo(&self, key: FboCacheKey) -> Result<vk::Framebuffer, RenderError> {
+    pub fn get_or_create_fbo(&self, key: FboCacheKey) -> Result<vk::Framebuffer, BackendError> {
         self.fbo_cache.get_or_create(&self.device, key)
     }
 

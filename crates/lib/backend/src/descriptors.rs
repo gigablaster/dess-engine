@@ -23,7 +23,7 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 use crate::{
     uniforms::Uniforms,
     vulkan::{Buffer, DescriptorSet, DescriptorSetInfo, Device, Image, ImageViewDesc},
-    RenderError,
+    BackendError,
 };
 
 #[derive(Debug, Clone)]
@@ -84,7 +84,7 @@ pub struct DescriptorCache {
 }
 
 impl DescriptorCache {
-    pub fn new(device: &Arc<Device>) -> Result<Self, RenderError> {
+    pub fn new(device: &Arc<Device>) -> Result<Self, BackendError> {
         Ok(Self {
             device: device.clone(),
             container: HandleContainer::new(),
@@ -96,7 +96,7 @@ impl DescriptorCache {
         })
     }
 
-    pub fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, RenderError> {
+    pub fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, BackendError> {
         let static_buffers = set
             .types
             .iter()
@@ -184,7 +184,7 @@ impl DescriptorCache {
         binding: u32,
         image: &Arc<Image>,
         layout: vk::ImageLayout,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let image_bind = desc
                 .images
@@ -208,7 +208,7 @@ impl DescriptorCache {
         handle: DescriptorHandle,
         binding: u32,
         data: &T,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let desc = desc
                 .static_buffers
@@ -232,7 +232,7 @@ impl DescriptorCache {
         handle: DescriptorHandle,
         binding: u32,
         buffer: &Arc<Buffer>,
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let desc = desc
                 .dynamic_buffers
@@ -248,7 +248,7 @@ impl DescriptorCache {
         Ok(())
     }
 
-    pub fn update_descriptors(&mut self) -> Result<(), RenderError> {
+    pub fn update_descriptors(&mut self) -> Result<(), BackendError> {
         puffin::profile_scope!("Update descriptors");
         let drop_list = &mut self.device.drop_list();
         let allocator = &mut self.device.descriptor_allocator();

@@ -21,7 +21,7 @@ use std::{
 use ash::vk;
 use parking_lot::Mutex;
 
-use crate::{GpuResource, RenderError};
+use crate::{BackendError, GpuResource};
 
 use super::{CommandBuffer, CommandPool, Semaphore};
 
@@ -37,7 +37,7 @@ pub struct FrameContext {
 unsafe impl Sync for FrameContext {}
 
 impl FrameContext {
-    pub(crate) fn new(device: &ash::Device, query: u32) -> Result<Self, RenderError> {
+    pub(crate) fn new(device: &ash::Device, query: u32) -> Result<Self, BackendError> {
         let render_finished = Semaphore::new(device)?;
         let command_pools = Mutex::new(HashMap::new());
         let mut main_pool = CommandPool::new(
@@ -59,7 +59,7 @@ impl FrameContext {
         })
     }
 
-    pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), RenderError> {
+    pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), BackendError> {
         let mut pools = self.secondary_pools.lock();
         pools.iter_mut().for_each(|(_, pool)| {
             pool.recycle();
@@ -71,7 +71,7 @@ impl FrameContext {
     pub fn get_or_create_secondary_command_buffer(
         &self,
         device: &ash::Device,
-    ) -> Result<CommandBufferGuard, RenderError> {
+    ) -> Result<CommandBufferGuard, BackendError> {
         let thread_id = thread::current().id();
         let mut pools = self.secondary_pools.lock();
         if let Entry::Vacant(e) = pools.entry(thread_id) {

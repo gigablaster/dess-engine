@@ -17,7 +17,7 @@ use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use crate::RenderError;
+use crate::BackendError;
 
 use super::{Instance, Surface};
 
@@ -81,7 +81,7 @@ impl Debug for PhysicalDevice {
 }
 
 impl Instance {
-    pub fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, RenderError> {
+    pub fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, BackendError> {
         unsafe {
             Ok(self
                 .raw

@@ -24,7 +24,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
     vulkan::{ImageDesc, ImageType},
-    GpuResource, RenderError,
+    BackendError, GpuResource,
 };
 
 use super::{Device, Image, Instance, Semaphore};
@@ -40,7 +40,7 @@ impl Surface {
         instance: &Arc<Instance>,
         display_handle: RawDisplayHandle,
         window_handle: RawWindowHandle,
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, BackendError> {
         let surface = unsafe {
             ash_window::create_surface(
                 &instance.entry,
@@ -81,7 +81,7 @@ impl SwapchainInner {
         device: &Arc<Device>,
         surface: &Surface,
         resolution: [u32; 2],
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, BackendError> {
         info!(
             "Create swapchain for resolution {} x {}",
             resolution[0], resolution[1]
@@ -96,7 +96,7 @@ impl SwapchainInner {
         let formats = Self::enumerate_surface_formats(device, surface)?;
         let format = match Self::select_surface_format(&formats) {
             Some(format) => format,
-            None => return Err(RenderError::NoSuitableFormat),
+            None => return Err(BackendError::NoSuitableFormat),
         };
 
         let mut desired_image_count = 3.max(surface_capabilities.min_image_count);
@@ -219,7 +219,7 @@ impl SwapchainInner {
     fn enumerate_surface_formats(
         device: &Device,
         surface: &Surface,
-    ) -> Result<Vec<vk::SurfaceFormatKHR>, RenderError> {
+    ) -> Result<Vec<vk::SurfaceFormatKHR>, BackendError> {
         Ok(unsafe {
             surface
                 .loader
@@ -280,7 +280,7 @@ impl Swapchain {
         device: &Arc<Device>,
         surface: Surface,
         resolution: [u32; 2],
-    ) -> Result<Self, RenderError> {
+    ) -> Result<Self, BackendError> {
         Ok(Self {
             device: device.clone(),
             inner: SwapchainInner::new(device, &surface, resolution)?,
@@ -288,7 +288,7 @@ impl Swapchain {
         })
     }
 
-    pub fn acquire_next_image(&mut self) -> Result<AcquiredSurface, RenderError> {
+    pub fn acquire_next_image(&mut self) -> Result<AcquiredSurface, BackendError> {
         puffin::profile_scope!("wait for swapchain");
         let acquire_semaphore = self.inner.acquire_semaphore[self.inner.next_semaphore];
         let rendering_finished_semaphore =
@@ -306,7 +306,7 @@ impl Swapchain {
             Err(vk::Result::SUBOPTIMAL_KHR | vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 return Ok(AcquiredSurface::NeedRecreate)
             }
-            Err(err) => return Err(RenderError::from(err)),
+            Err(err) => return Err(BackendError::from(err)),
         };
 
         assert_eq!(present_index as usize, self.inner.next_semaphore);
@@ -343,7 +343,7 @@ impl Swapchain {
         &mut self,
         device: &Arc<Device>,
         resolution: [u32; 2],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         device.wait();
         info!("Recreate swapchain");
         self.inner.cleanup(device);

@@ -32,7 +32,7 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 use log::info;
 use parking_lot::{Mutex, MutexGuard};
 
-use crate::{GpuResource, RenderError};
+use crate::{BackendError, GpuResource};
 
 use super::{
     droplist::DropList, CommandBuffer, DescriptorAllocator, FrameContext, GpuAllocator, Instance,
@@ -102,7 +102,7 @@ impl SubmitQueue {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         match self {
             Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
             Self::Multiple(queue, ..) => {
@@ -117,7 +117,7 @@ impl SubmitQueue {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         match self {
             Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
             Self::Multiple(_, queue, ..) => {
@@ -132,7 +132,7 @@ impl SubmitQueue {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         match self {
             Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
             Self::Multiple(_, _, queue) => {
@@ -155,7 +155,7 @@ impl SubmitQueue {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         let masks = wait
             .iter()
             .map(|x| x.stage_flags())
@@ -210,11 +210,11 @@ impl Device {
     pub fn create(
         instance: &Arc<Instance>,
         pdevice: PhysicalDevice,
-    ) -> Result<Arc<Self>, RenderError> {
+    ) -> Result<Arc<Self>, BackendError> {
         if !pdevice.is_queue_flag_supported(
             vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
         ) {
-            return Err(RenderError::NoSuitableDevice);
+            return Err(BackendError::NoSuitableDevice);
         };
 
         let device_extension_names = vec![
@@ -225,7 +225,7 @@ impl Device {
         for ext in &device_extension_names {
             let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
             if !pdevice.is_extensions_sipported(ext) {
-                return Err(RenderError::ExtensionNotFound(ext.into()));
+                return Err(BackendError::ExtensionNotFound(ext.into()));
             }
         }
 
@@ -233,7 +233,7 @@ impl Device {
             .get_queue(
                 vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
             )
-            .ok_or(RenderError::NoSuitableQueue)?;
+            .ok_or(BackendError::NoSuitableQueue)?;
 
         let mut imageless_frame_buffer = vk::PhysicalDeviceImagelessFramebufferFeatures::default();
 
@@ -376,7 +376,7 @@ impl Device {
         result
     }
 
-    pub fn begin_frame(&self) -> Result<Arc<FrameContext>, RenderError> {
+    pub fn begin_frame(&self) -> Result<Arc<FrameContext>, BackendError> {
         puffin::profile_scope!("begin frame");
         let mut frame0 = self.frames[0].lock();
         {
@@ -425,7 +425,7 @@ impl Device {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         self.queue.submit_draw(&self.raw, cb, wait, trigger)
     }
 
@@ -434,7 +434,7 @@ impl Device {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         self.queue.submit_transfer(&self.raw, cb, wait, trigger)
     }
 
@@ -443,7 +443,7 @@ impl Device {
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         self.queue.submit_compute(&self.raw, cb, wait, trigger)
     }
 

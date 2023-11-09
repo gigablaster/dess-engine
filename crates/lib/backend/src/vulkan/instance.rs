@@ -25,7 +25,7 @@ use ash::{
 use log::{info, log, Level};
 use raw_window_handle::RawDisplayHandle;
 
-use crate::RenderError;
+use crate::BackendError;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,
@@ -97,7 +97,7 @@ impl Instance {
     pub fn new(
         builder: InstanceBuilder,
         display_handle: RawDisplayHandle,
-    ) -> Result<Arc<Self>, RenderError> {
+    ) -> Result<Arc<Self>, BackendError> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(&builder);

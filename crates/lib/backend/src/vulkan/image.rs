@@ -19,7 +19,7 @@ use gpu_alloc_ash::AshMemoryDevice;
 use parking_lot::Mutex;
 use std::{collections::HashMap, sync::Arc};
 
-use crate::RenderError;
+use crate::BackendError;
 
 use super::Device;
 
@@ -145,7 +145,7 @@ pub struct Image {
 unsafe impl Send for Image {}
 
 impl Image {
-    pub fn texture(device: &Arc<Device>, desc: ImageDesc) -> Result<Self, RenderError> {
+    pub fn texture(device: &Arc<Device>, desc: ImageDesc) -> Result<Self, BackendError> {
         let image = unsafe { device.raw().create_image(&desc.build(), None) }?;
         let requirement = unsafe { device.raw().get_image_memory_requirements(image) };
         let allocation = unsafe {
@@ -174,7 +174,7 @@ impl Image {
         })
     }
 
-    pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, RenderError> {
+    pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, BackendError> {
         let mut views = self.views.lock();
         if let Some(view) = views.get(&desc) {
             Ok(*view)

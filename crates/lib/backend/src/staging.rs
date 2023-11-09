@@ -33,7 +33,7 @@ use crate::{
         Buffer, BufferDesc, CommandBuffer, CommandBufferRecorder, CommandPool, Device, Image,
         Semaphore, SubImage, SubmitWait,
     },
-    GpuResource, RenderError,
+    BackendError, GpuResource,
 };
 
 const STAGES: usize = 4;
@@ -71,7 +71,7 @@ unsafe impl Send for StagingInner {}
 unsafe impl Sync for StagingInner {}
 
 impl StagingInner {
-    pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, RenderError> {
+    pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, BackendError> {
         let mut pool = CommandPool::new(
             device.raw(),
             device.queue_family_index(),
@@ -153,7 +153,7 @@ impl StagingInner {
         buffer: &Arc<Buffer>,
         offset: u64,
         data: &[T],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         let size = size_of_val(data);
         assert!(size as u64 <= self.size);
         if !self.try_push_buffer(buffer, offset, size, data.as_ptr() as *const u8) {
@@ -172,7 +172,7 @@ impl StagingInner {
         &mut self,
         image: &Arc<Image>,
         data: &[&ImageSubresourceData],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         for (mip, data) in data.iter().enumerate() {
             if !self.try_push_image_mip(image, mip as _, data) {
                 self.upload()?;
@@ -265,7 +265,7 @@ impl StagingInner {
         self.upload_buffers.is_empty() && self.upload_images.is_empty()
     }
 
-    pub fn upload(&mut self) -> Result<Option<SubmitWait>, RenderError> {
+    pub fn upload(&mut self) -> Result<Option<SubmitWait>, BackendError> {
         if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
             return Ok(None);
         }
@@ -444,7 +444,7 @@ pub struct Staging {
 }
 
 impl Staging {
-    pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, RenderError> {
+    pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, BackendError> {
         Ok(Self {
             inner: Mutex::new(StagingInner::new(device, size)?),
         })
@@ -455,7 +455,7 @@ impl Staging {
         buffer: &Arc<Buffer>,
         offset: u64,
         data: &[T],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         self.inner.lock().upload_buffer(buffer, offset, data)
     }
 
@@ -463,11 +463,11 @@ impl Staging {
         &self,
         image: &Arc<Image>,
         data: &[&ImageSubresourceData],
-    ) -> Result<(), RenderError> {
+    ) -> Result<(), BackendError> {
         self.inner.lock().upload_image(image, data)
     }
 
-    pub fn upload(&self) -> Result<Option<SubmitWait>, RenderError> {
+    pub fn upload(&self) -> Result<Option<SubmitWait>, BackendError> {
         self.inner.lock().upload()
     }
 

@@ -25,7 +25,7 @@ use dess_common::memory::BlockAllocator;
 
 use crate::{
     vulkan::{Buffer, BufferDesc, Device},
-    RenderError,
+    BackendError,
 };
 
 const BUCKET_SIZE: u32 = 0xFFFF;
@@ -110,7 +110,7 @@ pub struct Uniforms {
 }
 
 impl Uniforms {
-    pub fn new(device: &Arc<Device>) -> Result<Self, RenderError> {
+    pub fn new(device: &Arc<Device>) -> Result<Self, BackendError> {
         let mut buffer = Buffer::new(
             device,
             BufferDesc::upload(
@@ -131,7 +131,7 @@ impl Uniforms {
         })
     }
 
-    pub fn push<T: Sized>(&mut self, data: &T) -> Result<u32, RenderError> {
+    pub fn push<T: Sized>(&mut self, data: &T) -> Result<u32, BackendError> {
         let size = size_of::<T>() as u32;
         let mut index = self.find_bucket_index(size);
         if index.is_none() {
@@ -160,7 +160,7 @@ impl Uniforms {
                 return Ok(offset);
             }
         }
-        Err(RenderError::OutOfUnifromsSpace)
+        Err(BackendError::OutOfUnifromsSpace)
     }
 
     pub fn dealloc(&mut self, offset: u32) {
@@ -177,7 +177,7 @@ impl Uniforms {
         self.buffer.raw()
     }
 
-    pub fn flush(&mut self) -> Result<(), RenderError> {
+    pub fn flush(&mut self) -> Result<(), BackendError> {
         if !self.writes.is_empty() {
             unsafe { self.device.raw().flush_mapped_memory_ranges(&self.writes) }?;
             self.writes.clear();
