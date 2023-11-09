@@ -523,7 +523,7 @@ impl RenderPass {
         device: &Arc<Device>,
         layout: RenderPassLayout,
         pipelines: PipelineCacheBuilder,
-    ) -> Result<Arc<Self>, RenderError> {
+    ) -> Result<Self, RenderError> {
         let attachments = layout
             .color_attachments
             .iter()
@@ -570,12 +570,12 @@ impl RenderPass {
             .copied()
             .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             device: device.clone(),
             raw: render_pass,
             fbo_cache: FboCache::new(render_pass, &all_attachments),
             pipeline_cache: pipelines.build(render_pass)?,
-        }))
+        })
     }
 
     /// Removes all FBOs, so new one will be created

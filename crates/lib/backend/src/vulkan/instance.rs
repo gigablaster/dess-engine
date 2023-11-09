@@ -56,17 +56,9 @@ impl InstanceBuilder {
         self.trace = trace;
         self
     }
-
-    pub fn build(self, display_handle: RawDisplayHandle) -> Result<Arc<Instance>, RenderError> {
-        Instance::create(&self, display_handle)
-    }
 }
 
 impl Instance {
-    pub fn builder() -> InstanceBuilder {
-        InstanceBuilder::default()
-    }
-
     fn generate_extension_names(
         builder: &InstanceBuilder,
         display_handle: RawDisplayHandle,
@@ -102,19 +94,19 @@ impl Instance {
         vk::make_api_version(0, 1, 1, 0)
     }
 
-    fn create(
-        builder: &InstanceBuilder,
+    pub fn new(
+        builder: InstanceBuilder,
         display_handle: RawDisplayHandle,
     ) -> Result<Arc<Self>, RenderError> {
         let entry = unsafe { ash::Entry::load()? };
 
-        let layer_names = Self::generate_layer_names(builder);
+        let layer_names = Self::generate_layer_names(&builder);
         let layer_names = layer_names
             .iter()
             .map(|name| name.as_ptr())
             .collect::<Vec<_>>();
 
-        let extensions = Self::generate_extension_names(builder, display_handle);
+        let extensions = Self::generate_extension_names(&builder, display_handle);
         let extensions = extensions
             .iter()
             .map(|name| name.as_ptr())

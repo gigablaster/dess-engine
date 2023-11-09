@@ -444,10 +444,10 @@ pub struct Staging {
 }
 
 impl Staging {
-    pub fn new(device: &Arc<Device>, size: usize) -> Result<Arc<Self>, RenderError> {
-        Ok(Arc::new(Self {
+    pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, RenderError> {
+        Ok(Self {
             inner: Mutex::new(StagingInner::new(device, size)?),
-        }))
+        })
     }
 
     pub fn upload_buffer<T: Sized>(
