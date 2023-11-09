@@ -73,12 +73,129 @@ impl SubmitWait {
     }
 }
 
+/// All devices I target has one queue family that supports all operations. But among them we have 2 kinds of devices
+/// 1 - devices with one queue for main family that does everything (like integrated Intel GPUs).
+/// 2 - devices with multiple queues for main family
+/// So we check how many queues we have and then use one of two scenaros - all submits go into single queue or they go
+/// into separate queues.
+enum SubmitQueue {
+    Single(Mutex<Queue>),
+    Multiple(Mutex<Queue>, Mutex<Queue>, Mutex<Queue>),
+}
+
+impl SubmitQueue {
+    pub fn new(device: &ash::Device, queue_family: QueueFamily) -> Self {
+        if queue_family.properties.queue_count < 3 {
+            Self::Single(Mutex::new(Self::create_queue(device, queue_family, 0)))
+        } else {
+            Self::Multiple(
+                Mutex::new(Self::create_queue(device, queue_family, 0)),
+                Mutex::new(Self::create_queue(device, queue_family, 1)),
+                Mutex::new(Self::create_queue(device, queue_family, 2)),
+            )
+        }
+    }
+
+    pub fn submit_draw(
+        &self,
+        device: &ash::Device,
+        cb: &CommandBuffer,
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
+    ) -> Result<(), RenderError> {
+        match self {
+            Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
+            Self::Multiple(queue, ..) => {
+                Self::submit_impl(device, &queue.lock(), cb, wait, trigger)
+            }
+        }
+    }
+
+    pub fn submit_transfer(
+        &self,
+        device: &ash::Device,
+        cb: &CommandBuffer,
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
+    ) -> Result<(), RenderError> {
+        match self {
+            Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
+            Self::Multiple(_, queue, ..) => {
+                Self::submit_impl(device, &queue.lock(), cb, wait, trigger)
+            }
+        }
+    }
+
+    pub fn submit_compute(
+        &self,
+        device: &ash::Device,
+        cb: &CommandBuffer,
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
+    ) -> Result<(), RenderError> {
+        match self {
+            Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
+            Self::Multiple(_, _, queue) => {
+                Self::submit_impl(device, &queue.lock(), cb, wait, trigger)
+            }
+        }
+    }
+
+    pub fn get_present_queue(&self) -> MutexGuard<Queue> {
+        match self {
+            Self::Single(queue) => queue.lock(),
+            Self::Multiple(queue, ..) => queue.lock(),
+        }
+    }
+
+    /// Does actual submit job
+    fn submit_impl(
+        device: &ash::Device,
+        queue: &Queue,
+        cb: &CommandBuffer,
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
+    ) -> Result<(), RenderError> {
+        let masks = wait
+            .iter()
+            .map(|x| x.stage_flags())
+            .collect::<ArrayVec<_, 8>>();
+        let wait = wait
+            .iter()
+            .map(|x| x.semahore())
+            .collect::<ArrayVec<_, 8>>();
+        let trigger = trigger.iter().map(|x| x.raw).collect::<ArrayVec<_, 8>>();
+        let submit_info = vk::SubmitInfo::builder()
+            .wait_dst_stage_mask(&masks)
+            .wait_semaphores(&wait)
+            .signal_semaphores(&trigger)
+            .command_buffers(slice::from_ref(&cb.raw()))
+            .build();
+        unsafe {
+            device.wait_for_fences(slice::from_ref(&cb.fence()), true, u64::MAX)?;
+            device.reset_fences(slice::from_ref(&cb.fence()))?;
+            device.queue_submit(queue.raw, slice::from_ref(&submit_info), cb.fence())?;
+        }
+
+        Ok(())
+    }
+
+    fn create_queue(device: &ash::Device, queue_family: QueueFamily, index: u32) -> Queue {
+        let queue = unsafe { device.get_device_queue(queue_family.index, index) };
+
+        Queue {
+            raw: queue,
+            family: queue_family,
+        }
+    }
+}
+
 pub struct Device {
     raw: ash::Device,
     instance: Arc<Instance>,
     pdevice: PhysicalDevice,
-    queue: Mutex<Queue>,
-    queue_index: u32,
+    queue: SubmitQueue,
+    queue_family_index: u32,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     frames: [Mutex<Arc<FrameContext>>; 2],
     current_drop_list: Mutex<DropList>,
@@ -196,15 +313,15 @@ impl Device {
         let allocator = GpuAllocator::new(allocator_config, allocator_props);
         let descriptor_allocator = DescriptorAllocator::new(128);
 
-        let queue = Self::create_queue(&device, universal_queue);
+        let queue = SubmitQueue::new(&device, universal_queue);
 
-        Self::set_object_name_impl(instance, &device, queue.raw, "Main queue");
+        //Self::set_object_name_impl(instance, &device, queue.raw, "Main queue");
 
         Ok(Arc::new(Self {
             instance: instance.clone(),
             pdevice,
-            queue_index: queue.family.index,
-            queue: Mutex::new(queue),
+            queue_family_index: universal_queue.index,
+            queue,
             samplers: Self::generate_samplers(&device),
             raw: device,
             frames,
@@ -259,15 +376,6 @@ impl Device {
         result
     }
 
-    fn create_queue(device: &ash::Device, queue_family: QueueFamily) -> Queue {
-        let queue = unsafe { device.get_device_queue(queue_family.index, 0) };
-
-        Queue {
-            raw: queue,
-            family: queue_family,
-        }
-    }
-
     pub fn begin_frame(&self) -> Result<Arc<FrameContext>, RenderError> {
         puffin::profile_scope!("begin frame");
         let mut frame0 = self.frames[0].lock();
@@ -312,36 +420,31 @@ impl Device {
         }
     }
 
-    pub fn submit(
+    pub fn submit_draw(
         &self,
         cb: &CommandBuffer,
         wait: &[SubmitWait],
         trigger: &[Semaphore],
     ) -> Result<(), RenderError> {
-        let masks = wait
-            .iter()
-            .map(|x| x.stage_flags())
-            .collect::<ArrayVec<_, 8>>();
-        let wait = wait
-            .iter()
-            .map(|x| x.semahore())
-            .collect::<ArrayVec<_, 8>>();
-        let trigger = trigger.iter().map(|x| x.raw).collect::<ArrayVec<_, 8>>();
-        let submit_info = vk::SubmitInfo::builder()
-            .wait_dst_stage_mask(&masks)
-            .wait_semaphores(&wait)
-            .signal_semaphores(&trigger)
-            .command_buffers(slice::from_ref(&cb.raw()))
-            .build();
-        unsafe {
-            self.raw
-                .wait_for_fences(slice::from_ref(&cb.fence()), true, u64::MAX)?;
-            self.raw.reset_fences(slice::from_ref(&cb.fence()))?;
-            self.raw
-                .queue_submit(self.queue().raw, slice::from_ref(&submit_info), cb.fence())?;
-        }
+        self.queue.submit_draw(&self.raw, cb, wait, trigger)
+    }
 
-        Ok(())
+    pub fn submit_transfer(
+        &self,
+        cb: &CommandBuffer,
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
+    ) -> Result<(), RenderError> {
+        self.queue.submit_transfer(&self.raw, cb, wait, trigger)
+    }
+
+    pub fn submit_compute(
+        &self,
+        cb: &CommandBuffer,
+        wait: &[SubmitWait],
+        trigger: &[Semaphore],
+    ) -> Result<(), RenderError> {
+        self.queue.submit_compute(&self.raw, cb, wait, trigger)
     }
 
     pub fn instance(&self) -> &ash::Instance {
@@ -422,16 +525,16 @@ impl Device {
         &self.pdevice
     }
 
-    pub fn queue_index(&self) -> u32 {
-        self.queue_index
-    }
-
-    pub fn queue(&self) -> MutexGuard<Queue> {
-        self.queue.lock()
+    pub fn queue_family_index(&self) -> u32 {
+        self.queue_family_index
     }
 
     pub fn drop_list(&self) -> MutexGuard<DropList> {
         self.current_drop_list.lock()
+    }
+
+    pub(crate) fn get_present_queue(&self) -> MutexGuard<Queue> {
+        self.queue.get_present_queue()
     }
 }
 

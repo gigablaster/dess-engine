@@ -74,7 +74,7 @@ impl StagingInner {
     pub fn new(device: &Arc<Device>, size: usize) -> Result<Self, RenderError> {
         let mut pool = CommandPool::new(
             device.raw(),
-            device.queue_index(),
+            device.queue_family_index(),
             vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
         )?;
         let mut buffers = (0..STAGES)
@@ -289,13 +289,13 @@ impl StagingInner {
         let render_semaphore = self.render_semaphores[self.current];
 
         if let Some(last) = self.last {
-            self.device.submit(
+            self.device.submit_draw(
                 &self.tranfser_cbs[self.current],
                 &[SubmitWait::Transfer(self.semaphores[last])],
                 &[semaphore, render_semaphore],
             )?;
         } else {
-            self.device.submit(
+            self.device.submit_draw(
                 &self.tranfser_cbs[self.current],
                 &[],
                 &[semaphore, render_semaphore],
@@ -320,8 +320,8 @@ impl StagingInner {
             .map(|request| ImageBarrier {
                 previous_accesses: &[AccessType::Nothing],
                 next_accesses: &[AccessType::TransferWrite],
-                src_queue_family_index: self.device.queue_index(),
-                dst_queue_family_index: self.device.queue_index(),
+                src_queue_family_index: self.device.queue_family_index(),
+                dst_queue_family_index: self.device.queue_family_index(),
                 previous_layout: vk_sync::ImageLayout::Optimal,
                 next_layout: vk_sync::ImageLayout::Optimal,
                 discard_contents: true,
@@ -337,8 +337,8 @@ impl StagingInner {
                 buffer_barriers.push(BufferBarrier {
                     previous_accesses: target.access_type(),
                     next_accesses: &[AccessType::TransferWrite],
-                    src_queue_family_index: self.device.queue_index(),
-                    dst_queue_family_index: self.device.queue_index(),
+                    src_queue_family_index: self.device.queue_family_index(),
+                    dst_queue_family_index: self.device.queue_family_index(),
                     buffer: target.raw(),
                     offset: buffer.dst_offset as usize,
                     size: buffer.size as usize,
@@ -362,8 +362,8 @@ impl StagingInner {
             .map(|request| ImageBarrier {
                 previous_accesses: &[AccessType::TransferWrite],
                 next_accesses: &[AccessType::AnyShaderReadSampledImageOrUniformTexelBuffer],
-                src_queue_family_index: self.device.queue_index(),
-                dst_queue_family_index: self.device.queue_index(),
+                src_queue_family_index: self.device.queue_family_index(),
+                dst_queue_family_index: self.device.queue_family_index(),
                 previous_layout: vk_sync::ImageLayout::Optimal,
                 next_layout: vk_sync::ImageLayout::Optimal,
                 discard_contents: false,
@@ -379,8 +379,8 @@ impl StagingInner {
                 buffer_barriers.push(BufferBarrier {
                     previous_accesses: &[AccessType::TransferWrite],
                     next_accesses: target.access_type(),
-                    src_queue_family_index: self.device.queue_index(),
-                    dst_queue_family_index: self.device.queue_index(),
+                    src_queue_family_index: self.device.queue_family_index(),
+                    dst_queue_family_index: self.device.queue_family_index(),
                     buffer: target.raw(),
                     offset: buffer.dst_offset as usize,
                     size: buffer.size as usize,

@@ -106,7 +106,7 @@ impl Buffer {
             .size(desc.size as _)
             .usage(desc.usage)
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(&[device.queue_index()])
+            .queue_family_indices(&[device.queue_family_index()])
             .build();
         let buffer = unsafe { device.raw().create_buffer(&buffer_create_info, None) }?;
         let requirement = unsafe { device.raw().get_buffer_memory_requirements(buffer) };
