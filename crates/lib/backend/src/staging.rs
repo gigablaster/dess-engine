@@ -19,13 +19,12 @@ use std::{
     mem::size_of_val,
     ptr::{copy_nonoverlapping, NonNull},
     slice,
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 
-use parking_lot::Mutex;
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::{
@@ -261,10 +260,6 @@ impl StagingInner {
         }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.upload_buffers.is_empty() && self.upload_images.is_empty()
-    }
-
     pub fn upload(&mut self) -> Result<Option<SubmitWait>, BackendError> {
         if self.upload_images.is_empty() && self.upload_buffers.is_empty() {
             return Ok(None);
@@ -456,7 +451,10 @@ impl Staging {
         offset: u64,
         data: &[T],
     ) -> Result<(), BackendError> {
-        self.inner.lock().upload_buffer(buffer, offset, data)
+        self.inner
+            .lock()
+            .unwrap()
+            .upload_buffer(buffer, offset, data)
     }
 
     pub fn upload_image(
@@ -464,14 +462,10 @@ impl Staging {
         image: &Arc<Image>,
         data: &[&ImageSubresourceData],
     ) -> Result<(), BackendError> {
-        self.inner.lock().upload_image(image, data)
+        self.inner.lock().unwrap().upload_image(image, data)
     }
 
     pub fn upload(&self) -> Result<Option<SubmitWait>, BackendError> {
-        self.inner.lock().upload()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.inner.lock().is_empty()
+        self.inner.lock().unwrap().upload()
     }
 }

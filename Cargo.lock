@@ -497,7 +497,6 @@ dependencies = [
  "gpu-descriptor",
  "gpu-descriptor-ash",
  "log",
- "parking_lot",
  "puffin",
  "raw-window-handle",
  "rayon",

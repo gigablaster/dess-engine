@@ -13,7 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Debug, hash::Hash, slice, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt::Debug,
+    hash::Hash,
+    slice,
+    sync::{Arc, Mutex},
+};
 
 use crate::{BackendError, Index};
 
@@ -22,7 +28,6 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use dess_common::TempList;
 use log::error;
-use parking_lot::Mutex;
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -166,7 +171,7 @@ impl FboCache {
         device: &Device,
         key: FboCacheKey,
     ) -> Result<vk::Framebuffer, BackendError> {
-        let mut entries = self.entries.lock();
+        let mut entries = self.entries.lock().unwrap();
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
         } else {
@@ -217,7 +222,7 @@ impl FboCache {
     }
 
     pub fn clear(&self, device: &Device) {
-        let mut entries = self.entries.lock();
+        let mut entries = self.entries.lock().unwrap();
         entries
             .drain()
             .for_each(|(_, fbo)| unsafe { device.raw().destroy_framebuffer(fbo, None) });
@@ -343,7 +348,7 @@ impl PipelineCacheBuilder {
             }
         });
 
-        let cache = cache.into_inner();
+        let cache = cache.into_inner().unwrap();
         if cache.iter().any(|x| *x == vk::Pipeline::null()) {
             Err(BackendError::PipelineCreatingFailed)
         } else {
@@ -487,7 +492,7 @@ impl PipelineCacheBuilder {
         }
         .map_err(|(_, error)| BackendError::from(error))?[0];
 
-        pipelines.lock()[index] = pipeline;
+        pipelines.lock().unwrap()[index] = pipeline;
 
         Ok(())
     }

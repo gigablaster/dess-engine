@@ -15,11 +15,11 @@
 
 use std::{
     collections::{hash_map::Entry, HashMap},
+    sync::Mutex,
     thread::{self, ThreadId},
 };
 
 use ash::vk;
-use parking_lot::Mutex;
 
 use crate::{BackendError, GpuResource};
 
@@ -60,7 +60,7 @@ impl FrameContext {
     }
 
     pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), BackendError> {
-        let mut pools = self.secondary_pools.lock();
+        let mut pools = self.secondary_pools.lock().unwrap();
         pools.iter_mut().for_each(|(_, pool)| {
             pool.recycle();
             pool.reset(device).unwrap();
@@ -73,7 +73,7 @@ impl FrameContext {
         device: &ash::Device,
     ) -> Result<CommandBufferGuard, BackendError> {
         let thread_id = thread::current().id();
-        let mut pools = self.secondary_pools.lock();
+        let mut pools = self.secondary_pools.lock().unwrap();
         if let Entry::Vacant(e) = pools.entry(thread_id) {
             let pool = CommandPool::new(
                 device,
@@ -91,7 +91,7 @@ impl FrameContext {
 
     pub(self) fn recycle_command_buffer(&self, cb: CommandBuffer) {
         let thread_id = thread::current().id();
-        let mut pools = self.secondary_pools.lock();
+        let mut pools = self.secondary_pools.lock().unwrap();
         pools
             .get_mut(&thread_id)
             .expect("Command buffer must be recycled from same thread it was allocated from")
@@ -123,7 +123,7 @@ impl<'a> Drop for CommandBufferGuard<'a> {
 impl GpuResource for FrameContext {
     fn free(&self, device: &ash::Device) {
         self.render_finished.free(device);
-        let mut pools = self.secondary_pools.lock();
+        let mut pools = self.secondary_pools.lock().unwrap();
         pools.iter_mut().for_each(|(_, pool)| pool.free(device));
         pools.clear();
         self.main_cb.free(device);
