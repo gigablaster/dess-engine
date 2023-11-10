@@ -17,52 +17,72 @@ use ash::vk;
 
 #[derive(Debug)]
 pub enum BackendError {
-    Vulkan(vk::Result),
-    Loading(ash::LoadingError),
-    MemoryAllocation(gpu_alloc::AllocationError),
-    MemoryMap(gpu_alloc::MapError),
-    DescriptorAllocation(gpu_descriptor::AllocationError),
+    OutOfMemory,
+    TooManyObjects,
+    NotSupported,
+    NotFound,
+    OutOfAllocatedSpace,
     NoSuitableDevice,
+    ShaderReflectionFailed,
     ExtensionNotFound(String),
     NoSuitableQueue,
-    Reflection(rspirv_reflect::ReflectError),
-    NoSuitableFormat,
-    OutOfUnifromsSpace,
-    PipelineCreatingFailed,
+    Fail,
 }
 
 impl From<vk::Result> for BackendError {
     fn from(value: vk::Result) -> Self {
-        BackendError::Vulkan(value)
+        match value {
+            vk::Result::ERROR_FORMAT_NOT_SUPPORTED
+            | vk::Result::ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR => Self::NotSupported,
+            vk::Result::ERROR_OUT_OF_HOST_MEMORY
+            | vk::Result::ERROR_OUT_OF_DEVICE_MEMORY
+            | vk::Result::ERROR_OUT_OF_POOL_MEMORY => Self::OutOfMemory,
+            vk::Result::ERROR_TOO_MANY_OBJECTS => Self::TooManyObjects,
+            _ => Self::Fail,
+        }
     }
 }
 
 impl From<gpu_alloc::AllocationError> for BackendError {
     fn from(value: gpu_alloc::AllocationError) -> Self {
-        BackendError::MemoryAllocation(value)
+        match value {
+            gpu_alloc::AllocationError::NoCompatibleMemoryTypes => Self::NotSupported,
+            gpu_alloc::AllocationError::OutOfDeviceMemory
+            | gpu_alloc::AllocationError::OutOfHostMemory => Self::OutOfMemory,
+            gpu_alloc::AllocationError::TooManyObjects => Self::TooManyObjects,
+        }
     }
 }
 
 impl From<gpu_alloc::MapError> for BackendError {
     fn from(value: gpu_alloc::MapError) -> Self {
-        BackendError::MemoryMap(value)
+        match value {
+            gpu_alloc::MapError::NonHostVisible => Self::NotSupported,
+            gpu_alloc::MapError::AlreadyMapped | gpu_alloc::MapError::MapFailed => Self::Fail,
+            gpu_alloc::MapError::OutOfDeviceMemory | gpu_alloc::MapError::OutOfHostMemory => {
+                Self::OutOfMemory
+            }
+        }
     }
 }
 
 impl From<ash::LoadingError> for BackendError {
     fn from(value: ash::LoadingError) -> Self {
-        BackendError::Loading(value)
+        match value {
+            ash::LoadingError::LibraryLoadFailure(..) => Self::Fail,
+            ash::LoadingError::MissingEntryPoint(..) => Self::NotFound,
+        }
     }
 }
 
 impl From<rspirv_reflect::ReflectError> for BackendError {
-    fn from(value: rspirv_reflect::ReflectError) -> Self {
-        BackendError::Reflection(value)
+    fn from(_value: rspirv_reflect::ReflectError) -> Self {
+        Self::ShaderReflectionFailed
     }
 }
 
 impl From<gpu_descriptor::AllocationError> for BackendError {
-    fn from(value: gpu_descriptor::AllocationError) -> Self {
-        BackendError::DescriptorAllocation(value)
+    fn from(_value: gpu_descriptor::AllocationError) -> Self {
+        Self::OutOfMemory
     }
 }

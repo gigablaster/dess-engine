@@ -350,7 +350,7 @@ impl PipelineCacheBuilder {
 
         let cache = cache.into_inner().unwrap();
         if cache.iter().any(|x| *x == vk::Pipeline::null()) {
-            Err(BackendError::PipelineCreatingFailed)
+            Err(BackendError::Fail)
         } else {
             Ok(cache)
         }

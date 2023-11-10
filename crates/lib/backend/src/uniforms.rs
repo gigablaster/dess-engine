@@ -160,7 +160,7 @@ impl Uniforms {
                 return Ok(offset);
             }
         }
-        Err(BackendError::OutOfUnifromsSpace)
+        Err(BackendError::OutOfAllocatedSpace)
     }
 
     pub fn dealloc(&mut self, offset: u32) {

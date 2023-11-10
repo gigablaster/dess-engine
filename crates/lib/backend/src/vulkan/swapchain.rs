@@ -96,7 +96,7 @@ impl SwapchainInner {
         let formats = Self::enumerate_surface_formats(device, surface)?;
         let format = match Self::select_surface_format(&formats) {
             Some(format) => format,
-            None => return Err(BackendError::NoSuitableFormat),
+            None => return Err(BackendError::NotSupported),
         };
 
         let mut desired_image_count = 3.max(surface_capabilities.min_image_count);
