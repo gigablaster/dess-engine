@@ -151,7 +151,7 @@ impl AssetBundle for LocalBundle {
     fn load(&self, asset: AssetRef, expect_ty: Uuid) -> io::Result<Vec<u8>> {
         let entry = self.desc.get_asset(asset).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Asset id {} isn't found", asset.uuid),
+            format!("Asset id {} isn't found", asset),
         ))?;
         if entry.ty != expect_ty {
             return Err(io::Error::new(

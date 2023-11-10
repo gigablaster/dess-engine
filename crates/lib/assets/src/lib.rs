@@ -35,13 +35,11 @@ pub use material::*;
 pub use shader::*;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct AssetRef {
-    uuid: Uuid,
-}
+pub struct AssetRef(Uuid);
 
 impl AssetRef {
     pub fn from_uuid(uuid: Uuid) -> Self {
-        Self { uuid }
+        Self(uuid)
     }
 
     pub fn from_path(path: &Path) -> Self {
@@ -50,37 +48,33 @@ impl AssetRef {
 
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let hash = siphasher::sip128::SipHasher::default().hash(bytes);
-        Self {
-            uuid: Uuid::from_u128(hash.as_u128()),
-        }
+        Self(Uuid::from_u128(hash.as_u128()))
     }
 
     pub fn valid(&self) -> bool {
-        !self.uuid.is_nil()
+        !self.0.is_nil()
     }
 
     pub fn as_u128(&self) -> u128 {
-        self.uuid.as_u128()
+        self.0.as_u128()
     }
 }
 
 impl Display for AssetRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.uuid.as_hyphenated())
+        write!(f, "{}", self.0.as_hyphenated())
     }
 }
 
 impl BinarySerialization for AssetRef {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        w.write_u128::<LittleEndian>(self.uuid.as_u128())
+        w.write_u128::<LittleEndian>(self.0.as_u128())
     }
 }
 
 impl BinaryDeserialization for AssetRef {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        Ok(Self {
-            uuid: Uuid::from_u128(r.read_u128::<LittleEndian>()?),
-        })
+        Ok(Self(Uuid::from_u128(r.read_u128::<LittleEndian>()?)))
     }
 }
 
