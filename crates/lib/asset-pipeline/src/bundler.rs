@@ -14,24 +14,19 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::HashMap,
     fs::File,
-    io::{self, Cursor, Seek, Write},
+    io::{self, Seek, Write},
     path::Path,
 };
 
 use byteorder::{LittleEndian, WriteBytesExt};
 use dess_assets::{
-    LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_DICT_SIZE, LOCAL_BUNDLE_DICT_USAGE_LIMIT,
-    LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
+    LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
 };
 use dess_common::traits::BinarySerialization;
 use log::{error, info};
-use uuid::Uuid;
 
 use crate::{cached_asset_path, read_to_end, AssetProcessingContext};
-
-const TRAIN_SAMPLE_SIZE: usize = 256;
 
 /// Builds local asset bundle
 ///
@@ -40,7 +35,6 @@ const TRAIN_SAMPLE_SIZE: usize = 256;
 pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Result<()> {
     let mut target = File::create(target)?;
     let mut desc = LocalBundleDesc::default();
-    let mut dicts = HashMap::default();
     LOCAL_BUNDLE_MAGIC.serialize(&mut target)?;
     LOCAL_BUNDLE_FILE_VERSION.serialize(&mut target)?;
     let all_assets = context.all_assets();
@@ -51,14 +45,7 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
             let size = data.len() as u32;
             let data = if size >= LOCAL_BUNDLE_ALIGN as u32 {
                 info!("Compress {}", info.asset);
-                let mut result = Vec::new();
-                let writer = Cursor::new(&mut result);
-                let mut encoder = create_encoder(writer, &data, info.ty, &mut dicts)?;
-                encoder.set_pledged_src_size(Some(size as _))?;
-                encoder.write_all(&data)?;
-                encoder.do_finish()?;
-
-                result
+                lz4_flex::compress(&data)
             } else {
                 info!("Write small asset {}", info.asset);
                 data
@@ -78,45 +65,10 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
         .iter()
         .for_each(|(name, asset)| desc.set_name(*asset, name));
     let offset = try_align(&mut target)?;
-    dicts.serialize(&mut target)?;
     desc.serialize(&mut target)?;
     target.write_u64::<LittleEndian>(offset)?;
 
     Ok(())
-}
-
-fn create_encoder<'a, W: Write>(
-    w: W,
-    data: &'a [u8],
-    ty: Uuid,
-    dicts: &'a mut HashMap<Uuid, Vec<u8>>,
-) -> io::Result<zstd::Encoder<'a, W>> {
-    if data.len() <= LOCAL_BUNDLE_DICT_USAGE_LIMIT {
-        zstd::Encoder::new(w, 22)
-    } else {
-        let dict = if let Some(dict) = dicts.get(&ty) {
-            dict
-        } else {
-            info!("Generate zstd dictionary for asset type {}", ty);
-            let dict = prepare_dict(data)?;
-            dicts.insert(ty, dict);
-
-            dicts.get(&ty).unwrap()
-        };
-        zstd::Encoder::with_dictionary(w, 22, dict)
-    }
-}
-
-fn prepare_dict(data: &[u8]) -> io::Result<Vec<u8>> {
-    let mut samples = Vec::new();
-    let mut size = data.len();
-    while size > TRAIN_SAMPLE_SIZE {
-        samples.push(TRAIN_SAMPLE_SIZE);
-        size -= TRAIN_SAMPLE_SIZE;
-    }
-    samples.push(size);
-
-    zstd::dict::from_continuous(data, &samples, LOCAL_BUNDLE_DICT_SIZE)
 }
 
 fn try_align<W: Seek>(w: &mut W) -> io::Result<u64> {

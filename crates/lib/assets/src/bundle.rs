@@ -15,7 +15,7 @@
 
 use std::{
     collections::HashMap,
-    io::{self, BufRead, Cursor, Read, Seek},
+    io::{self, Cursor, Seek},
     mem::size_of,
     path::Path,
 };
@@ -139,7 +139,6 @@ impl BinaryDeserialization for LocalBundleDesc {
 
 pub struct LocalBundle {
     file: MappedFile,
-    dicts: HashMap<Uuid, Vec<u8>>,
     desc: LocalBundleDesc,
 }
 
@@ -164,12 +163,8 @@ impl AssetBundle for LocalBundle {
         let offset = entry.offset as usize;
         let slice = &self.file.as_ref()[offset..offset + packed];
         if packed != size {
-            let reader = Cursor::new(slice);
-            let mut decoder = self.create_decoder(reader, expect_ty, size)?;
-            let mut result = vec![0u8; size];
-            decoder.read_exact(&mut result)?;
-
-            Ok(result)
+            lz4_flex::decompress(slice, size)
+                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
         } else {
             Ok(Vec::from(slice))
         }
@@ -201,30 +196,9 @@ impl LocalBundle {
         cursor.seek(io::SeekFrom::Start(size - size_of::<u64>() as u64))?;
         let offset = cursor.read_u64::<LittleEndian>()?;
         cursor.seek(io::SeekFrom::Start(offset as _))?;
-        let dicts = HashMap::deserialize(&mut cursor)?;
         let desc = LocalBundleDesc::deserialize(&mut cursor)?;
 
-        Ok(Box::new(LocalBundle { file, dicts, desc }))
-    }
-
-    fn create_decoder<R: BufRead>(
-        &self,
-        r: R,
-        ty: Uuid,
-        unpacked: usize,
-    ) -> io::Result<zstd::Decoder<R>> {
-        if unpacked <= LOCAL_BUNDLE_DICT_USAGE_LIMIT {
-            zstd::Decoder::with_buffer(r)
-        } else {
-            let dict = self.dicts.get(&ty).ok_or(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!(
-                    "Decompression dictionary doesn't exist for asset type {:?}",
-                    ty
-                ),
-            ))?;
-            zstd::Decoder::with_dictionary(r, dict)
-        }
+        Ok(Box::new(LocalBundle { file, desc }))
     }
 }
 
