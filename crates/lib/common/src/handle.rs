@@ -16,11 +16,16 @@
 use std::{hash::Hash, marker::PhantomData};
 
 const DEFAULT_SPACE: usize = 4096;
+const GENERATION_BITS: u32 = 12;
+const INDEX_BITS: u32 = 32 - GENERATION_BITS;
+const INDEX_MASK: u32 = (1 << INDEX_BITS) - 1;
+const GENERATION_MASK: u32 = u32::MAX - INDEX_MASK;
+const MAX_INDEX: u32 = (1 << INDEX_BITS) - 1;
+const MAX_GENERATION: u32 = 1 << GENERATION_BITS;
 
 #[derive(Debug)]
 pub struct Handle<T, U> {
-    index: u32,
-    generation: u32,
+    data: u32,
     _phantom1: PhantomData<T>,
     _phantom2: PhantomData<U>,
 }
@@ -32,8 +37,7 @@ unsafe impl<T, U> Sync for Handle<T, U> {}
 impl<T, U> Clone for Handle<T, U> {
     fn clone(&self) -> Self {
         Self {
-            index: self.index,
-            generation: self.generation,
+            data: self.data,
             _phantom1: PhantomData,
             _phantom2: PhantomData,
         }
@@ -44,7 +48,7 @@ impl<T, U> Copy for Handle<T, U> where T: Copy {}
 
 impl<T, U> PartialEq for Handle<T, U> {
     fn eq(&self, other: &Self) -> bool {
-        self.index == other.index
+        self.data == other.data
     }
 }
 
@@ -52,16 +56,16 @@ impl<T, U> Eq for Handle<T, U> where T: Copy {}
 
 impl<T, U> Hash for Handle<T, U> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.index.hash(state);
-        self.generation.hash(state);
+        self.data.hash(state);
     }
 }
 
 impl<T, U> Handle<T, U> {
     pub fn new(index: u32, generation: u32) -> Self {
+        assert!(index < MAX_INDEX);
+        assert!(generation < MAX_GENERATION);
         Self {
-            index,
-            generation,
+            data: (generation << INDEX_BITS) | index,
             _phantom1: PhantomData,
             _phantom2: PhantomData,
         }
@@ -69,23 +73,22 @@ impl<T, U> Handle<T, U> {
 
     pub fn invalid() -> Self {
         Self {
-            index: u32::MAX,
-            generation: u32::MAX,
+            data: u32::MAX,
             _phantom1: PhantomData,
             _phantom2: PhantomData,
         }
     }
 
     pub fn is_valid(&self) -> bool {
-        self.index != u32::MAX && self.generation != u32::MAX
+        self.data != u32::MAX
     }
 
     pub fn index(&self) -> u32 {
-        self.index
+        self.data & INDEX_MASK
     }
 
     pub fn generation(&self) -> u32 {
-        self.generation
+        (self.data & GENERATION_MASK) >> INDEX_BITS
     }
 }
 
@@ -214,8 +217,8 @@ impl<T, U> HandleContainer<T, U> {
 
     pub fn remove(&mut self, handle: Handle<T, U>) -> Option<(T, U)> {
         if self.is_handle_valid(&handle) {
-            let index = handle.index as usize;
-            self.generations[index] = self.generations[index].wrapping_add(1);
+            let index = handle.index() as usize;
+            self.generations[index] = self.generations[index].wrapping_add(1) % MAX_GENERATION;
             self.empty.push(index as _);
             return Some((
                 self.hot[index].take().unwrap(),
@@ -227,7 +230,7 @@ impl<T, U> HandleContainer<T, U> {
     }
 
     pub fn is_handle_valid(&self, handle: &Handle<T, U>) -> bool {
-        let index = handle.index as usize;
+        let index = handle.index() as usize;
         index < self.generations.len() && self.generations[index] == handle.generation()
     }
 
