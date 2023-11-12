@@ -18,6 +18,7 @@ use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 use std::{
     collections::HashMap,
+    hash::Hash,
     sync::{Arc, Mutex},
 };
 
@@ -145,6 +146,21 @@ pub struct Image {
 }
 
 unsafe impl Send for Image {}
+unsafe impl Sync for Image {}
+
+impl PartialEq for Image {
+    fn eq(&self, other: &Self) -> bool {
+        self.raw == other.raw
+    }
+}
+
+impl Eq for Image {}
+
+impl Hash for Image {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.raw.hash(state);
+    }
+}
 
 impl Image {
     pub fn texture(device: &Arc<Device>, desc: ImageDesc) -> Result<Self, BackendError> {
