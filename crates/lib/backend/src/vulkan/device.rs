@@ -224,6 +224,7 @@ impl Device {
 
         let device_extension_names = vec![
             khr::Swapchain::name().as_ptr(),
+            vk::KhrImageFormatListFn::name().as_ptr(),
             vk::KhrImagelessFramebufferFn::name().as_ptr(),
         ];
 
@@ -252,7 +253,7 @@ impl Device {
                 .get_physical_device_features2(pdevice.raw(), &mut features)
         };
 
-        let priorities = [1.0];
+        let priorities = [1.0, 1.0, 1.0];
         let queue_info = [vk::DeviceQueueCreateInfo::builder()
             .queue_family_index(universal_queue.index)
             .queue_priorities(&priorities)
