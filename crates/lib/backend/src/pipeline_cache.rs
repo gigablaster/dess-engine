@@ -154,7 +154,14 @@ impl PipelineCache {
         }
         .build();
 
-        let cache = unsafe { device.raw().create_pipeline_cache(&create_info, None) }?;
+        let cache = match unsafe { device.raw().create_pipeline_cache(&create_info, None) } {
+            Ok(cache) => cache,
+            Err(_) => {
+                // Failed with initial data - so create empty cache.
+                let create_info = vk::PipelineCacheCreateInfo::builder().build();
+                unsafe { device.raw().create_pipeline_cache(&create_info, None) }?
+            }
+        };
 
         Ok(Self {
             device: device.clone(),
