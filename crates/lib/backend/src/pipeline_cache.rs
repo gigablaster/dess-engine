@@ -1,11 +1,15 @@
-use std::{fs::File, io, sync::Arc};
+use std::{
+    fs::{self, File},
+    io,
+    sync::Arc,
+};
 
 use ash::vk;
 use byteorder::{ReadBytesExt, WriteBytesExt, LE};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use directories::ProjectDirs;
 use four_cc::FourCC;
-use log::warn;
+use log::{info, warn};
 use uuid::Uuid;
 
 use crate::{vulkan::Device, BackendError};
@@ -19,6 +23,7 @@ pub struct PipelineCache {
 const MAGICK: FourCC = FourCC(*b"PLCH");
 const VERSION: u32 = 1;
 const CACHE_FILE_NAME: &str = "pipelines.bin";
+const NEW_CACHE_FILE_NAME: &str = "pipelines.new.bin";
 
 struct PipelineDiskCache {
     vendor_id: u32,
@@ -95,7 +100,8 @@ impl PipelineDiskCache {
 
     pub fn load() -> io::Result<PipelineDiskCache> {
         if let Some(project_dirs) = ProjectDirs::from("com", "zlogaemz", "engine") {
-            let cache_path = project_dirs.cache_dir().join("path").join(CACHE_FILE_NAME);
+            let cache_path = project_dirs.cache_dir().join(CACHE_FILE_NAME);
+            info!("Loading pipeline cache from {:?}", cache_path);
             PipelineDiskCache::deserialize(&mut File::open(cache_path)?)
         } else {
             Err(io::Error::new(
@@ -107,8 +113,14 @@ impl PipelineDiskCache {
 
     pub fn save(&self) -> io::Result<()> {
         if let Some(project_dirs) = ProjectDirs::from("com", "zlogaemz", "engine") {
-            let cache_path = project_dirs.cache_dir().join("path").join(CACHE_FILE_NAME);
-            self.serialize(&mut File::open(cache_path)?)
+            fs::create_dir_all(project_dirs.cache_dir())?;
+            let cache_path = project_dirs.cache_dir().join(CACHE_FILE_NAME);
+            let new_cache_path = project_dirs.cache_dir().join(NEW_CACHE_FILE_NAME);
+            info!("Saving pipeline cache to {:?}", cache_path);
+            self.serialize(&mut File::create(&new_cache_path)?)?;
+            fs::rename(&new_cache_path, &cache_path)?;
+
+            Ok(())
         } else {
             Err(io::Error::new(
                 io::ErrorKind::Other,

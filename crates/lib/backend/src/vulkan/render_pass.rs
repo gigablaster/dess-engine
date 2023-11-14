@@ -383,13 +383,13 @@ impl PipelineCacheBuilder {
             .build();
 
         let vertex_binding_desc = desc
-            .attributes
+            .strides
             .iter()
             .enumerate()
             .map(|(index, _)| {
                 vk::VertexInputBindingDescription::builder()
                     .stride(desc.strides[index] as _)
-                    .binding(index as _)
+                    .binding(desc.attributes[index].binding)
                     .input_rate(vk::VertexInputRate::VERTEX)
                     .build()
             })
