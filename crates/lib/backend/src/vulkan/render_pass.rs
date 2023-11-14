@@ -21,7 +21,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::{BackendError, Index};
+use crate::{pipeline_cache::PipelineCache, BackendError, Index};
 
 use super::{Device, ImageDesc, Program};
 use arrayvec::ArrayVec;
@@ -314,21 +314,17 @@ impl PipelineCreateDesc {
 /// we can push multiple of them into RenderPass, but new pipelines ones will override old
 /// ones. Best way is to collect all shaders that should be used on for each render pass
 /// and build them all at once.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PipelineCacheBuilder {
     pipelines: Vec<PipelineCreateDesc>,
-    cache: vk::PipelineCache,
 }
 
 impl PipelineCacheBuilder {
-    pub fn new(cache: vk::PipelineCache) -> Self {
-        Self {
-            pipelines: Vec::default(),
-            cache,
-        }
-    }
-
-    fn build(self, render_pass: vk::RenderPass) -> Result<Vec<vk::Pipeline>, BackendError> {
+    fn build(
+        self,
+        render_pass: vk::RenderPass,
+        pipeline_cache: &PipelineCache,
+    ) -> Result<Vec<vk::Pipeline>, BackendError> {
         let cache = Mutex::new(vec![vk::Pipeline::null(); self.pipelines.len()]);
         rayon::scope(|s| {
             for index in 0..self.pipelines.len() {
@@ -337,7 +333,7 @@ impl PipelineCacheBuilder {
                 s.spawn(move |_| {
                     if let Err(err) = Self::build_pipeline(
                         render_pass,
-                        self.cache,
+                        pipeline_cache.raw(),
                         &pipelines[index],
                         cache,
                         index,
@@ -528,6 +524,7 @@ impl RenderPass {
         device: &Arc<Device>,
         layout: RenderPassLayout,
         pipelines: PipelineCacheBuilder,
+        cache: &PipelineCache,
     ) -> Result<Self, BackendError> {
         let attachments = layout
             .color_attachments
@@ -579,7 +576,7 @@ impl RenderPass {
             device: device.clone(),
             raw: render_pass,
             fbo_cache: FboCache::new(render_pass, &all_attachments),
-            pipeline_cache: pipelines.build(render_pass)?,
+            pipeline_cache: pipelines.build(render_pass, cache)?,
         })
     }
 

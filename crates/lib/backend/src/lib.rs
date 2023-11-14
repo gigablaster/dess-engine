@@ -15,6 +15,7 @@
 
 mod descriptor_cache;
 mod error;
+mod pipeline_cache;
 mod staging;
 mod uniforms;
 pub mod vulkan;
@@ -23,6 +24,7 @@ use std::marker::PhantomData;
 
 pub use descriptor_cache::*;
 pub use error::*;
+pub use pipeline_cache::*;
 pub use staging::*;
 
 pub type IndexType = u16;
