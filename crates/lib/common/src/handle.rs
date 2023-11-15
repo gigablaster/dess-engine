@@ -240,6 +240,14 @@ impl<T, U> HandleContainer<T, U> {
             current: 0,
         }
     }
+
+    pub fn drain(&mut self) -> Drain<T, U> {
+        Drain {
+            hot: std::mem::take(&mut self.hot),
+            cold: std::mem::take(&mut self.cold),
+            current: 0,
+        }
+    }
 }
 
 impl<T, U> Default for HandleContainer<T, U> {
@@ -251,6 +259,12 @@ impl<T, U> Default for HandleContainer<T, U> {
 #[derive(Debug)]
 pub struct Iter<'a, T, U> {
     container: &'a HandleContainer<T, U>,
+    current: usize,
+}
+
+pub struct Drain<T, U> {
+    hot: Vec<Option<T>>,
+    cold: Vec<Option<U>>,
     current: usize,
 }
 
@@ -278,6 +292,26 @@ impl<'a, T, U> Iterator for Iter<'a, T, U> {
         let size = self.container.hot.len() - self.container.empty.len() - self.current;
 
         (size, Some(size))
+    }
+}
+
+impl<T, U> Iterator for Drain<T, U> {
+    type Item = (T, U);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current != self.hot.len() && self.hot[self.current].is_none() {
+            self.current += 1;
+        }
+        if self.current == self.hot.len() {
+            return None;
+        }
+        let result = Some((
+            self.hot[self.current].take().unwrap(),
+            self.cold[self.current].take().unwrap(),
+        ));
+        self.current += 1;
+
+        result
     }
 }
 
@@ -364,5 +398,17 @@ mod test {
         container.remove(handle);
         let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
         assert_eq!([(1u32, -1i32), (3, -3)].to_vec(), cont);
+    }
+
+    #[test]
+    fn drain() {
+        let mut container = HandleContainer::<u32, i32>::new();
+        container.push(1, -1);
+        container.push(2, -2);
+        container.push(3, -3);
+
+        let cont = container.drain().collect::<Vec<_>>();
+        assert_eq!([(1u32, -1i32), (2, -2), (3, -3)].to_vec(), cont);
+        assert!(container.iter().collect::<Vec<_>>().is_empty());
     }
 }
