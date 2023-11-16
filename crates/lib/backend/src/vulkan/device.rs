@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
+    cell::{Cell, UnsafeCell},
     collections::HashMap,
     ffi::{CStr, CString},
     fmt::Debug,
@@ -35,7 +36,7 @@ use crate::{BackendError, GpuResource};
 
 use super::{
     droplist::DropList, CommandBuffer, DescriptorAllocator, FrameContext, GpuAllocator, Instance,
-    PhysicalDevice, QueueFamily, Semaphore,
+    PhysicalDevice, QueueFamily, Semaphore, TempGpuMemory,
 };
 
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
@@ -203,6 +204,8 @@ pub struct Device {
     queue_family_index: u32,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     frames: [Mutex<Arc<FrameContext>>; 2],
+    temp: [TempGpuMemory; 2],
+    current_temp: Cell<usize>,
     current_drop_list: Mutex<DropList>,
     drop_lists: [Mutex<DropList>; 2],
     allocator: Mutex<GpuAllocator>,
@@ -316,13 +319,25 @@ impl Device {
         };
         let allocator_props =
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw()) }?;
-        let allocator = GpuAllocator::new(allocator_config, allocator_props);
+        let mut allocator = GpuAllocator::new(allocator_config, allocator_props);
         let descriptor_allocator = DescriptorAllocator::new(128);
 
         let queue = SubmitQueue::new(&device, universal_queue);
 
-        //Self::set_object_name_impl(instance, &device, queue.raw, "Main queue");
-
+        let temp = [
+            TempGpuMemory::new(
+                &device,
+                universal_queue.index,
+                &mut allocator,
+                16 * 1024 * 1024,
+            )?,
+            TempGpuMemory::new(
+                &device,
+                universal_queue.index,
+                &mut allocator,
+                16 * 1024 * 1024,
+            )?,
+        ];
         Ok(Arc::new(Self {
             instance: instance.clone(),
             pdevice,
@@ -334,6 +349,8 @@ impl Device {
             current_drop_list: Mutex::new(DropList::default()),
             drop_lists,
             allocator: Mutex::new(allocator),
+            temp,
+            current_temp: Cell::new(0),
             descriptor_allocator: Mutex::new(descriptor_allocator),
         }))
     }
@@ -400,6 +417,13 @@ impl Device {
                     &mut self.descriptor_allocator(),
                 );
                 frame0.reset(&self.raw)?;
+
+                // Current temp buffer is filled - so flush it and switch to next.
+                // Important note: temp buffer can be filled only outside of frame,
+                // outside if begin_frame/end_frame.
+                let current = self.current_temp.get();
+                unsafe { self.temp[current].flush(&self.raw) }?;
+                self.current_temp.set((current + 1) % 2);
             } else {
                 panic!("Unable to begin frame: frame data is being held by user code")
             }
@@ -421,9 +445,15 @@ impl Device {
                 &mut self.drop_lists[0].lock(),
                 &mut self.drop_lists[1].lock(),
             );
+            // Reset current temp buffer so next frame will fill it again.
+            self.temp[self.current_temp.get()].reset();
         } else {
             panic!("Unable to finish frame: frame data is being held by user code",)
         }
+    }
+
+    pub fn push_temp<T: Sized>(&self, data: &[T]) -> Option<u32> {
+        self.temp[self.current_temp.get()].push(data)
     }
 
     pub fn submit_draw(
@@ -566,8 +596,16 @@ impl Drop for Device {
         self.samplers.iter().for_each(|(_, sampler)| unsafe {
             self.raw.destroy_sampler(*sampler, None);
         });
-        unsafe { allocator.cleanup(AshMemoryDevice::wrap(&self.raw)) };
-        unsafe { descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.raw)) };
+        unsafe {
+            self.temp
+                .iter()
+                .for_each(|x| x.cleanup(&self.raw, &mut allocator));
+        }
+        unsafe { self.allocator().cleanup(AshMemoryDevice::wrap(&self.raw)) };
+        unsafe {
+            self.descriptor_allocator()
+                .cleanup(AshDescriptorDevice::wrap(&self.raw))
+        };
         unsafe { self.raw.destroy_device(None) };
     }
 }

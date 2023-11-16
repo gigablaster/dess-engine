@@ -113,7 +113,7 @@ impl Uniforms {
     pub fn new(device: &Arc<Device>) -> Result<Self, BackendError> {
         let mut buffer = Buffer::new(
             device,
-            BufferDesc::upload(
+            BufferDesc::shared(
                 UNIFORM_BUFFER_SIZE as _,
                 vk::BufferUsageFlags::UNIFORM_BUFFER,
             )

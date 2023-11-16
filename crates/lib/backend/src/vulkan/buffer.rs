@@ -64,6 +64,16 @@ impl BufferDesc {
         }
     }
 
+    pub fn shared(size: usize, usage: vk::BufferUsageFlags) -> Self {
+        Self {
+            size,
+            usage,
+            memory_location: UsageFlags::HOST_ACCESS | UsageFlags::FAST_DEVICE_ACCESS,
+            alignment: None,
+            dedicated: false,
+        }
+    }
+
     pub fn aligment(mut self, aligment: u64) -> Self {
         self.alignment = Some(aligment);
         self

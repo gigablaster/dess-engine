@@ -35,6 +35,7 @@ pub struct FrameContext {
 }
 
 unsafe impl Sync for FrameContext {}
+unsafe impl Send for FrameContext {}
 
 impl FrameContext {
     pub(crate) fn new(device: &ash::Device, query: u32) -> Result<Self, BackendError> {
@@ -60,11 +61,11 @@ impl FrameContext {
     }
 
     pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), BackendError> {
-        let mut pools = self.secondary_pools.lock().unwrap();
-        pools.iter_mut().for_each(|(_, pool)| {
+        let mut pools = self.secondary_pools.lock();
+        for (_, pool) in pools.iter_mut() {
             pool.recycle();
-            pool.reset(device).unwrap();
-        });
+            pool.reset(device)?;
+        }
         self.main_pool.reset(device)
     }
 
