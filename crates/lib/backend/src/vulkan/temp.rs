@@ -4,8 +4,8 @@ use std::{
     sync::atomic::{AtomicU32, Ordering},
 };
 
-use ash::vk;
-use gpu_alloc::{Request, UsageFlags};
+use ash::vk::{self};
+use gpu_alloc::{MemoryPropertyFlags, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::BackendError;
@@ -88,6 +88,10 @@ impl TempGpuMemory {
         let memory = (*self.memory.get())
             .as_ref()
             .expect("Memory must be allocated in order to flush it to GPU");
+        if memory.props().contains(MemoryPropertyFlags::HOST_COHERENT) {
+            // No need to flush
+            return Ok(());
+        }
         let op = vk::MappedMemoryRange::builder()
             .memory(*memory.memory())
             .offset(memory.offset())

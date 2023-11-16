@@ -225,6 +225,7 @@ impl Buffer {
             memory: memory.memory(),
             offset: memory.offset(),
             size: memory.size(),
+            flags: memory.props(),
         })
     }
 }

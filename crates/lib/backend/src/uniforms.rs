@@ -22,6 +22,7 @@ use std::{
 
 use ash::vk;
 use dess_common::memory::BlockAllocator;
+use gpu_alloc::MemoryPropertyFlags;
 
 use crate::{
     vulkan::{Buffer, BufferDesc, Device},
@@ -149,13 +150,16 @@ impl Uniforms {
                     )
                 }
                 let memory = self.buffer.allocation_info().unwrap();
-                self.writes.push(
-                    vk::MappedMemoryRange::builder()
-                        .memory(*memory.memory)
-                        .offset(memory.offset + offset as u64)
-                        .size(size as _)
-                        .build(),
-                );
+                if !memory.flags.contains(MemoryPropertyFlags::HOST_COHERENT) {
+                    // We only need to flush for not-coherent memory
+                    self.writes.push(
+                        vk::MappedMemoryRange::builder()
+                            .memory(*memory.memory)
+                            .offset(memory.offset + offset as u64)
+                            .size(size as _)
+                            .build(),
+                    );
+                }
 
                 return Ok(offset);
             }

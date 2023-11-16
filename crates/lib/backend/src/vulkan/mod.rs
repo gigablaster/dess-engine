@@ -32,6 +32,7 @@ pub use command_buffer::*;
 pub use device::*;
 pub use droplist::*;
 pub use frame_context::*;
+use gpu_alloc::MemoryPropertyFlags;
 pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
@@ -43,6 +44,7 @@ pub struct MemoryAllocationInfo<'a> {
     pub memory: &'a vk::DeviceMemory,
     pub offset: u64,
     pub size: u64,
+    pub flags: MemoryPropertyFlags,
 }
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
