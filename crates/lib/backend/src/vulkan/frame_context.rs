@@ -61,7 +61,7 @@ impl FrameContext {
     }
 
     pub(crate) fn reset(&self, device: &ash::Device) -> Result<(), BackendError> {
-        let mut pools = self.secondary_pools.lock();
+        let mut pools = self.secondary_pools.lock().unwrap();
         for (_, pool) in pools.iter_mut() {
             pool.recycle();
             pool.reset(device)?;

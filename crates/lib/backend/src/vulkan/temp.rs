@@ -117,19 +117,15 @@ impl TempGpuMemory {
     }
 
     fn allocate(&self, size: u32) -> Option<u32> {
-        let mut top = self.top.load(Ordering::Acquire);
-        loop {
-            if top + size > self.size {
-                return None;
-            }
-            let new_top = top + size;
-            match self
-                .top
-                .compare_exchange(top, new_top, Ordering::Release, Ordering::SeqCst)
-            {
-                Ok(value) => return Some(value),
-                Err(value) => top = value,
-            }
-        }
+        self.top
+            .fetch_update(Ordering::Release, Ordering::SeqCst, |x| {
+                let new_top = x + size;
+                if new_top <= self.size {
+                    Some(new_top)
+                } else {
+                    None
+                }
+            })
+            .ok()
     }
 }
