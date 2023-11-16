@@ -78,7 +78,7 @@ struct ModelImportContext {
     model: GpuModel,
     base: PathBuf,
     asset: AssetRef,
-    _path: PathBuf,
+    path: PathBuf,
     processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
 }
 
@@ -134,8 +134,14 @@ impl CreateGpuModel {
                 texture.texture(),
                 ImagePurpose::Color,
             ));
+        } else {
+            material.set_base_texture(self.create_placeholder_texture(
+                context,
+                model_context,
+                glam::Vec4::from_array(pbr.base_color_factor()),
+                ImagePurpose::Color,
+            ));
         }
-        material.set_base_color(glam::Vec4::from_array(pbr.base_color_factor()));
     }
 
     fn set_material_values(
@@ -152,9 +158,14 @@ impl CreateGpuModel {
                 texture.texture(),
                 ImagePurpose::NonColor,
             ));
+        } else {
+            material.set_metallic_roughness_texture(self.create_placeholder_texture(
+                context,
+                model_context,
+                glam::Vec4::new(0.0, pbr.roughness_factor(), pbr.metallic_factor(), 1.0),
+                ImagePurpose::NonColor,
+            ));
         }
-        material.set_metallic_value(pbr.metallic_factor());
-        material.set_roughness_value(pbr.roughness_factor());
     }
 
     fn set_emission_color(
@@ -173,11 +184,30 @@ impl CreateGpuModel {
                 texture.texture(),
                 ImagePurpose::NonColor,
             ));
+        } else {
+            material.set_emission_texture(self.create_placeholder_texture(
+                context,
+                model_context,
+                glam::Vec4::new(color[0], color[1], color[2], 1.0),
+                ImagePurpose::NonColor,
+            ));
         }
-        material.set_emission_color(glam::Vec3::from_array(color));
+
         material.set_emission_value(value.unwrap_or(0.0));
     }
 
+    fn create_placeholder_texture(
+        &self,
+        context: &AssetProcessingContext,
+        model_context: &ModelImportContext,
+        color: glam::Vec4,
+        purpose: ImagePurpose,
+    ) -> AssetRef {
+        context.import_image(
+            &ImageSource::from_color(color, purpose),
+            Some(&model_context.path),
+        )
+    }
     fn import_texture(
         &self,
         context: &AssetProcessingContext,
@@ -515,7 +545,7 @@ impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
         let mut import_context = ModelImportContext {
             base: content.base,
             asset,
-            _path: content.path,
+            path: content.path,
             model: GpuModel::default(),
             processed_meshes: HashMap::new(),
         };

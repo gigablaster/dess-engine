@@ -13,11 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fmt::Display, fs::File, io, path::Path};
+use std::{collections::HashMap, fmt::Display, fs::File, hash::Hasher, io, mem, path::Path, slice};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use memmap2::{Mmap, MmapOptions};
+use siphasher::sip128::Hasher128;
 use uuid::Uuid;
 
 mod bundle;
@@ -46,9 +47,33 @@ impl AssetRef {
         Self::from_bytes(path.to_str().unwrap().as_bytes())
     }
 
+    pub fn from_path_with<T: Copy>(path: &Path, extra: &T) -> Self {
+        let mut hash = siphasher::sip128::SipHasher::default();
+        hash.write(path.to_str().unwrap().as_bytes());
+        hash.write(unsafe {
+            slice::from_raw_parts(
+                slice::from_ref(&extra).as_ptr() as *const u8,
+                mem::size_of::<T>(),
+            )
+        });
+        Self(Uuid::from_u128(hash.finish128().as_u128()))
+    }
+
     pub fn from_bytes(bytes: &[u8]) -> Self {
         let hash = siphasher::sip128::SipHasher::default().hash(bytes);
         Self(Uuid::from_u128(hash.as_u128()))
+    }
+
+    pub fn from_bytes_with<T: Copy>(bytes: &[u8], extra: &T) -> Self {
+        let mut hash = siphasher::sip128::SipHasher::default();
+        hash.write(bytes);
+        hash.write(unsafe {
+            slice::from_raw_parts(
+                slice::from_ref(&extra).as_ptr() as *const u8,
+                mem::size_of::<T>(),
+            )
+        });
+        Self(Uuid::from_u128(hash.finish128().as_u128()))
     }
 
     pub fn valid(&self) -> bool {

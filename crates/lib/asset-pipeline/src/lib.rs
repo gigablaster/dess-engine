@@ -131,7 +131,7 @@ impl AssetProcessingContextImpl {
                 if let Some(asset) = self.images.get(&path) {
                     *asset
                 } else {
-                    let asset = AssetRef::from_path(&path);
+                    let asset = AssetRef::from_path_with(&path, &image.purpose);
                     info!("Requested image import {:?} ref: {}", path, asset);
                     self.images.insert(path.clone(), asset);
                     self.images_to_process.insert(asset, image.clone());
@@ -151,6 +151,22 @@ impl AssetProcessingContextImpl {
                         get_relative_asset_path(owner.expect("Can't add image without owner"))
                             .unwrap();
                     info!("Added image from blob ref {} owner {:?}", asset, owner);
+                    self.assets.insert(AssetInfo::new::<GpuImage>(asset));
+                    self.images_to_process.insert(asset, image.clone());
+                    self.add_source(asset, &owner);
+
+                    asset
+                }
+            }
+            ImageDataSource::Placeholder(value) => {
+                let asset = AssetRef::from_bytes_with(value, &image.purpose);
+                if self.assets.contains(&AssetInfo::new::<GpuImage>(asset)) {
+                    asset
+                } else {
+                    let owner =
+                        get_relative_asset_path(owner.expect("Can't add image without owner"))
+                            .unwrap();
+                    info!("Added image placeholder {} owner {:?}", asset, owner);
                     self.assets.insert(AssetInfo::new::<GpuImage>(asset));
                     self.images_to_process.insert(asset, image.clone());
                     self.add_source(asset, &owner);

@@ -37,6 +37,7 @@ pub struct ImageRgba8Data {
 pub enum ImageDataSource {
     File(PathBuf),
     Bytes(Bytes),
+    Placeholder([u8; 4]),
 }
 
 #[derive(Debug, Clone)]
@@ -59,6 +60,22 @@ impl ImageSource {
             purpose,
         }
     }
+
+    pub fn from_color(color: glam::Vec4, purpose: ImagePurpose) -> Self {
+        Self {
+            source: ImageDataSource::Placeholder(color_to_pixles(color)),
+            purpose,
+        }
+    }
+}
+
+fn color_to_pixles(color: glam::Vec4) -> [u8; 4] {
+    [
+        (color.x.clamp(0.0, 1.0) * 255.0) as u8,
+        (color.y.clamp(0.0, 1.0) * 255.0) as u8,
+        (color.z.clamp(0.0, 1.0) * 255.0) as u8,
+        (color.w.clamp(0.0, 1.0) * 255.0) as u8,
+    ]
 }
 
 #[derive(Debug)]
@@ -80,6 +97,16 @@ impl ContentImporter<RawImage> for ImageSource {
             ImageDataSource::Bytes(bytes) => Bytes::clone(bytes),
             ImageDataSource::File(path) => {
                 Bytes::copy_from_slice(&read_to_end(get_absolute_asset_path(path)?)?)
+            }
+            ImageDataSource::Placeholder(pixels) => {
+                let data = ImageRgba8Data {
+                    data: Bytes::copy_from_slice(pixels),
+                    dimensions: [1, 1],
+                };
+                return Ok(RawImage {
+                    data: RawImageData::Rgba(data),
+                    purpose: self.purpose,
+                });
             }
         };
         if let Ok(dds) = Dds::read(bytes.as_ref()) {

@@ -20,7 +20,6 @@ use crate::AssetRef;
 
 pub trait MaterialBaseColor {
     fn set_base_texture(&mut self, texture: AssetRef);
-    fn set_base_color(&mut self, color: glam::Vec4);
 }
 
 pub trait MaterialNormals {
@@ -29,8 +28,6 @@ pub trait MaterialNormals {
 
 pub trait MaterialValues {
     fn set_metallic_roughness_texture(&mut self, texture: AssetRef);
-    fn set_metallic_value(&mut self, value: f32);
-    fn set_roughness_value(&mut self, value: f32);
 }
 
 pub trait MaterialOcclusion {
@@ -39,7 +36,6 @@ pub trait MaterialOcclusion {
 
 pub trait MaterialEmission {
     fn set_emission_texture(&mut self, texture: AssetRef);
-    fn set_emission_color(&mut self, value: glam::Vec3);
     fn set_emission_value(&mut self, value: f32);
 }
 
@@ -93,11 +89,7 @@ pub struct PbrMaterial {
     pub metallic_roughness: AssetRef,
     pub occlusion: AssetRef,
     pub emission: AssetRef,
-    pub base_color: glam::Vec4,
-    pub emission_color: glam::Vec3,
     pub emission_value: f32,
-    pub metallic_value: f32,
-    pub roughness_value: f32,
 }
 
 impl Default for PbrMaterial {
@@ -109,11 +101,7 @@ impl Default for PbrMaterial {
             metallic_roughness: AssetRef::default(),
             occlusion: AssetRef::default(),
             emission: AssetRef::default(),
-            base_color: glam::vec4(0.5, 0.5, 0.5, 1.0),
-            emission_color: glam::Vec3::ZERO,
             emission_value: 0.0,
-            metallic_value: 0.0,
-            roughness_value: 0.5,
         }
     }
 }
@@ -122,7 +110,6 @@ impl Default for PbrMaterial {
 pub struct UnlitMaterial {
     pub blend: BlendMode,
     pub base: AssetRef,
-    pub base_color: glam::Vec4,
 }
 
 impl Default for UnlitMaterial {
@@ -130,7 +117,6 @@ impl Default for UnlitMaterial {
         Self {
             blend: BlendMode::Opaque,
             base: AssetRef::default(),
-            base_color: glam::vec4(0.5, 0.5, 0.5, 1.0),
         }
     }
 }
@@ -179,20 +165,12 @@ impl Material {
 }
 
 impl MaterialBaseColor for PbrMaterial {
-    fn set_base_color(&mut self, color: glam::Vec4) {
-        self.base_color = color;
-    }
-
     fn set_base_texture(&mut self, texture: AssetRef) {
         self.base = texture;
     }
 }
 
 impl MaterialBaseColor for UnlitMaterial {
-    fn set_base_color(&mut self, color: glam::Vec4) {
-        self.base_color = color;
-    }
-
     fn set_base_texture(&mut self, texture: AssetRef) {
         self.base = texture;
     }
@@ -205,14 +183,6 @@ impl MaterialBlend for UnlitMaterial {
 }
 
 impl MaterialValues for PbrMaterial {
-    fn set_metallic_value(&mut self, value: f32) {
-        self.metallic_value = value;
-    }
-
-    fn set_roughness_value(&mut self, value: f32) {
-        self.roughness_value = value;
-    }
-
     fn set_metallic_roughness_texture(&mut self, texture: AssetRef) {
         self.metallic_roughness = texture;
     }
@@ -235,10 +205,6 @@ impl MaterialEmission for PbrMaterial {
         self.emission = texture;
     }
 
-    fn set_emission_color(&mut self, value: glam::Vec3) {
-        self.emission_color = value;
-    }
-
     fn set_emission_value(&mut self, value: f32) {
         self.emission_value = value;
     }
@@ -258,11 +224,7 @@ impl BinarySerialization for PbrMaterial {
         self.metallic_roughness.serialize(w)?;
         self.occlusion.serialize(w)?;
         self.emission.serialize(w)?;
-        self.base_color.serialize(w)?;
-        self.emission_color.serialize(w)?;
         w.write_f32::<LittleEndian>(self.emission_value)?;
-        w.write_f32::<LittleEndian>(self.metallic_value)?;
-        w.write_f32::<LittleEndian>(self.roughness_value)?;
 
         Ok(())
     }
@@ -276,11 +238,7 @@ impl BinaryDeserialization for PbrMaterial {
         let metallic_roughness = AssetRef::deserialize(r)?;
         let occlusion = AssetRef::deserialize(r)?;
         let emission = AssetRef::deserialize(r)?;
-        let base_color = glam::Vec4::deserialize(r)?;
-        let emission_color = glam::Vec3::deserialize(r)?;
         let emission_value = r.read_f32::<LittleEndian>()?;
-        let metallic_value = r.read_f32::<LittleEndian>()?;
-        let roughness_value = r.read_f32::<LittleEndian>()?;
 
         Ok(Self {
             blend,
@@ -289,11 +247,7 @@ impl BinaryDeserialization for PbrMaterial {
             metallic_roughness,
             occlusion,
             emission,
-            base_color,
-            emission_color,
             emission_value,
-            metallic_value,
-            roughness_value,
         })
     }
 }
@@ -302,7 +256,6 @@ impl BinarySerialization for UnlitMaterial {
     fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
         self.blend.serialize(w)?;
         self.base.serialize(w)?;
-        self.base_color.serialize(w)?;
 
         Ok(())
     }
@@ -312,13 +265,8 @@ impl BinaryDeserialization for UnlitMaterial {
     fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
         let blend = BlendMode::deserialize(r)?;
         let base = AssetRef::deserialize(r)?;
-        let base_color = glam::Vec4::deserialize(r)?;
 
-        Ok(Self {
-            blend,
-            base,
-            base_color,
-        })
+        Ok(Self { blend, base })
     }
 }
 
