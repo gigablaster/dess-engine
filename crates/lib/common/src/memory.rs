@@ -232,6 +232,7 @@ impl RingAllocator {
     }
 }
 
+#[derive(Debug)]
 pub struct BumpAllocator {
     size: u32,
     top: u32,
