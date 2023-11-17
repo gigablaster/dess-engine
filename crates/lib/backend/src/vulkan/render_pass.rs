@@ -151,6 +151,7 @@ impl FboCacheKey {
     }
 }
 
+#[derive(Debug)]
 struct FboCache {
     entries: Mutex<HashMap<FboCacheKey, vk::Framebuffer>>,
     attachments: ArrayVec<RenderPassAttachmentDesc, MAX_ATTACHMENTS>,
@@ -503,6 +504,7 @@ impl PipelineCacheBuilder {
     }
 }
 
+#[derive(Debug)]
 /// Describes render pass
 pub struct RenderPass {
     device: Arc<Device>,
