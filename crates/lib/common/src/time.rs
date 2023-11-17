@@ -13,12 +13,24 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-#[derive(Debug, Clone, Copy)]
+use std::fmt::Display;
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct GameTime {
     pub delta_time: f32,
     pub raw_delta_time: f32,
     pub frame_number: u32,
     pub total_time: f32,
+}
+
+impl Display for GameTime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "(dt: {} raw: {} frame: {} total: {})",
+            self.delta_time, self.raw_delta_time, self.frame_number, self.total_time
+        )
+    }
 }
 
 pub const TARGET_FPS: u64 = 60;
