@@ -21,6 +21,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+use arrayvec::ArrayVec;
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 
@@ -41,11 +42,13 @@ pub struct ImageSubresourceData<'a> {
     pub row_pitch: usize,
 }
 
+type AccessList = ArrayVec<AccessType, 8>;
+
 #[derive(Debug, Clone)]
-struct ImageUploadRequest {
-    pub op: vk::BufferImageCopy,
-    pub range: vk::ImageSubresourceRange,
-}
+struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
+
+#[derive(Debug, Clone)]
+struct BufferUploadRequest(vk::BufferCopy, AccessList);
 
 struct StagingInner {
     device: Arc<Device>,
@@ -53,8 +56,8 @@ struct StagingInner {
     tranfser_cbs: Vec<CommandBuffer>,
     size: u64,
     allocator: BumpAllocator,
-    upload_buffers: HashMap<Arc<Buffer>, Vec<vk::BufferCopy>>,
-    upload_images: HashMap<Arc<Image>, Vec<ImageUploadRequest>>,
+    upload_buffers: HashMap<vk::Buffer, Vec<BufferUploadRequest>>,
+    upload_images: HashMap<vk::Image, Vec<ImageUploadRequest>>,
     mappings: Vec<NonNull<u8>>,
     buffers: Vec<Buffer>,
     semaphores: Vec<Semaphore>,
@@ -147,7 +150,7 @@ impl StagingInner {
 
     pub fn upload_buffer<T: Sized>(
         &mut self,
-        buffer: &Arc<Buffer>,
+        buffer: &Buffer,
         offset: u64,
         data: &[T],
     ) -> Result<(), BackendError> {
@@ -167,7 +170,7 @@ impl StagingInner {
 
     pub fn upload_image(
         &mut self,
-        image: &Arc<Image>,
+        image: &Image,
         data: &[&ImageSubresourceData],
     ) -> Result<(), BackendError> {
         for (mip, data) in data.iter().enumerate() {
@@ -184,12 +187,7 @@ impl StagingInner {
         Ok(())
     }
 
-    fn try_push_image_mip(
-        &mut self,
-        image: &Arc<Image>,
-        mip: u32,
-        data: &ImageSubresourceData,
-    ) -> bool {
+    fn try_push_image_mip(&mut self, image: &Image, mip: u32, data: &ImageSubresourceData) -> bool {
         if let Some(staging_offset) = self.allocator.allocate(data.data.len() as _) {
             unsafe {
                 copy_nonoverlapping(
@@ -212,13 +210,12 @@ impl StagingInner {
                 .image_offset(vk::Offset3D { x: 0, y: 0, z: 0 })
                 .image_subresource(image.subresource_layer(0, mip, vk::ImageAspectFlags::COLOR))
                 .build();
-            let request = ImageUploadRequest {
+            let request = ImageUploadRequest(
                 op,
-                range: image
-                    .subresource_range(SubImage::LayerAndMip(0, mip), vk::ImageAspectFlags::COLOR),
-            };
+                image.subresource_range(SubImage::LayerAndMip(0, mip), vk::ImageAspectFlags::COLOR),
+            );
             self.upload_images
-                .entry(image.clone())
+                .entry(image.raw())
                 .or_default()
                 .push(request);
 
@@ -230,7 +227,7 @@ impl StagingInner {
 
     fn try_push_buffer(
         &mut self,
-        buffer: &Arc<Buffer>,
+        buffer: &Buffer,
         offset: u64,
         size: usize,
         data: *const u8,
@@ -250,10 +247,11 @@ impl StagingInner {
                 dst_offset: offset,
                 size: size as u64,
             };
+            let access_type = buffer.access_type().iter().copied().collect::<AccessList>();
             self.upload_buffers
-                .entry(buffer.clone())
+                .entry(buffer.raw())
                 .or_default()
-                .push(op);
+                .push(BufferUploadRequest(op, access_type));
             true
         } else {
             false
@@ -323,8 +321,8 @@ impl StagingInner {
                     discard_contents: true,
                     src_queue_family_index: self.device.queue_family_index(),
                     dst_queue_family_index: self.device.queue_family_index(),
-                    image: image.raw(),
-                    range: op.range,
+                    image: *image,
+                    range: op.1,
                 })
             })
         });
@@ -334,13 +332,13 @@ impl StagingInner {
         for (target, requests) in &self.upload_buffers {
             requests.iter().for_each(|buffer| {
                 buffer_barriers.push(BufferBarrier {
-                    previous_accesses: target.access_type(),
+                    previous_accesses: &buffer.1,
                     next_accesses: &[AccessType::TransferWrite],
                     src_queue_family_index: self.device.queue_family_index(),
                     dst_queue_family_index: self.device.queue_family_index(),
-                    buffer: target.raw(),
-                    offset: buffer.dst_offset as usize,
-                    size: buffer.size as usize,
+                    buffer: *target,
+                    offset: buffer.0.dst_offset as usize,
+                    size: buffer.0.size as usize,
                 });
             })
         }
@@ -367,8 +365,8 @@ impl StagingInner {
                     discard_contents: false,
                     src_queue_family_index: self.device.queue_family_index(),
                     dst_queue_family_index: self.device.queue_family_index(),
-                    image: image.raw(),
-                    range: op.range,
+                    image: *image,
+                    range: op.1,
                 })
             })
         });
@@ -379,12 +377,12 @@ impl StagingInner {
             requests.iter().for_each(|buffer| {
                 buffer_barriers.push(BufferBarrier {
                     previous_accesses: &[AccessType::TransferWrite],
-                    next_accesses: target.access_type(),
+                    next_accesses: &buffer.1,
                     src_queue_family_index: self.device.queue_family_index(),
                     dst_queue_family_index: self.device.queue_family_index(),
-                    buffer: target.raw(),
-                    offset: buffer.dst_offset as usize,
-                    size: buffer.size as usize,
+                    buffer: *target,
+                    offset: buffer.0.dst_offset as usize,
+                    size: buffer.0.size as usize,
                 })
             });
         }
@@ -400,12 +398,13 @@ impl StagingInner {
 
     fn copy_buffers(&self, recorder: &CommandBufferRecorder) {
         self.upload_buffers.iter().for_each(|(buffer, requests)| {
+            let ops = requests.iter().map(|x| x.0).collect::<Vec<_>>();
             unsafe {
                 recorder.device.cmd_copy_buffer(
                     *recorder.cb,
                     self.buffers[self.current].raw(),
-                    buffer.raw(),
-                    requests,
+                    *buffer,
+                    &ops,
                 )
             };
         });
@@ -413,12 +412,12 @@ impl StagingInner {
 
     fn copy_images(&self, recorder: &CommandBufferRecorder) {
         self.upload_images.iter().for_each(|(image, ops)| {
-            let ops = ops.iter().map(|x| x.op).collect::<Vec<_>>();
+            let ops = ops.iter().map(|x| x.0).collect::<Vec<_>>();
             unsafe {
                 recorder.device.cmd_copy_buffer_to_image(
                     *recorder.cb,
                     self.buffers[self.current].raw(),
-                    image.raw(),
+                    *image,
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
                     &ops,
                 )
