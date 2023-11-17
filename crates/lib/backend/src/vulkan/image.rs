@@ -16,11 +16,8 @@
 use ash::vk;
 use gpu_alloc::{MemoryBlock, Request, UsageFlags};
 use gpu_alloc_ash::AshMemoryDevice;
-use std::{
-    collections::HashMap,
-    hash::Hash,
-    sync::{Arc, Mutex},
-};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use std::{collections::HashMap, hash::Hash, sync::Arc};
 
 use crate::BackendError;
 
@@ -142,7 +139,7 @@ pub struct Image {
     raw: vk::Image,
     desc: ImageDesc,
     allocation: Option<MemoryBlock<vk::DeviceMemory>>,
-    views: Mutex<HashMap<ImageViewDesc, vk::ImageView>>,
+    views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
 unsafe impl Send for Image {}
@@ -193,30 +190,35 @@ impl Image {
     }
 
     pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, BackendError> {
-        let mut views = self.views.lock().unwrap();
+        let views = self.views.upgradable_read();
         if let Some(view) = views.get(&desc) {
             Ok(*view)
         } else {
-            if self.desc.format == vk::Format::D32_SFLOAT
-                && !desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
-            {
-                panic!("Depth-only resource used without vk::ImageAspectFlags::DEPTH flag");
+            let mut views = RwLockUpgradableReadGuard::upgrade(views);
+            if let Some(view) = views.get(&desc) {
+                Ok(*view)
+            } else {
+                if self.desc.format == vk::Format::D32_SFLOAT
+                    && !desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
+                {
+                    panic!("Depth-only resource used without vk::ImageAspectFlags::DEPTH flag");
+                }
+                let create_info = vk::ImageViewCreateInfo {
+                    image: self.raw,
+                    ..desc.build(self)
+                };
+
+                let view = unsafe { self.device.raw().create_image_view(&create_info, None) }?;
+
+                views.insert(desc, view);
+
+                Ok(view)
             }
-            let create_info = vk::ImageViewCreateInfo {
-                image: self.raw,
-                ..desc.build(self)
-            };
-
-            let view = unsafe { self.device.raw().create_image_view(&create_info, None) }?;
-
-            views.insert(desc, view);
-
-            Ok(view)
         }
     }
 
     pub(crate) fn destroy_all_views(&self) {
-        let mut views = self.views.lock().unwrap();
+        let mut views = self.views.write();
         views.iter().for_each(|(_, view)| {
             unsafe { self.device.raw().destroy_image_view(*view, None) };
         });
@@ -294,8 +296,7 @@ impl Drop for Image {
     fn drop(&mut self) {
         let mut drop_list = self.device.drop_list();
         self.views
-            .lock()
-            .unwrap()
+            .write()
             .drain()
             .for_each(|(_, view)| drop_list.drop_image_view(view));
         if let Some(memory) = self.allocation.take() {

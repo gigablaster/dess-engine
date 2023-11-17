@@ -13,13 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    fmt::Debug,
-    hash::Hash,
-    slice,
-    sync::{Arc, Mutex},
-};
+use std::{collections::HashMap, fmt::Debug, hash::Hash, slice, sync::Arc};
 
 use crate::{pipeline_cache::PipelineCache, BackendError, Index};
 
@@ -28,6 +22,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use dess_common::TempList;
 use log::error;
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
@@ -153,7 +148,7 @@ impl FboCacheKey {
 
 #[derive(Debug)]
 struct FboCache {
-    entries: Mutex<HashMap<FboCacheKey, vk::Framebuffer>>,
+    entries: RwLock<HashMap<FboCacheKey, vk::Framebuffer>>,
     attachments: ArrayVec<RenderPassAttachmentDesc, MAX_ATTACHMENTS>,
     render_pass: vk::RenderPass,
 }
@@ -172,13 +167,18 @@ impl FboCache {
         device: &Device,
         key: FboCacheKey,
     ) -> Result<vk::Framebuffer, BackendError> {
-        let mut entries = self.entries.lock().unwrap();
+        let entries = self.entries.upgradable_read();
         if let Some(fbo) = entries.get(&key) {
             Ok(*fbo)
         } else {
-            let fbo = self.create_fbo(device, &key)?;
-            entries.insert(key, fbo);
-            Ok(fbo)
+            let mut entries = RwLockUpgradableReadGuard::upgrade(entries);
+            if let Some(fbo) = entries.get(&key) {
+                Ok(*fbo)
+            } else {
+                let fbo = self.create_fbo(device, &key)?;
+                entries.insert(key, fbo);
+                Ok(fbo)
+            }
         }
     }
 
@@ -223,7 +223,7 @@ impl FboCache {
     }
 
     pub fn clear(&self, device: &Device) {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.write();
         entries
             .drain()
             .for_each(|(_, fbo)| unsafe { device.raw().destroy_framebuffer(fbo, None) });
@@ -326,7 +326,7 @@ impl PipelineCacheBuilder {
         render_pass: vk::RenderPass,
         pipeline_cache: &PipelineCache,
     ) -> Result<Vec<vk::Pipeline>, BackendError> {
-        let cache = Mutex::new(vec![vk::Pipeline::null(); self.pipelines.len()]);
+        let cache = RwLock::new(vec![vk::Pipeline::null(); self.pipelines.len()]);
         rayon::scope(|s| {
             for index in 0..self.pipelines.len() {
                 let cache = &cache;
@@ -345,7 +345,7 @@ impl PipelineCacheBuilder {
             }
         });
 
-        let cache = cache.into_inner().unwrap();
+        let cache = cache.into_inner();
         if cache.iter().any(|x| *x == vk::Pipeline::null()) {
             Err(BackendError::Fail)
         } else {
@@ -357,7 +357,7 @@ impl PipelineCacheBuilder {
         render_pass: vk::RenderPass,
         cache: vk::PipelineCache,
         desc: &PipelineCreateDesc,
-        pipelines: &Mutex<Vec<vk::Pipeline>>,
+        pipelines: &RwLock<Vec<vk::Pipeline>>,
         index: usize,
     ) -> Result<(), BackendError> {
         let shader_create_info = desc
@@ -489,7 +489,7 @@ impl PipelineCacheBuilder {
         }
         .map_err(|(_, error)| BackendError::from(error))?[0];
 
-        pipelines.lock().unwrap()[index] = pipeline;
+        pipelines.write()[index] = pipeline;
 
         Ok(())
     }

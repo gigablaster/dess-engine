@@ -19,7 +19,7 @@ use std::{
     ffi::{CStr, CString},
     fmt::Debug,
     slice,
-    sync::{Arc, Mutex, MutexGuard},
+    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
@@ -31,6 +31,7 @@ use gpu_alloc::Config;
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use log::info;
+use parking_lot::{Mutex, MutexGuard};
 
 use crate::{BackendError, GpuResource};
 
@@ -104,11 +105,9 @@ impl SubmitQueue {
         trigger: &[Semaphore],
     ) -> Result<(), BackendError> {
         match self {
-            Self::Single(queue) => {
-                Self::submit_impl(device, &queue.lock().unwrap(), cb, wait, trigger)
-            }
+            Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
             Self::Multiple(queue, ..) => {
-                Self::submit_impl(device, &queue.lock().unwrap(), cb, wait, trigger)
+                Self::submit_impl(device, &queue.lock(), cb, wait, trigger)
             }
         }
     }
@@ -121,11 +120,9 @@ impl SubmitQueue {
         trigger: &[Semaphore],
     ) -> Result<(), BackendError> {
         match self {
-            Self::Single(queue) => {
-                Self::submit_impl(device, &queue.lock().unwrap(), cb, wait, trigger)
-            }
+            Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
             Self::Multiple(_, queue, ..) => {
-                Self::submit_impl(device, &queue.lock().unwrap(), cb, wait, trigger)
+                Self::submit_impl(device, &queue.lock(), cb, wait, trigger)
             }
         }
     }
@@ -138,19 +135,17 @@ impl SubmitQueue {
         trigger: &[Semaphore],
     ) -> Result<(), BackendError> {
         match self {
-            Self::Single(queue) => {
-                Self::submit_impl(device, &queue.lock().unwrap(), cb, wait, trigger)
-            }
+            Self::Single(queue) => Self::submit_impl(device, &queue.lock(), cb, wait, trigger),
             Self::Multiple(_, _, queue) => {
-                Self::submit_impl(device, &queue.lock().unwrap(), cb, wait, trigger)
+                Self::submit_impl(device, &queue.lock(), cb, wait, trigger)
             }
         }
     }
 
-    pub fn get_present_queue(&self) -> MutexGuard<Queue> {
+    pub(crate) fn get_present_queue(&self) -> MutexGuard<Queue> {
         match self {
-            Self::Single(queue) => queue.lock().unwrap(),
-            Self::Multiple(queue, ..) => queue.lock().unwrap(),
+            Self::Single(queue) => queue.lock(),
+            Self::Multiple(queue, ..) => queue.lock(),
         }
     }
 
@@ -282,7 +277,7 @@ impl Device {
         ];
 
         frames.iter().enumerate().for_each(|(index, frame)| {
-            let frame = frame.lock().unwrap();
+            let frame = frame.lock();
             Self::set_object_name_impl(
                 instance,
                 &device,
@@ -401,7 +396,7 @@ impl Device {
 
     pub fn begin_frame(&self) -> Result<Arc<FrameContext>, BackendError> {
         puffin::profile_scope!("begin frame");
-        let mut frame0 = self.frames[0].lock().unwrap();
+        let mut frame0 = self.frames[0].lock();
         {
             if let Some(frame0) = Arc::get_mut(&mut frame0) {
                 unsafe {
@@ -411,7 +406,7 @@ impl Device {
                         u64::MAX,
                     )
                 }?;
-                self.drop_lists[0].lock().unwrap().free(
+                self.drop_lists[0].lock().free(
                     &self.raw,
                     &mut self.allocator(),
                     &mut self.descriptor_allocator(),
@@ -434,13 +429,13 @@ impl Device {
     pub fn end_frame(&self, frame: Arc<FrameContext>) {
         drop(frame);
 
-        let mut frame0 = self.frames[0].lock().unwrap();
+        let mut frame0 = self.frames[0].lock();
         if let Some(frame0) = Arc::get_mut(&mut frame0) {
-            let mut frame1 = self.frames[1].lock().unwrap();
+            let mut frame1 = self.frames[1].lock();
             let frame1 = Arc::get_mut(&mut frame1).unwrap();
             std::mem::swap(frame0, frame1);
-            *self.drop_lists[0].lock().unwrap() =
-                std::mem::take::<DropList>(&mut self.current_drop_list.lock().unwrap());
+            *self.drop_lists[0].lock() =
+                std::mem::take::<DropList>(&mut self.current_drop_list.lock());
             std::mem::swap(
                 &mut self.drop_lists[0].lock(),
                 &mut self.drop_lists[1].lock(),
@@ -546,11 +541,11 @@ impl Device {
     }
 
     pub fn allocator(&self) -> MutexGuard<GpuAllocator> {
-        self.allocator.lock().unwrap()
+        self.allocator.lock()
     }
 
     pub fn descriptor_allocator(&self) -> MutexGuard<DescriptorAllocator> {
-        self.descriptor_allocator.lock().unwrap()
+        self.descriptor_allocator.lock()
     }
 
     pub fn raw(&self) -> &ash::Device {
@@ -566,7 +561,7 @@ impl Device {
     }
 
     pub fn drop_list(&self) -> MutexGuard<DropList> {
-        self.current_drop_list.lock().unwrap()
+        self.current_drop_list.lock()
     }
 
     pub(crate) fn get_present_queue(&self) -> MutexGuard<Queue> {
@@ -579,17 +574,15 @@ impl Drop for Device {
         unsafe { self.raw.device_wait_idle().ok() };
         let mut allocator = self.allocator();
         let mut descriptor_allocator = self.descriptor_allocator();
-        self.current_drop_list.lock().unwrap().free(
-            &self.raw,
-            &mut allocator,
-            &mut descriptor_allocator,
-        );
+        self.current_drop_list
+            .lock()
+            .free(&self.raw, &mut allocator, &mut descriptor_allocator);
         self.drop_lists.iter().for_each(|list| {
-            let mut list = list.lock().unwrap();
+            let mut list = list.lock();
             list.free(&self.raw, &mut allocator, &mut descriptor_allocator);
         });
         self.frames.iter().for_each(|frame| {
-            let mut frame = frame.lock().unwrap();
+            let mut frame = frame.lock();
             let frame = Arc::get_mut(&mut frame).unwrap();
             frame.free(&self.raw);
         });

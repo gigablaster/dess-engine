@@ -18,13 +18,14 @@ use std::{
     fmt::Debug,
     mem::size_of_val,
     ptr::{copy_nonoverlapping, NonNull},
-    sync::{Arc, Mutex},
+    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
 use ash::vk;
 use dess_common::memory::BumpAllocator;
 
+use parking_lot::Mutex;
 use vk_sync::{cmd::pipeline_barrier, AccessType, BufferBarrier, ImageBarrier};
 
 use crate::{
@@ -458,10 +459,7 @@ impl Staging {
         offset: u64,
         data: &[T],
     ) -> Result<(), BackendError> {
-        self.inner
-            .lock()
-            .unwrap()
-            .upload_buffer(buffer, offset, data)
+        self.inner.lock().upload_buffer(buffer, offset, data)
     }
 
     pub fn upload_image(
@@ -469,10 +467,10 @@ impl Staging {
         image: &Arc<Image>,
         data: &[&ImageSubresourceData],
     ) -> Result<(), BackendError> {
-        self.inner.lock().unwrap().upload_image(image, data)
+        self.inner.lock().upload_image(image, data)
     }
 
     pub fn upload(&self) -> Result<Option<SubmitWait>, BackendError> {
-        self.inner.lock().unwrap().upload()
+        self.inner.lock().upload()
     }
 }
