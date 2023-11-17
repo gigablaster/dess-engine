@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod descriptor_cache;
+mod descriptor_storage;
 mod error;
 mod pipeline_cache;
 mod staging;
@@ -22,7 +22,7 @@ pub mod vulkan;
 
 use std::marker::PhantomData;
 
-pub use descriptor_cache::*;
+pub use descriptor_storage::*;
 pub use error::*;
 pub use pipeline_cache::*;
 pub use staging::*;

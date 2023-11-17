@@ -73,7 +73,7 @@ impl DescriptorData {
 
 pub type DescriptorHandle = Handle<vk::DescriptorSet, Box<DescriptorData>>;
 
-pub struct DescriptorCache {
+pub struct DescriptorStorage {
     device: Arc<Device>,
     container: HandleContainer<vk::DescriptorSet, Box<DescriptorData>>,
     dirty: HashSet<DescriptorHandle>,
@@ -83,7 +83,7 @@ pub struct DescriptorCache {
     uniforms: Uniforms,
 }
 
-impl DescriptorCache {
+impl DescriptorStorage {
     pub fn new(device: &Arc<Device>) -> Result<Self, BackendError> {
         Ok(Self {
             device: device.clone(),
@@ -454,7 +454,7 @@ impl DescriptorCache {
     }
 }
 
-impl Drop for DescriptorCache {
+impl Drop for DescriptorStorage {
     fn drop(&mut self) {
         let mut drop_list = self.device.drop_list();
         self.retired_descriptors
