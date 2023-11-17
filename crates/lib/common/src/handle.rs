@@ -33,7 +33,7 @@ pub struct Handle<T, U> {
 unsafe impl<T, U> Send for Handle<T, U> {}
 unsafe impl<T, U> Sync for Handle<T, U> {}
 
-#[allow(clippy::incorrect_clone_impl_on_copy_type)]
+#[allow(clippy::non_canonical_clone_impl)]
 impl<T, U> Clone for Handle<T, U> {
     fn clone(&self) -> Self {
         Self {

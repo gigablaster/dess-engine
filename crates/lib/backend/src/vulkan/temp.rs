@@ -67,6 +67,7 @@ impl TempGpuMemory {
         })
     }
 
+    #[allow(clippy::missing_safety_doc)]
     pub unsafe fn cleanup(&self, device: &ash::Device, allocator: &mut GpuAllocator) {
         if let Some(allocation) = (*self.memory.get()).take() {
             unsafe {
@@ -80,6 +81,7 @@ impl TempGpuMemory {
         self.top.store(0, Ordering::Release);
     }
 
+    #[allow(clippy::missing_safety_doc)]
     pub unsafe fn flush(&self, device: &ash::Device) -> Result<(), BackendError> {
         let size = self.top.load(Ordering::Acquire);
         if size == 0 {
