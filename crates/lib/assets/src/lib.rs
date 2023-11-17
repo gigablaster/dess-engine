@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Display, fs::File, hash::Hasher, io, mem, path::Path, slice};
+use std::{fmt::Display, fs::File, hash::Hasher, io, mem, path::Path, slice};
 
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use dess_common::traits::{BinaryDeserialization, BinarySerialization};

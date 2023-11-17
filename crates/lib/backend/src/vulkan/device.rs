@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    cell::{Cell, UnsafeCell},
+    cell::Cell,
     collections::HashMap,
     ffi::{CStr, CString},
     fmt::Debug,

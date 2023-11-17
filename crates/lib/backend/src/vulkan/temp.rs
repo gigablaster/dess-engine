@@ -1,8 +1,6 @@
 use std::{
     cell::UnsafeCell,
-    mem,
     ptr::{copy_nonoverlapping, NonNull},
-    slice,
     sync::atomic::{AtomicU32, Ordering},
 };
 
