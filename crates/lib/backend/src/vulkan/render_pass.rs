@@ -262,12 +262,12 @@ pub struct PipelineCreateDesc {
     pub cull: Option<(vk::CullModeFlags, vk::FrontFace)>,
     /// Vertex layout
     pub attributes: &'static [vk::VertexInputAttributeDescription],
-    pub strides: &'static [usize],
+    pub strides: &'static [(usize, vk::VertexInputRate)],
 }
 
 pub trait PipelineVertex: Sized {
     fn attributes() -> &'static [vk::VertexInputAttributeDescription];
-    fn strides() -> &'static [usize];
+    fn strides() -> &'static [(usize, vk::VertexInputRate)];
 }
 
 impl PipelineCreateDesc {
@@ -392,9 +392,9 @@ impl PipelineBuilder {
             .enumerate()
             .map(|(index, _)| {
                 vk::VertexInputBindingDescription::builder()
-                    .stride(desc.strides[index] as _)
+                    .stride(desc.strides[index].0 as _)
                     .binding(desc.attributes[index].binding)
-                    .input_rate(vk::VertexInputRate::VERTEX)
+                    .input_rate(desc.strides[index].1)
                     .build()
             })
             .collect::<Vec<_>>();
