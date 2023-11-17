@@ -325,8 +325,11 @@ impl PipelineCacheBuilder {
         self,
         render_pass: vk::RenderPass,
         pipeline_cache: &PipelineCache,
-    ) -> Result<Vec<vk::Pipeline>, BackendError> {
-        let cache = RwLock::new(vec![vk::Pipeline::null(); self.pipelines.len()]);
+    ) -> Result<Vec<(vk::Pipeline, vk::PipelineLayout)>, BackendError> {
+        let cache = RwLock::new(vec![
+            (vk::Pipeline::null(), vk::PipelineLayout::null());
+            self.pipelines.len()
+        ]);
         rayon::scope(|s| {
             for index in 0..self.pipelines.len() {
                 let cache = &cache;
@@ -346,7 +349,7 @@ impl PipelineCacheBuilder {
         });
 
         let cache = cache.into_inner();
-        if cache.iter().any(|x| *x == vk::Pipeline::null()) {
+        if cache.iter().any(|x| x.0 == vk::Pipeline::null()) {
             Err(BackendError::Fail)
         } else {
             Ok(cache)
@@ -357,7 +360,7 @@ impl PipelineCacheBuilder {
         render_pass: vk::RenderPass,
         cache: vk::PipelineCache,
         desc: &PipelineCreateDesc,
-        pipelines: &RwLock<Vec<vk::Pipeline>>,
+        pipelines: &RwLock<Vec<(vk::Pipeline, vk::PipelineLayout)>>,
         index: usize,
     ) -> Result<(), BackendError> {
         let shader_create_info = desc
@@ -489,7 +492,7 @@ impl PipelineCacheBuilder {
         }
         .map_err(|(_, error)| BackendError::from(error))?[0];
 
-        pipelines.write()[index] = pipeline;
+        pipelines.write()[index] = (pipeline, desc.program.pipeline_layout());
 
         Ok(())
     }
@@ -510,7 +513,7 @@ pub struct RenderPass {
     device: Arc<Device>,
     raw: vk::RenderPass,
     fbo_cache: FboCache,
-    pipeline_cache: Vec<vk::Pipeline>,
+    pipeline_cache: Vec<(vk::Pipeline, vk::PipelineLayout)>,
 }
 
 /// Render pass
@@ -598,7 +601,10 @@ impl RenderPass {
 
     /// returns vulkan pipeline by handle. Handles are created by PipelineCacheBuilder.
     /// Doesn't do any valudation if handle belongs to this render pass.
-    pub fn resolve_pipeline(&self, index: Index<vk::Pipeline>) -> vk::Pipeline {
+    pub fn resolve_pipeline(
+        &self,
+        index: Index<(vk::Pipeline, vk::PipelineLayout)>,
+    ) -> (vk::Pipeline, vk::PipelineLayout) {
         self.pipeline_cache[index.value() as usize]
     }
 }
@@ -608,7 +614,7 @@ impl Drop for RenderPass {
         self.clear_fbos();
         self.pipeline_cache
             .drain(..)
-            .for_each(|pipeline| unsafe { self.device.raw().destroy_pipeline(pipeline, None) });
+            .for_each(|pipeline| unsafe { self.device.raw().destroy_pipeline(pipeline.0, None) });
         unsafe { self.device.raw().destroy_render_pass(self.raw, None) };
     }
 }
