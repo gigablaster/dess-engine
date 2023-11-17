@@ -193,7 +193,7 @@ impl SubmitQueue {
 
 pub struct Device {
     raw: ash::Device,
-    instance: Arc<Instance>,
+    instance: Instance,
     pdevice: PhysicalDevice,
     queue: SubmitQueue,
     queue_family_index: u32,
@@ -210,10 +210,7 @@ pub struct Device {
 unsafe impl Sync for Device {}
 
 impl Device {
-    pub fn create(
-        instance: &Arc<Instance>,
-        pdevice: PhysicalDevice,
-    ) -> Result<Arc<Self>, BackendError> {
+    pub fn new(instance: Instance, pdevice: PhysicalDevice) -> Result<Arc<Self>, BackendError> {
         if !pdevice.is_queue_flag_supported(
             vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
         ) {
@@ -279,19 +276,19 @@ impl Device {
         frames.iter().enumerate().for_each(|(index, frame)| {
             let frame = frame.lock();
             Self::set_object_name_impl(
-                instance,
+                &instance,
                 &device,
                 frame.main_cb.raw(),
                 &format!("MainCB #{}", index),
             );
             Self::set_object_name_impl(
-                instance,
+                &instance,
                 &device,
                 frame.presentation_cb.raw(),
                 &format!("PresentCB #{}", index),
             );
             Self::set_object_name_impl(
-                instance,
+                &instance,
                 &device,
                 frame.render_finished.raw,
                 &format!("RenderFinished Semaphore #{}", index),
@@ -334,7 +331,7 @@ impl Device {
             )?,
         ];
         Ok(Arc::new(Self {
-            instance: instance.clone(),
+            instance,
             pdevice,
             queue_family_index: universal_queue.index,
             queue,

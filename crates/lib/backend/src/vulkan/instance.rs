@@ -97,7 +97,7 @@ impl Instance {
     pub fn new(
         builder: InstanceBuilder,
         display_handle: RawDisplayHandle,
-    ) -> Result<Arc<Self>, BackendError> {
+    ) -> Result<Self, BackendError> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(&builder);
@@ -149,12 +149,12 @@ impl Instance {
             (None, None)
         };
 
-        Ok(Arc::new(Self {
+        Ok(Self {
             entry,
             raw: instance,
             debug_utils,
             debug_messenger,
-        }))
+        })
     }
 
     pub(crate) fn get_debug_utils(&self) -> Option<&DebugUtils> {

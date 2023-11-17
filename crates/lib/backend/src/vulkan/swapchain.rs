@@ -30,14 +30,13 @@ use crate::{
 use super::{Device, Image, Instance, Semaphore};
 
 pub struct Surface {
-    _instance: Arc<Instance>,
     pub(crate) raw: vk::SurfaceKHR,
     pub(crate) loader: khr::Surface,
 }
 
 impl Surface {
     pub fn create(
-        instance: &Arc<Instance>,
+        instance: &Instance,
         display_handle: RawDisplayHandle,
         window_handle: RawWindowHandle,
     ) -> Result<Self, BackendError> {
@@ -53,7 +52,6 @@ impl Surface {
         let loader = khr::Surface::new(&instance.entry, &instance.raw);
 
         Ok(Self {
-            _instance: instance.clone(),
             raw: surface,
             loader,
         })
