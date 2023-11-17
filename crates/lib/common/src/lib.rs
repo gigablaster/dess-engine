@@ -22,14 +22,12 @@ mod serialization;
 mod time;
 pub mod traits;
 mod transform;
-mod xml;
 pub use chunky_list::*;
 pub use client::*;
 pub use handle::*;
 pub use serialization::*;
 pub use time::*;
 pub use transform::*;
-pub use xml::*;
 
 pub trait Align<T> {
     fn align(self, align: T) -> Self;
