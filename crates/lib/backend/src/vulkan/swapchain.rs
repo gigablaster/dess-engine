@@ -35,7 +35,7 @@ pub struct Surface {
 }
 
 impl Surface {
-    pub fn create(
+    pub fn new(
         instance: &Instance,
         display_handle: RawDisplayHandle,
         window_handle: RawWindowHandle,

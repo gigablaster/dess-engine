@@ -152,7 +152,7 @@ impl StagingInner {
     pub fn upload_buffer<T: Sized>(
         &mut self,
         buffer: &Buffer,
-        offset: u64,
+        offset: u32,
         data: &[T],
     ) -> Result<(), BackendError> {
         let size = size_of_val(data);
@@ -172,7 +172,7 @@ impl StagingInner {
     pub fn upload_image(
         &mut self,
         image: &Image,
-        data: &[&ImageSubresourceData],
+        data: &[ImageSubresourceData],
     ) -> Result<(), BackendError> {
         for (mip, data) in data.iter().enumerate() {
             if !self.try_push_image_mip(image, mip as _, data) {
@@ -229,7 +229,7 @@ impl StagingInner {
     fn try_push_buffer(
         &mut self,
         buffer: &Buffer,
-        offset: u64,
+        offset: u32,
         size: usize,
         data: *const u8,
     ) -> bool {
@@ -245,7 +245,7 @@ impl StagingInner {
             }
             let op = vk::BufferCopy {
                 src_offset: staging_offset as u64,
-                dst_offset: offset,
+                dst_offset: offset as u64,
                 size: size as u64,
             };
             let access_type = buffer.access_type().iter().copied().collect::<AccessList>();
@@ -455,8 +455,8 @@ impl Staging {
 
     pub fn upload_buffer<T: Sized>(
         &self,
-        buffer: &Arc<Buffer>,
-        offset: u64,
+        buffer: &Buffer,
+        offset: u32,
         data: &[T],
     ) -> Result<(), BackendError> {
         self.inner.lock().upload_buffer(buffer, offset, data)
@@ -464,8 +464,8 @@ impl Staging {
 
     pub fn upload_image(
         &self,
-        image: &Arc<Image>,
-        data: &[&ImageSubresourceData],
+        image: &Image,
+        data: &[ImageSubresourceData],
     ) -> Result<(), BackendError> {
         self.inner.lock().upload_image(image, data)
     }

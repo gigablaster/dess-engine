@@ -316,11 +316,11 @@ impl PipelineCreateDesc {
 /// ones. Best way is to collect all shaders that should be used on for each render pass
 /// and build them all at once.
 #[derive(Debug, Default)]
-pub struct PipelineCacheBuilder {
+pub struct PipelineBuilder {
     pipelines: Vec<PipelineCreateDesc>,
 }
 
-impl PipelineCacheBuilder {
+impl PipelineBuilder {
     fn build(
         self,
         render_pass: vk::RenderPass,
@@ -528,7 +528,7 @@ impl RenderPass {
     pub fn new(
         device: &Arc<Device>,
         layout: RenderPassLayout,
-        pipelines: PipelineCacheBuilder,
+        pipelines: PipelineBuilder,
         cache: &PipelineCache,
     ) -> Result<Self, BackendError> {
         let attachments = layout

@@ -27,6 +27,7 @@ pub enum BackendError {
     ExtensionNotFound(String),
     NoSuitableQueue,
     Fail,
+    InvalidHandle,
 }
 
 impl From<vk::Result> for BackendError {

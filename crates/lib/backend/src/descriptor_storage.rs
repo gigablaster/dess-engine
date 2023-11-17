@@ -30,19 +30,12 @@ use crate::{
 struct BindImage {
     layout: vk::ImageLayout,
     view: vk::ImageView,
-    #[allow(dead_code)]
-    image: Arc<Image>,
 }
 
 #[derive(Debug, Clone, Copy)]
 struct BindStaticUniform {
     offset: u32,
     size: u32,
-}
-
-#[derive(Debug, Clone)]
-struct BindDynamicUniform {
-    buffer: Arc<Buffer>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -55,7 +48,7 @@ pub struct BindingPoint<T> {
 pub struct DescriptorData {
     descriptor: Option<DescriptorSet>,
     static_buffers: Vec<BindingPoint<BindStaticUniform>>,
-    dynamic_buffers: Vec<BindingPoint<BindDynamicUniform>>,
+    dynamic_buffers: Vec<BindingPoint<vk::Buffer>>,
     images: Vec<BindingPoint<BindImage>>,
     count: DescriptorTotalCount,
     layout: vk::DescriptorSetLayout,
@@ -130,7 +123,7 @@ impl DescriptorStorage {
             .iter()
             .filter_map(|(index, ty)| {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
-                    Some(BindingPoint::<BindDynamicUniform> {
+                    Some(BindingPoint::<vk::Buffer> {
                         binding: *index,
                         data: None,
                     })
@@ -181,20 +174,19 @@ impl DescriptorStorage {
     pub fn set_image(
         &mut self,
         handle: DescriptorHandle,
-        binding: u32,
-        image: &Arc<Image>,
+        binding: usize,
+        image: &Image,
         layout: vk::ImageLayout,
     ) -> Result<(), BackendError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let image_bind = desc
                 .images
                 .iter_mut()
-                .find(|point| point.binding == binding);
+                .find(|point| point.binding == binding as u32);
             if let Some(point) = image_bind {
                 point.data = Some(BindImage {
                     layout,
                     view: image.get_or_create_view(ImageViewDesc::default())?,
-                    image: image.clone(),
                 });
                 self.dirty.insert(handle);
             }
@@ -206,14 +198,14 @@ impl DescriptorStorage {
     pub fn set_uniform<T: Sized>(
         &mut self,
         handle: DescriptorHandle,
-        binding: u32,
+        binding: usize,
         data: &T,
     ) -> Result<(), BackendError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let desc = desc
                 .static_buffers
                 .iter_mut()
-                .find(|point| point.binding == binding);
+                .find(|point| point.binding == binding as u32);
             if let Some(point) = desc {
                 if let Some(old) = point.data.replace(BindStaticUniform {
                     offset: self.uniforms.push(data)?,
@@ -230,18 +222,16 @@ impl DescriptorStorage {
     pub fn set_dynamic_uniform(
         &mut self,
         handle: DescriptorHandle,
-        binding: u32,
-        buffer: &Arc<Buffer>,
+        binding: usize,
+        buffer: &Buffer,
     ) -> Result<(), BackendError> {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let desc = desc
                 .dynamic_buffers
                 .iter_mut()
-                .find(|point| point.binding == binding);
+                .find(|point| point.binding == binding as u32);
             if let Some(point) = desc {
-                point.data = Some(BindDynamicUniform {
-                    buffer: buffer.clone(),
-                });
+                point.data = Some(buffer.raw());
                 self.dirty.insert(handle);
             }
         }
@@ -372,9 +362,9 @@ impl DescriptorStorage {
                 desc.dynamic_buffers
                     .iter()
                     .map(|binding| {
-                        let data = &binding.data.as_ref().unwrap().buffer;
+                        let data = &binding.data.unwrap();
                         let buffer = vk::DescriptorBufferInfo::builder()
-                            .buffer(data.raw())
+                            .buffer(*data)
                             .offset(0)
                             .range(vk::WHOLE_SIZE)
                             .build();
@@ -391,12 +381,12 @@ impl DescriptorStorage {
         }
     }
 
-    pub fn invalidate_uniform(&mut self, handle: DescriptorHandle, binding: u32) {
+    pub fn invalidate_uniform(&mut self, handle: DescriptorHandle, binding: usize) {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let point = desc
                 .static_buffers
                 .iter_mut()
-                .find(|point| point.binding == binding);
+                .find(|point| point.binding == binding as u32);
             if let Some(point) = point {
                 if let Some(old) = point.data.take() {
                     self.retired_uniforms.push(old.offset);
@@ -408,12 +398,12 @@ impl DescriptorStorage {
         }
     }
 
-    pub fn invalidate_image(&mut self, handle: DescriptorHandle, binding: u32) {
+    pub fn invalidate_image(&mut self, handle: DescriptorHandle, binding: usize) {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let point = desc
                 .images
                 .iter_mut()
-                .find(|point| point.binding == binding);
+                .find(|point| point.binding == binding as u32);
             if let Some(point) = point {
                 point.data.take();
                 self.container
@@ -423,12 +413,12 @@ impl DescriptorStorage {
         }
     }
 
-    pub fn invalidate_dynamic_uniform(&mut self, handle: DescriptorHandle, binding: u32) {
+    pub fn invalidate_dynamic_uniform(&mut self, handle: DescriptorHandle, binding: usize) {
         if let Some(desc) = self.container.get_cold_mut(handle) {
             let point = desc
                 .dynamic_buffers
                 .iter_mut()
-                .find(|point| point.binding == binding);
+                .find(|point| point.binding == binding as u32);
             if let Some(point) = point {
                 point.data.take();
                 self.container
