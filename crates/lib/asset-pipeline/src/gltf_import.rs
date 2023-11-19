@@ -16,11 +16,10 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use dess_assets::{
-    AssetRef, BlendMode, Bone, GpuModel, LightingAttributes, Material, MaterialBaseColor,
-    MaterialBlend, MaterialEmission, MaterialNormals, MaterialOcclusion, MaterialValues,
-    PbrMaterial, StaticGpuMesh, StaticMeshGeometry, Surface, UnlitMaterial,
+    AssetRef, BlendMode, Bone, LightingAttributes, Material, MaterialBaseColor, MaterialBlend,
+    MaterialEmission, MaterialNormals, MaterialOcclusion, MaterialValues, MeshData, ModelAsset,
+    PbrMaterial, StaticMeshGeometry, Surface, UnlitMaterial,
 };
-use dess_common::{bounds::AABB, Transform};
 use gltf::{
     material::{AlphaMode, NormalTexture, OcclusionTexture, PbrMetallicRoughness},
     texture::{self, Info},
@@ -75,17 +74,20 @@ impl ContentImporter<LoadedGltf> for GltfSource {
 }
 
 struct ModelImportContext {
-    model: GpuModel,
+    model: ModelAsset,
     base: PathBuf,
     asset: AssetRef,
     path: PathBuf,
+    static_geometry: Vec<StaticMeshGeometry>,
+    attributes: Vec<LightingAttributes>,
+    indices: Vec<u16>,
     processed_meshes: HashMap<usize, u32>, // mesh.index -> index in model
 }
 
 #[derive(Debug, Default)]
-pub struct CreateGpuModel {}
+pub struct CreateModelAsset {}
 
-impl CreateGpuModel {
+impl CreateModelAsset {
     fn set_normal_texture(
         &self,
         context: &AssetProcessingContext,
@@ -237,16 +239,11 @@ impl CreateGpuModel {
         buffers: &[gltf::buffer::Data],
     ) {
         let (translation, rotation, scale) = node.transform().decomposed();
-        let translation = glam::Vec3::from_array(translation);
-        let rotation = glam::Quat::from_array(rotation);
-        let scale = glam::Vec3::from_array(scale);
         let bone = Bone {
             parent: parent_index,
-            local_tr: Transform {
-                translation,
-                rotation,
-                scale,
-            },
+            local_translation: translation,
+            local_rotation: rotation,
+            local_scale: scale,
         };
         let current_bone_index = model_context.model.bones.len() as u32;
         model_context.model.bones.push(bone);
@@ -393,8 +390,10 @@ impl CreateGpuModel {
         bone: u32,
         buffers: &[gltf::buffer::Data],
     ) {
-        let mut target = StaticGpuMesh::default();
-        let mut indices_collect = Vec::new();
+        let mut target = MeshData::default();
+        let mut mesh_indices = Vec::new();
+        let mut mesh_geometry = Vec::new();
+        let mut mesh_attributes = Vec::new();
         for prim in mesh.primitives() {
             let reader = prim.reader(|buffer| Some(&buffers[buffer.index()]));
             let positions = if let Some(positions) = reader.read_positions() {
@@ -438,10 +437,7 @@ impl CreateGpuModel {
             };
 
             let bounds = prim.bounding_box();
-            let bounds = AABB::from_min_max(
-                glam::Vec3::from_array(bounds.min),
-                glam::Vec3::from_array(bounds.max),
-            );
+            let bounds = (bounds.min, bounds.max);
 
             let tangents = tangents
                 .iter()
@@ -466,12 +462,12 @@ impl CreateGpuModel {
                 meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
             meshopt::optimize_vertex_cache_in_place(&indices, geometry.len());
 
-            let first = indices_collect.len() as u32;
+            let first = mesh_indices.len() as u32;
             let count = indices.len() as u32;
-            indices_collect.append(&mut indices);
             let material = self.create_material(context, model_context, prim.material());
-            target.geometry.append(&mut geometry);
-            target.attributes.append(&mut attributes);
+            mesh_indices.append(&mut indices);
+            mesh_geometry.append(&mut geometry);
+            mesh_attributes.append(&mut attributes);
             target.surfaces.push(Surface {
                 first,
                 count,
@@ -481,17 +477,19 @@ impl CreateGpuModel {
                 material,
             });
         }
-        let remap = meshopt::optimize_vertex_fetch_remap(&indices_collect, target.geometry.len());
-        target.geometry =
-            meshopt::remap_vertex_buffer(&target.geometry, target.geometry.len(), &remap);
-        target.attributes =
-            meshopt::remap_vertex_buffer(&target.attributes, target.attributes.len(), &remap);
+        let remap = meshopt::optimize_vertex_fetch_remap(&mesh_indices, mesh_geometry.len());
+        mesh_geometry = meshopt::remap_vertex_buffer(&mesh_geometry, mesh_geometry.len(), &remap);
+        mesh_attributes =
+            meshopt::remap_vertex_buffer(&mesh_attributes, mesh_attributes.len(), &remap);
         let mesh_index = model_context.model.static_meshes.len() as u32;
         let mesh_name = mesh.name().unwrap_or(&format!("GltfMesh_{}", bone)).into();
-        target.indices = indices_collect
-            .iter()
-            .map(|x| *x as u16)
-            .collect::<Vec<_>>();
+        let mut mesh_indices = mesh_indices.iter().map(|x| *x as u16).collect::<Vec<_>>();
+        target.geometry = model_context.static_geometry.len() as u32;
+        target.attributes = model_context.attributes.len() as u32;
+        target.indices = model_context.indices.len() as u32;
+        model_context.static_geometry.append(&mut mesh_geometry);
+        model_context.attributes.append(&mut mesh_attributes);
+        model_context.indices.append(&mut mesh_indices);
         model_context.model.static_meshes.push(target);
         model_context.model.mesh_names.insert(mesh_name, mesh_index);
         model_context.model.node_to_mesh.push((bone, mesh_index));
@@ -535,24 +533,30 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
     }
 }
 
-impl ContentProcessor<LoadedGltf, GpuModel> for CreateGpuModel {
+impl ContentProcessor<LoadedGltf, ModelAsset> for CreateModelAsset {
     fn process(
         &self,
         asset: AssetRef,
         context: &AssetProcessingContext,
         content: LoadedGltf,
-    ) -> Result<GpuModel, Error> {
+    ) -> Result<ModelAsset, Error> {
         let mut import_context = ModelImportContext {
             base: content.base,
             asset,
             path: content.path,
-            model: GpuModel::default(),
+            model: ModelAsset::default(),
             processed_meshes: HashMap::new(),
+            static_geometry: Vec::new(),
+            attributes: Vec::new(),
+            indices: Vec::new(),
         };
         context.clear_dependencies(asset);
         content.document.nodes().for_each(|node| {
             self.process_node(context, &mut import_context, 0, &node, &content.buffers)
         });
+        import_context.model.attributes = import_context.attributes;
+        import_context.model.static_geometry = import_context.static_geometry;
+        import_context.model.indices = import_context.indices;
 
         Ok(import_context.model)
     }

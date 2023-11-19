@@ -22,7 +22,7 @@ use ash::{
 use log::{info, log, Level};
 use raw_window_handle::RawDisplayHandle;
 
-use crate::BackendError;
+use crate::BackendResult;
 
 pub struct Instance {
     pub(crate) entry: ash::Entry,
@@ -88,13 +88,10 @@ impl Instance {
     }
 
     pub fn vulkan_version() -> u32 {
-        vk::make_api_version(0, 1, 1, 0)
+        vk::make_api_version(0, 1, 3, 0)
     }
 
-    pub fn new(
-        builder: InstanceBuilder,
-        display_handle: RawDisplayHandle,
-    ) -> Result<Self, BackendError> {
+    pub fn new(builder: InstanceBuilder, display_handle: RawDisplayHandle) -> BackendResult<Self> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(&builder);

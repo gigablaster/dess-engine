@@ -1,0 +1,16 @@
+{
+    "passes": {
+        "main": {
+            "shaders": [
+                {
+                    "stage": "vertex",
+                    "shader": "shaders/unlit_vs.hlsl"
+                },
+                {
+                    "stage": "fragment",
+                    "shader": "shaders/unlit_ps.hlsl"
+                }
+            ]
+        }
+    }
+}

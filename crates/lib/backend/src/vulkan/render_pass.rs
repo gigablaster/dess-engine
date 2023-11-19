@@ -15,9 +15,9 @@
 
 use std::{collections::HashMap, fmt::Debug, hash::Hash, slice, sync::Arc};
 
-use crate::{pipeline_cache::PipelineCache, BackendError, Index};
+use crate::BackendResult;
 
-use super::{Device, ImageDesc, Program};
+use super::{pipeline_cache::PipelineCache, Device, ImageDesc, Program};
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use dess_common::TempList;
@@ -29,15 +29,12 @@ pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
 
 #[derive(Debug, Clone, Default)]
 pub struct RenderPassLayout<'a> {
-    pub color_attachments: &'a [RenderPassAttachmentDesc],
-    pub depth_attachment: Option<&'a RenderPassAttachmentDesc>,
+    pub color_attachments: &'a [vk::Format],
+    pub depth_attachment: Option<vk::Format>,
 }
 
 impl<'a> RenderPassLayout<'a> {
-    pub fn new(
-        color_attachments: &'a [RenderPassAttachmentDesc],
-        depth_attachment: Option<&'a RenderPassAttachmentDesc>,
-    ) -> Self {
+    pub fn new(color_attachments: &'a [vk::Format], depth_attachment: Option<vk::Format>) -> Self {
         Self {
             color_attachments,
             depth_attachment,
@@ -120,113 +117,6 @@ impl RenderPassAttachmentDesc {
             stencil_store_op: vk::AttachmentStoreOp::DONT_CARE,
             ..Default::default()
         }
-    }
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct FboCacheKey {
-    dims: [u32; 2],
-    attachments: ArrayVec<(vk::ImageUsageFlags, vk::ImageCreateFlags), MAX_ATTACHMENTS>,
-}
-
-impl FboCacheKey {
-    pub fn new<'a>(
-        dims: [u32; 2],
-        color_attachments: &[&'a ImageDesc],
-        depth_attachment: Option<&'a ImageDesc>,
-    ) -> Self {
-        let attachments = color_attachments
-            .iter()
-            .copied()
-            .chain(depth_attachment)
-            .map(|attachment| (attachment.usage, attachment.flags))
-            .collect();
-
-        Self { dims, attachments }
-    }
-}
-
-#[derive(Debug)]
-struct FboCache {
-    entries: RwLock<HashMap<FboCacheKey, vk::Framebuffer>>,
-    attachments: ArrayVec<RenderPassAttachmentDesc, MAX_ATTACHMENTS>,
-    render_pass: vk::RenderPass,
-}
-
-impl FboCache {
-    pub fn new(render_pass: vk::RenderPass, attachments: &[RenderPassAttachmentDesc]) -> Self {
-        Self {
-            render_pass,
-            entries: Default::default(),
-            attachments: attachments.iter().copied().collect(),
-        }
-    }
-
-    pub fn get_or_create(
-        &self,
-        device: &Device,
-        key: FboCacheKey,
-    ) -> Result<vk::Framebuffer, BackendError> {
-        let entries = self.entries.upgradable_read();
-        if let Some(fbo) = entries.get(&key) {
-            Ok(*fbo)
-        } else {
-            let mut entries = RwLockUpgradableReadGuard::upgrade(entries);
-            if let Some(fbo) = entries.get(&key) {
-                Ok(*fbo)
-            } else {
-                let fbo = self.create_fbo(device, &key)?;
-                entries.insert(key, fbo);
-                Ok(fbo)
-            }
-        }
-    }
-
-    fn create_fbo(
-        &self,
-        device: &Device,
-        key: &FboCacheKey,
-    ) -> Result<vk::Framebuffer, BackendError> {
-        let formats = TempList::new();
-        let [width, height] = key.dims;
-
-        let attachments = self
-            .attachments
-            .iter()
-            .zip(key.attachments.iter())
-            .map(|(desc, (usage_flags, create_flags))| {
-                vk::FramebufferAttachmentImageInfo::builder()
-                    .width(width)
-                    .height(height)
-                    .flags(*create_flags)
-                    .usage(*usage_flags)
-                    .view_formats(slice::from_ref(formats.add(desc.format)))
-                    .layer_count(1)
-                    .build()
-            })
-            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
-
-        let mut imageless_desc =
-            vk::FramebufferAttachmentsCreateInfo::builder().attachment_image_infos(&attachments);
-
-        let fbo_desc = vk::FramebufferCreateInfo::builder()
-            .flags(vk::FramebufferCreateFlags::IMAGELESS)
-            .render_pass(self.render_pass)
-            .attachment_count(attachments.len() as _)
-            .width(width)
-            .height(height)
-            .layers(1)
-            .push_next(&mut imageless_desc)
-            .build();
-
-        Ok(unsafe { device.raw().create_framebuffer(&fbo_desc, None) }?)
-    }
-
-    pub fn clear(&self, device: &Device) {
-        let mut entries = self.entries.write();
-        entries
-            .drain()
-            .for_each(|(_, fbo)| unsafe { device.raw().destroy_framebuffer(fbo, None) });
     }
 }
 
@@ -323,9 +213,8 @@ pub struct PipelineBuilder {
 impl PipelineBuilder {
     fn build(
         self,
-        render_pass: vk::RenderPass,
         pipeline_cache: &PipelineCache,
-    ) -> Result<Vec<(vk::Pipeline, vk::PipelineLayout)>, BackendError> {
+    ) -> BackendResult<Vec<(vk::Pipeline, vk::PipelineLayout)>> {
         let cache = RwLock::new(vec![
             (vk::Pipeline::null(), vk::PipelineLayout::null());
             self.pipelines.len()

@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023 Vladimir Kuskov
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,29 +13,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fmt::Display, fs::File, hash::Hasher, io, mem, path::Path, slice};
+use std::{
+    any::Any,
+    collections::HashSet,
+    fmt::Display,
+    fs::File,
+    hash::Hasher,
+    io::{self, Read, Write},
+    mem,
+    path::Path,
+    slice,
+};
 
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use dess_common::traits::{BinaryDeserialization, BinarySerialization};
 use memmap2::{Mmap, MmapOptions};
 use siphasher::sip128::Hasher128;
+use speedy::{Readable, Writable};
 use uuid::Uuid;
 
 mod bundle;
-mod gpumesh;
-mod gpumodel;
+mod effect;
 mod image;
 mod material;
-mod shader;
+mod model;
 
 pub use bundle::*;
-pub use gpumesh::*;
-pub use gpumodel::*;
+pub use effect::*;
 pub use image::*;
 pub use material::*;
-pub use shader::*;
+pub use model::*;
 
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Readable, Writable)]
 pub struct AssetRef(Uuid);
 
 impl AssetRef {
@@ -91,27 +98,20 @@ impl Display for AssetRef {
     }
 }
 
-impl BinarySerialization for AssetRef {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        w.write_u128::<LittleEndian>(self.0.as_u128())
-    }
+pub trait Asset: Sized + Any {
+    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()>;
+    fn deserialize<R: Read>(r: &mut R) -> io::Result<Self>;
+    fn collect_depenencies(&self, dependencies: &mut HashSet<AssetRef>);
 }
 
-impl BinaryDeserialization for AssetRef {
-    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        Ok(Self(Uuid::from_u128(r.read_u128::<LittleEndian>()?)))
-    }
-}
-
-pub trait Asset: Send + Sync {
+pub trait AddressableAsset: Asset {
     const TYPE_ID: Uuid;
-    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>);
 }
 
 pub trait AssetBundle: Sync + Send {
-    fn load(&self, asset: AssetRef, expect_ty: Uuid) -> io::Result<Vec<u8>>;
+    fn load(&self, ty: Uuid, asset: AssetRef) -> io::Result<Vec<u8>>;
     fn dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]>;
-    fn asset_by_name(&self, name: &str) -> Option<AssetRef>;
+    fn get(&self, name: &str) -> Option<AssetRef>;
     fn contains(&self, asset: AssetRef) -> bool;
 }
 
@@ -126,10 +126,8 @@ impl MappedFile {
             mmap: unsafe { MmapOptions::new().map(&file) }?,
         })
     }
-}
 
-impl AsRef<[u8]> for MappedFile {
-    fn as_ref(&self) -> &[u8] {
+    fn data(&self) -> &[u8] {
         &self.mmap
     }
 }

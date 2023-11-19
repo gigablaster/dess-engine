@@ -15,17 +15,9 @@
 
 use std::collections::HashMap;
 
-use dess_assets::GpuShaderStage;
 use serde::{Deserialize, Serialize};
 
 use crate::ImagePurpose;
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ShaderDesc {
-    pub source: String,
-    #[serde(flatten)]
-    pub ty: GpuShaderStage,
-}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImageDesc {
@@ -42,8 +34,8 @@ pub enum BundledAsset {
     Image(ImageDesc),
     #[serde(rename = "model")]
     Model(String),
-    #[serde(rename = "shader")]
-    Shader(ShaderDesc),
+    #[serde(rename = "effect")]
+    Effect(String),
 }
 
 /// Single bundle description

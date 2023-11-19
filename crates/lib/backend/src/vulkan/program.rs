@@ -17,7 +17,6 @@ use std::{
     collections::{btree_map::Entry, BTreeMap, HashMap},
     ffi::CString,
     slice,
-    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
@@ -26,9 +25,9 @@ use byte_slice_cast::AsSliceOf;
 use gpu_descriptor::DescriptorTotalCount;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
-use crate::{BackendError, GpuResource};
+use crate::{BackendError, BackendResult};
 
-use super::{Device, SamplerDesc};
+use super::{Device, Index, ProgramHandle, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
@@ -56,11 +55,12 @@ pub struct DescriptorSetInfo {
 
 impl DescriptorSetInfo {
     pub fn new(
-        device: &Device,
+        device: &ash::Device,
         set_index: u32,
         stage: vk::ShaderStageFlags,
         set: &BTreeMap<u32, DescriptorInfo>,
         expected_count: u32,
+        inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<Self, BackendError> {
         let mut uniform_buffers_count = 0;
         let mut dynamic_uniform_buffers_count = 0;
@@ -100,11 +100,12 @@ impl DescriptorSetInfo {
                 | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
                     let sampler_index = samplers.len();
                     samplers.push(
-                        device
-                            .get_sampler(SamplerDesc {
+                        inmuatable_samplers
+                            .get(&SamplerDesc {
                                 texel_filter: vk::Filter::LINEAR,
                                 mipmap_mode: vk::SamplerMipmapMode::LINEAR,
                                 address_mode: vk::SamplerAddressMode::REPEAT,
+                                anisotropy_level: 3,
                             })
                             .unwrap(),
                     );
@@ -114,7 +115,7 @@ impl DescriptorSetInfo {
                             *index,
                             stage,
                             binding,
-                            &samplers[sampler_index],
+                            samplers[sampler_index],
                         ),
                     );
                     combined_samplers_count += 1;
@@ -131,11 +132,7 @@ impl DescriptorSetInfo {
         let layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&layoyt)
             .build();
-        let layout = unsafe {
-            device
-                .raw()
-                .create_descriptor_set_layout(&layout_create_info, None)
-        }?;
+        let layout = unsafe { device.create_descriptor_set_layout(&layout_create_info, None) }?;
 
         let mut names = HashMap::with_capacity(set.len());
         set.iter().for_each(|(index, info)| {
@@ -243,13 +240,12 @@ impl DescriptorSetInfo {
             .immutable_samplers(slice::from_ref(sampler))
             .build()
     }
-}
 
-impl GpuResource for DescriptorSetInfo {
-    fn free(&self, device: &ash::Device) {
+    pub fn free(&self, device: &ash::Device) {
         unsafe { device.destroy_descriptor_set_layout(self.layout, None) };
     }
 }
+
 pub struct ShaderDesc<'a> {
     pub stage: vk::ShaderStageFlags,
     pub entry: &'a str,
@@ -287,7 +283,7 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Shader {
     pub raw: vk::ShaderModule,
     pub stage: vk::ShaderStageFlags,
@@ -303,34 +299,37 @@ impl Shader {
 
         let shader = unsafe { device.create_shader_module(&shader_create_info, None) }?;
         Ok(Self {
-            stage: desc.stage,
             raw: shader,
+            stage: desc.stage,
             entry: CString::new(desc.entry).unwrap(),
             descriptor_sets: rspirv_reflect::Reflection::new_from_spirv(desc.code)?
                 .get_descriptor_sets()?,
         })
     }
-}
 
-impl GpuResource for Shader {
-    fn free(&self, device: &ash::Device) {
+    pub fn free(&self, device: &ash::Device) {
         unsafe { device.destroy_shader_module(self.raw, None) }
     }
 }
+
+const MAX_SHADERS: usize = 2;
 
 /// Shader program similar to what we had in OpenGL.
 ///
 /// Contains shader modules and layouts needed to create PSOs and descriptor sets.
 #[derive(Debug)]
 pub struct Program {
-    device: Arc<Device>,
-    pipeline_layout: vk::PipelineLayout,
-    sets: ArrayVec<DescriptorSetInfo, MAX_SETS>,
-    shaders: Vec<Shader>,
+    pub(crate) pipeline_layout: vk::PipelineLayout,
+    pub(crate) sets: ArrayVec<DescriptorSetInfo, MAX_SETS>,
+    pub(crate) shaders: ArrayVec<Shader, MAX_SHADERS>,
 }
 
 impl Program {
-    pub fn new(device: &Arc<Device>, shaders: &[ShaderDesc]) -> Result<Self, BackendError> {
+    pub fn new(
+        device: &ash::Device,
+        shaders: &[ShaderDesc],
+        inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
+    ) -> Result<Self, BackendError> {
         let mut stages = vk::ShaderStageFlags::empty();
         shaders.iter().for_each(|x| {
             stages |= x.stage;
@@ -338,10 +337,11 @@ impl Program {
 
         let shaders = shaders
             .iter()
-            .map(|desc| Shader::new(device.raw(), desc).unwrap())
-            .collect::<Vec<_>>();
+            .map(|desc| Shader::new(device, desc).unwrap())
+            .collect::<ArrayVec<_, MAX_SHADERS>>();
 
-        let sets = Self::create_descriptor_set_layouts(device, stages, &shaders)?;
+        let sets =
+            Self::create_descriptor_set_layouts(device, stages, &shaders, inmuatable_samplers)?;
 
         let descriptor_layouts = sets
             .iter()
@@ -352,14 +352,9 @@ impl Program {
             .set_layouts(&descriptor_layouts)
             .build();
 
-        let pipeline_layout = unsafe {
-            device
-                .raw()
-                .create_pipeline_layout(&layout_create_info, None)
-        }?;
+        let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_create_info, None) }?;
 
         Ok(Self {
-            device: device.clone(),
             pipeline_layout,
             sets,
             shaders,
@@ -367,9 +362,10 @@ impl Program {
     }
 
     fn create_descriptor_set_layouts(
-        device: &Device,
+        device: &ash::Device,
         stages: vk::ShaderStageFlags,
         shaders: &[Shader],
+        inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<ArrayVec<DescriptorSetInfo, MAX_SETS>, BackendError> {
         let sets = shaders
             .iter()
@@ -388,6 +384,7 @@ impl Program {
                         stages,
                         set,
                         DESCRIPTORS_PER_SLOT[set_index as usize],
+                        inmuatable_samplers,
                     )?);
                 }
                 None => {
@@ -448,33 +445,19 @@ impl Program {
         }
     }
 
-    pub(crate) fn device(&self) -> &Arc<Device> {
-        &self.device
-    }
-
-    pub(crate) fn shaders(&self) -> &[Shader] {
-        &self.shaders
-    }
-
-    pub fn pipeline_layout(&self) -> vk::PipelineLayout {
-        self.pipeline_layout
-    }
-
-    pub fn descriptor_set(&self, index: usize) -> &DescriptorSetInfo {
-        &self.sets[index]
+    pub fn free(&self, device: &ash::Device) {
+        self.shaders.iter().for_each(|shader| shader.free(device));
+        unsafe { device.destroy_pipeline_layout(self.pipeline_layout, None) };
+        self.sets.iter().for_each(|set| set.free(device));
     }
 }
 
-impl Drop for Program {
-    fn drop(&mut self) {
-        self.shaders
-            .drain(..)
-            .for_each(|shader| shader.free(self.device.raw()));
-        unsafe {
-            self.device
-                .raw()
-                .destroy_pipeline_layout(self.pipeline_layout, None)
-        };
-        self.sets.iter().for_each(|set| set.free(self.device.raw()));
+impl Device {
+    pub fn create_program(&self, shaders: &[ShaderDesc]) -> BackendResult<ProgramHandle> {
+        let program = Program::new(&self.raw, shaders, &self.samplers)?;
+        let mut programs = self.program_storage.write();
+        let index = programs.len();
+        programs.push(program);
+        Ok(Index::new(index))
     }
 }

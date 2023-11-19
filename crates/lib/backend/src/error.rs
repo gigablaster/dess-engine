@@ -28,6 +28,8 @@ pub enum BackendError {
     NoSuitableQueue,
     Fail,
     InvalidHandle,
+    OutOfTempMemory,
+    TooBig,
 }
 
 impl From<vk::Result> for BackendError {

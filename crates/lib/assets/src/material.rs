@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023 Vladimir Kuskov
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,8 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use dess_common::traits::{BinaryDeserialization, BinarySerialization};
+use std::collections::HashSet;
+
+use speedy::{Readable, Writable};
 
 use crate::AssetRef;
 
@@ -43,45 +44,14 @@ pub trait MaterialBlend {
     fn set_blend_mode(&mut self, value: BlendMode);
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Readable, Writable)]
 pub enum BlendMode {
     Opaque,
     AlphaTest(f32),
     AlphaBlend,
 }
 
-const BLEND_ID_OPAQUE: u8 = 0;
-const BLEND_ID_ALPHA_TEST: u8 = 1;
-const BLEND_ID_ALPHA_BLEND: u8 = 2;
-
-impl BinarySerialization for BlendMode {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        match self {
-            Self::Opaque => w.write_u8(BLEND_ID_OPAQUE)?,
-            Self::AlphaTest(cutoff) => {
-                w.write_u8(BLEND_ID_ALPHA_TEST)?;
-                w.write_f32::<LittleEndian>(*cutoff)?;
-            }
-            Self::AlphaBlend => w.write_u8(BLEND_ID_ALPHA_BLEND)?,
-        }
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for BlendMode {
-    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let ty = r.read_u8()?;
-        match ty {
-            BLEND_ID_OPAQUE => Ok(Self::Opaque),
-            BLEND_ID_ALPHA_TEST => Ok(Self::AlphaTest(r.read_u8()? as f32 / 255.0)),
-            BLEND_ID_ALPHA_BLEND => Ok(Self::AlphaBlend),
-            val => panic!("Unknown blend mode {}", val),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Readable, Writable)]
 pub struct PbrMaterial {
     pub blend: BlendMode,
     pub base: AssetRef,
@@ -106,7 +76,7 @@ impl Default for PbrMaterial {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Readable, Writable)]
 pub struct UnlitMaterial {
     pub blend: BlendMode,
     pub base: AssetRef,
@@ -122,41 +92,41 @@ impl Default for UnlitMaterial {
 }
 
 impl PbrMaterial {
-    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+    fn collect_dependencies(&self, deps: &mut HashSet<AssetRef>) {
         if self.base.valid() {
-            deps.push(self.base);
+            deps.insert(self.base);
         }
         if self.normal.valid() {
-            deps.push(self.normal);
+            deps.insert(self.normal);
         }
         if self.metallic_roughness.valid() {
-            deps.push(self.metallic_roughness);
+            deps.insert(self.metallic_roughness);
         }
         if self.occlusion.valid() {
-            deps.push(self.occlusion);
+            deps.insert(self.occlusion);
         }
         if self.emission.valid() {
-            deps.push(self.occlusion);
+            deps.insert(self.occlusion);
         }
     }
 }
 
 impl UnlitMaterial {
-    fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+    fn collect_dependencies(&self, deps: &mut HashSet<AssetRef>) {
         if self.base.valid() {
-            deps.push(self.base);
+            deps.insert(self.base);
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Readable, Writable)]
 pub enum Material {
     Pbr(PbrMaterial),
     Unlit(UnlitMaterial),
 }
 
 impl Material {
-    pub fn collect_dependencies(&self, deps: &mut Vec<AssetRef>) {
+    pub fn collect_dependencies(&self, deps: &mut HashSet<AssetRef>) {
         match self {
             Self::Pbr(pbr) => pbr.collect_dependencies(deps),
             Self::Unlit(unlit) => unlit.collect_dependencies(deps),
@@ -213,90 +183,5 @@ impl MaterialEmission for PbrMaterial {
 impl MaterialBlend for PbrMaterial {
     fn set_blend_mode(&mut self, value: BlendMode) {
         self.blend = value;
-    }
-}
-
-impl BinarySerialization for PbrMaterial {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        self.blend.serialize(w)?;
-        self.base.serialize(w)?;
-        self.normal.serialize(w)?;
-        self.metallic_roughness.serialize(w)?;
-        self.occlusion.serialize(w)?;
-        self.emission.serialize(w)?;
-        w.write_f32::<LittleEndian>(self.emission_value)?;
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for PbrMaterial {
-    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let blend = BlendMode::deserialize(r)?;
-        let base = AssetRef::deserialize(r)?;
-        let normal = AssetRef::deserialize(r)?;
-        let metallic_roughness = AssetRef::deserialize(r)?;
-        let occlusion = AssetRef::deserialize(r)?;
-        let emission = AssetRef::deserialize(r)?;
-        let emission_value = r.read_f32::<LittleEndian>()?;
-
-        Ok(Self {
-            blend,
-            base,
-            normal,
-            metallic_roughness,
-            occlusion,
-            emission,
-            emission_value,
-        })
-    }
-}
-
-impl BinarySerialization for UnlitMaterial {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        self.blend.serialize(w)?;
-        self.base.serialize(w)?;
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for UnlitMaterial {
-    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let blend = BlendMode::deserialize(r)?;
-        let base = AssetRef::deserialize(r)?;
-
-        Ok(Self { blend, base })
-    }
-}
-
-const MATERIAL_ID_PBR: u8 = 0;
-const MATERIAL_ID_UNLIT: u8 = 1;
-
-impl BinarySerialization for Material {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        match self {
-            Material::Pbr(pbr) => {
-                w.write_u8(MATERIAL_ID_PBR)?;
-                pbr.serialize(w)?;
-            }
-            Material::Unlit(unlit) => {
-                w.write_u8(MATERIAL_ID_UNLIT)?;
-                unlit.serialize(w)?;
-            }
-        }
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for Material {
-    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let ty = r.read_u8()?;
-        match ty {
-            MATERIAL_ID_PBR => Ok(Self::Pbr(PbrMaterial::deserialize(r)?)),
-            MATERIAL_ID_UNLIT => Ok(Self::Unlit(UnlitMaterial::deserialize(r)?)),
-            id => panic!("Unknown material ID {}", id),
-        }
     }
 }

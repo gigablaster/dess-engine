@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use ash::vk;
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
-use dess_assets::{AssetRef, GpuImage};
+use dess_assets::{AssetRef, ImageAsset};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
@@ -168,7 +168,7 @@ pub enum ImagePurpose {
 }
 
 #[derive(Debug, Default)]
-pub struct CreateGpuImage {}
+pub struct CreateImageAsset {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BcMode {
@@ -185,8 +185,8 @@ impl BcMode {
     }
 }
 
-impl CreateGpuImage {
-    fn process_dds(image: &Dds) -> Result<GpuImage, Error> {
+impl CreateImageAsset {
+    fn process_dds(image: &Dds) -> Result<ImageAsset, Error> {
         if let Some(format) = Self::get_vk_format(image) {
             let data = image
                 .get_data(0)
@@ -205,7 +205,7 @@ impl CreateGpuImage {
                     mip.to_owned()
                 })
                 .collect::<Vec<_>>();
-            Ok(GpuImage {
+            Ok(ImageAsset {
                 format,
                 dimensions: [image.get_width(), image.get_height()],
                 mips,
@@ -215,7 +215,7 @@ impl CreateGpuImage {
         }
     }
 
-    fn process_rgba(image: &ImageRgba8Data, purpose: ImagePurpose) -> Result<GpuImage, Error> {
+    fn process_rgba(image: &ImageRgba8Data, purpose: ImagePurpose) -> Result<ImageAsset, Error> {
         let dimensions = image.dimensions;
 
         let need_compression = purpose != ImagePurpose::Sprite
@@ -230,7 +230,7 @@ impl CreateGpuImage {
             } else {
                 vk::Format::R8G8B8A8_UNORM
             };
-            return Ok(GpuImage {
+            return Ok(ImageAsset {
                 format,
                 dimensions,
                 mips: vec![image.data.to_vec()],
@@ -266,7 +266,7 @@ impl CreateGpuImage {
             );
         }
 
-        Ok(GpuImage {
+        Ok(ImageAsset {
             format,
             dimensions,
             mips,
@@ -337,13 +337,13 @@ impl CreateGpuImage {
     }
 }
 
-impl ContentProcessor<RawImage, GpuImage> for CreateGpuImage {
+impl ContentProcessor<RawImage, ImageAsset> for CreateImageAsset {
     fn process(
         &self,
         _asset: AssetRef,
         _context: &AssetProcessingContext,
         content: RawImage,
-    ) -> Result<GpuImage, Error> {
+    ) -> Result<ImageAsset, Error> {
         match content.data {
             RawImageData::Dds(dds) => Self::process_dds(&dds),
             RawImageData::Rgba(image) => Self::process_rgba(&image, content.purpose),

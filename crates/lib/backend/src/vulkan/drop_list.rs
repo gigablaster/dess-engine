@@ -17,14 +17,10 @@ use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 use gpu_descriptor_ash::AshDescriptorDevice;
 
-use super::{DescriptorAllocator, DescriptorSet, GpuAllocator, GpuMemory};
+use super::{DescriptorAllocator, DescriptorSet, GpuAllocator, GpuMemory, UniformStorage};
 
-const CAPACITY: usize = 128;
+const CAPACITY: usize = 65535;
 
-/// Список удаления
-///
-/// Хранит объекты отмеченные на удаление. Осовбождает ресурсы когда они
-/// больше не используются и кадр в котором они были отмечены на удаление завершился.
 #[derive(Debug)]
 pub struct DropList {
     memory_to_free: Vec<GpuMemory>,
@@ -32,6 +28,7 @@ pub struct DropList {
     image_views_to_free: Vec<vk::ImageView>,
     buffers_to_free: Vec<vk::Buffer>,
     descriptors_to_free: Vec<DescriptorSet>,
+    uniforms_to_free: Vec<usize>,
 }
 
 impl Default for DropList {
@@ -42,27 +39,24 @@ impl Default for DropList {
             image_views_to_free: Vec::with_capacity(CAPACITY),
             buffers_to_free: Vec::with_capacity(CAPACITY),
             descriptors_to_free: Vec::with_capacity(CAPACITY),
+            uniforms_to_free: Vec::with_capacity(CAPACITY),
         }
     }
 }
 
 impl DropList {
-    /// Отмечает изображение на удаление
     pub fn drop_image(&mut self, image: vk::Image) {
         self.images_to_free.push(image);
     }
 
-    /// Отмечает вид изображения на удаление
     pub fn drop_image_view(&mut self, view: vk::ImageView) {
         self.image_views_to_free.push(view);
     }
 
-    /// Отмечает буфер на удаление
     pub fn drop_buffer(&mut self, buffer: vk::Buffer) {
         self.buffers_to_free.push(buffer);
     }
 
-    /// Отмечает блок памяти на удаление
     pub fn free_memory(&mut self, block: GpuMemory) {
         self.memory_to_free.push(block);
     }
@@ -71,14 +65,16 @@ impl DropList {
         self.descriptors_to_free.push(descriptor_set);
     }
 
-    /// Реально освобождает ресурсы.
-    ///
-    /// Вызывается когда кадр, в котором объекты были отмечены на удаление.
-    pub(crate) fn free(
+    pub fn free_uniform(&mut self, uniform: usize) {
+        self.uniforms_to_free.push(uniform);
+    }
+
+    pub(crate) fn purge(
         &mut self,
         device: &ash::Device,
         allocator: &mut GpuAllocator,
         descriptor_allocator: &mut DescriptorAllocator,
+        uniforms: &mut UniformStorage,
     ) {
         self.image_views_to_free.drain(..).for_each(|view| {
             unsafe { device.destroy_image_view(view, None) };
@@ -98,10 +94,15 @@ impl DropList {
                 self.descriptors_to_free.drain(..),
             )
         };
+        self.uniforms_to_free
+            .drain(..)
+            .for_each(|x| uniforms.dealloc(x));
+
         self.memory_to_free.shrink_to(CAPACITY);
         self.image_views_to_free.shrink_to(CAPACITY);
         self.images_to_free.shrink_to(CAPACITY);
         self.buffers_to_free.shrink_to(CAPACITY);
         self.descriptors_to_free.shrink_to(CAPACITY);
+        self.uniforms_to_free.shrink_to(CAPACITY);
     }
 }

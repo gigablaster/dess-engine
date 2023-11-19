@@ -14,41 +14,55 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod buffer;
-mod command_buffer;
+mod descriptors;
 mod device;
-mod droplist;
-mod frame_context;
+mod drop_list;
+mod frame;
 mod image;
 mod instance;
 mod physical_device;
+mod pipeline;
+mod pipeline_cache;
 mod program;
-mod render_pass;
+mod staging;
 mod swapchain;
-mod temp;
+mod uniforms;
 
-use ash::vk;
+use std::marker::PhantomData;
+
+use ash::vk::{self};
 pub use buffer::*;
-pub use command_buffer::*;
+pub use descriptors::*;
 pub use device::*;
-pub use droplist::*;
-pub use frame_context::*;
-use gpu_alloc::MemoryPropertyFlags;
+pub use drop_list::*;
 pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
+pub use pipeline::*;
 pub use program::*;
-pub use render_pass::*;
+pub use staging::*;
 pub use swapchain::*;
-pub use temp::*;
-pub struct MemoryAllocationInfo<'a> {
-    pub memory: &'a vk::DeviceMemory,
-    pub offset: u64,
-    pub size: u64,
-    pub flags: MemoryPropertyFlags,
-}
+pub use uniforms::*;
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
 pub type DescriptorAllocator =
     gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
 pub type DescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
+
+pub trait ToDrop {
+    fn to_drop(&mut self, drop_list: &mut DropList);
+}
+
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+pub struct Index<T>(u32, PhantomData<T>);
+
+impl<T> Index<T> {
+    pub(crate) fn new(value: usize) -> Self {
+        Self(value as u32, PhantomData)
+    }
+
+    pub fn index(&self) -> usize {
+        self.0 as usize
+    }
+}

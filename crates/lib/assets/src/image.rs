@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023 Vladimir Kuskov
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,47 +13,53 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::io;
-
 use ash::vk;
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use dess_common::traits::{BinaryDeserialization, BinarySerialization};
+use speedy::{Context, Readable, Writable};
 
-use crate::Asset;
+use crate::{AddressableAsset, Asset};
 
 #[derive(Debug)]
-pub struct GpuImage {
+pub struct ImageAsset {
     pub format: vk::Format,
     pub dimensions: [u32; 2],
     pub mips: Vec<Vec<u8>>,
 }
 
-impl Asset for GpuImage {
-    const TYPE_ID: uuid::Uuid = uuid::uuid!("c2871b90-6b51-427f-b1d8-4cedbedc8993");
-    fn collect_dependencies(&self, _deps: &mut Vec<crate::AssetRef>) {}
+impl<'a, C: Context> Readable<'a, C> for ImageAsset {
+    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, <C as Context>::Error> {
+        Ok(Self {
+            format: vk::Format::from_raw(reader.read_i32()?),
+            dimensions: reader.read_value()?,
+            mips: reader.read_value()?,
+        })
+    }
 }
-impl BinarySerialization for GpuImage {
-    fn serialize(&self, w: &mut impl io::Write) -> io::Result<()> {
-        w.write_i32::<LittleEndian>(self.format.as_raw())?;
-        w.write_u32::<LittleEndian>(self.dimensions[0])?;
-        w.write_u32::<LittleEndian>(self.dimensions[1])?;
-        self.mips.serialize(w)?;
+
+impl<C: Context> Writable<C> for ImageAsset {
+    fn write_to<T: ?Sized + speedy::Writer<C>>(
+        &self,
+        writer: &mut T,
+    ) -> Result<(), <C as Context>::Error> {
+        writer.write_i32(self.format.as_raw())?;
+        writer.write_value(&self.dimensions)?;
+        writer.write_value(&self.mips)?;
 
         Ok(())
     }
 }
 
-impl BinaryDeserialization for GpuImage {
-    fn deserialize(r: &mut impl io::Read) -> io::Result<Self> {
-        let format = vk::Format::from_raw(r.read_i32::<LittleEndian>()?);
-        let mut dimensions = [0u32; 2];
-        r.read_u32_into::<LittleEndian>(&mut dimensions)?;
-        let mips = Vec::<Vec<_>>::deserialize(r)?;
+impl AddressableAsset for ImageAsset {
+    const TYPE_ID: uuid::Uuid = uuid::uuid!("c2871b90-6b51-427f-b1d8-4cedbedc8993");
+}
 
-        Ok(Self {
-            format,
-            dimensions,
-            mips,
-        })
+impl Asset for ImageAsset {
+    fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
+        Ok(self.write_to_stream(w)?)
     }
+
+    fn deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
+        Ok(Self::read_from_stream_unbuffered(r)?)
+    }
+
+    fn collect_depenencies(&self, _dependencies: &mut std::collections::HashSet<crate::AssetRef>) {}
 }

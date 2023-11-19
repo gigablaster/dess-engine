@@ -17,7 +17,7 @@ use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use crate::BackendError;
+use crate::BackendResult;
 
 use super::{Instance, Surface};
 
@@ -35,11 +35,11 @@ impl QueueFamily {
 
 #[derive(Clone)]
 pub struct PhysicalDevice {
-    raw: vk::PhysicalDevice,
-    queue_families: Vec<QueueFamily>,
-    properties: vk::PhysicalDeviceProperties,
-    memory_properties: vk::PhysicalDeviceMemoryProperties,
-    supported_extensions: HashSet<String>,
+    pub raw: vk::PhysicalDevice,
+    pub queue_families: Vec<QueueFamily>,
+    pub properties: vk::PhysicalDeviceProperties,
+    pub memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub supported_extensions: HashSet<String>,
 }
 
 impl PhysicalDevice {
@@ -57,31 +57,19 @@ impl PhysicalDevice {
             .next()
     }
 
-    pub fn raw(&self) -> vk::PhysicalDevice {
-        self.raw
-    }
-
     pub fn is_extensions_sipported(&self, ext: &str) -> bool {
         self.supported_extensions.contains(ext)
-    }
-
-    pub fn properties(&self) -> &vk::PhysicalDeviceProperties {
-        &self.properties
-    }
-
-    pub fn memory_properties(&self) -> &vk::PhysicalDeviceMemoryProperties {
-        &self.memory_properties
     }
 }
 
 impl Debug for PhysicalDevice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "PhysicalDevice {{ {:#?} }}", self.properties)
+        write!(f, "PhysicalDevice ( {:#?} )", self.properties)
     }
 }
 
 impl Instance {
-    pub fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>, BackendError> {
+    pub fn enumerate_physical_devices(&self) -> BackendResult<Vec<PhysicalDevice>> {
         unsafe {
             Ok(self
                 .raw
@@ -206,9 +194,12 @@ impl PhysicalDeviceList for Vec<PhysicalDevice> {
         surface: &Surface,
         device_types: &[vk::PhysicalDeviceType],
     ) -> Option<PhysicalDevice> {
-        let with_graphics_support = self.with_support(surface, vk::QueueFlags::GRAPHICS);
+        let all_needed_support = self.with_support(
+            surface,
+            vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
+        );
         device_types.iter().find_map(|device_type| {
-            let suitable = with_graphics_support.with_device_type(*device_type);
+            let suitable = all_needed_support.with_device_type(*device_type);
             suitable.into_iter().next()
         })
     }

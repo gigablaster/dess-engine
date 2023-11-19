@@ -1,14 +1,11 @@
 {
     "name": "test",
     "assets": {
-        "yamada": {
-            "image": {
-                "source": "data/images/test_d.png",
-                "purpose": "sprite"
-            }
+        "helmet": {
+            "model": "data/models/FlightHelmet/FlightHelmet.gltf"
         },
-        "helmet" : {
-            "model": "data/models/FlightHelmet/glTF/FlightHelmet.gltf"
+        "unlit": {
+            "effect": "data/effects/unlit.json"
         }
     }
 }

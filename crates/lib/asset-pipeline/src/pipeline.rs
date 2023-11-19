@@ -20,15 +20,14 @@ use std::{
     path::Path,
 };
 
-use dess_assets::{Asset, AssetRef, GpuImage, GpuModel, GpuShader, GpuShaderStage};
-use dess_common::traits::BinarySerialization;
+use dess_assets::{Asset, AssetRef, EffectAsset, ImageAsset, ModelAsset};
 use log::{error, info};
 
 use crate::{
-    build_bundle, cached_asset_path, compile_shaders::ShaderSource, AssetDatabase,
-    AssetProcessingContext, CompileShader, Content, ContentImporter, ContentProcessor,
-    CreateGpuImage, CreateGpuModel, Error, GltfSource, ImagePurpose, ImageSource, LoadedGltf,
-    LoadedShaderCode, RawImage, ASSET_CACHE_PATH, ROOT_DATA_PATH,
+    build_bundle, cached_asset_path, import_effect::EffectSource, AssetDatabase,
+    AssetProcessingContext, CompileEffect, Content, ContentImporter, ContentProcessor,
+    CreateImageAsset, CreateModelAsset, EffectContent, Error, GltfSource, ImagePurpose,
+    ImageSource, LoadedGltf, RawImage, ASSET_CACHE_PATH, ROOT_DATA_PATH,
 };
 
 #[derive(Debug)]
@@ -60,17 +59,9 @@ impl AssetPipeline {
         self.context.import_model(&GltfSource::new(path))
     }
 
-    pub fn import_vertex_shader(&self, path: &Path) -> AssetRef {
-        self.context.import_shader(&ShaderSource {
-            stage: GpuShaderStage::Vertex,
-            path: path.into(),
-        })
-    }
-
-    pub fn import_fragment_shader(&self, path: &Path) -> AssetRef {
-        self.context.import_shader(&ShaderSource {
-            stage: GpuShaderStage::Fragment,
-            path: path.into(),
+    pub fn import_effect(&self, path: &Path) -> AssetRef {
+        self.context.import_effect(&EffectSource {
+            path: path.to_owned(),
         })
     }
 
@@ -111,17 +102,17 @@ impl AssetPipeline {
             need_work = false;
             let models_to_process = self.context.drain_models_to_process();
             need_work |= !models_to_process.is_empty();
-            self.process_assets::<GpuModel, LoadedGltf, CreateGpuModel, GltfSource>(
+            self.process_assets::<ModelAsset, LoadedGltf, CreateModelAsset, GltfSource>(
                 models_to_process,
             );
             let images_to_process = self.context.drain_images_to_process();
             need_work |= !images_to_process.is_empty();
-            self.process_assets::<GpuImage, RawImage, CreateGpuImage, ImageSource>(
+            self.process_assets::<ImageAsset, RawImage, CreateImageAsset, ImageSource>(
                 images_to_process,
             );
-            let shades_to_process = self.context.drain_shaders_to_process();
+            let shades_to_process = self.context.drain_effects_to_process();
             need_work |= !shades_to_process.is_empty();
-            self.process_assets::<GpuShader, LoadedShaderCode, CompileShader, ShaderSource>(
+            self.process_assets::<EffectAsset, EffectContent, CompileEffect, EffectSource>(
                 shades_to_process,
             );
         }
@@ -135,7 +126,7 @@ impl AssetPipeline {
         importer: impl ContentImporter<C> + Debug,
     ) -> Result<(), Error>
     where
-        T: Asset + BinarySerialization,
+        T: Asset,
         C: Content,
         P: ContentProcessor<C, T> + Default,
     {
@@ -148,7 +139,7 @@ impl AssetPipeline {
 
     fn process_assets<T, C, P, I>(&self, data: Vec<(AssetRef, I)>)
     where
-        T: Asset + BinarySerialization,
+        T: Asset,
         C: Content,
         P: ContentProcessor<C, T> + Default,
         I: ContentImporter<C> + Send + Debug,
@@ -167,7 +158,7 @@ impl AssetPipeline {
         });
     }
 
-    pub fn bundle(self, path: &Path) -> io::Result<()> {
-        build_bundle(self.context, path)
+    pub fn bundle(self, name: &str) -> io::Result<()> {
+        build_bundle(self.context, name)
     }
 }

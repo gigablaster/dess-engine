@@ -13,31 +13,21 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::collections::HashMap;
+
 use ash::vk;
-use gpu_alloc::{MemoryBlock, Request, UsageFlags};
-use gpu_alloc_ash::AshMemoryDevice;
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
-use std::{collections::HashMap, hash::Hash, sync::Arc};
+use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::BackendError;
+use crate::BackendResult;
 
-use super::Device;
-
-#[derive(Copy, Clone, Debug, Hash, PartialEq, Eq)]
-pub enum ImageType {
-    Tex1D,
-    Tex1DArray,
-    Tex2D,
-    Tex2DArray,
-}
+use super::{Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
-    pub image_type: ImageType,
-    pub usage: vk::ImageUsageFlags,
-    pub flags: vk::ImageCreateFlags,
-    pub format: vk::Format,
     pub extent: [u32; 2],
+    pub ty: vk::ImageType,
+    pub usage: vk::ImageUsageFlags,
+    pub format: vk::Format,
     pub tiling: vk::ImageTiling,
     pub mip_levels: u32,
     pub array_elements: u32,
@@ -114,82 +104,31 @@ impl ImageViewDesc {
     }
 
     fn convert_image_type_to_view_type(image: &Image) -> vk::ImageViewType {
-        match image.desc.image_type {
-            ImageType::Tex1D => vk::ImageViewType::TYPE_1D,
-            ImageType::Tex1DArray => vk::ImageViewType::TYPE_1D_ARRAY,
-            ImageType::Tex2D => vk::ImageViewType::TYPE_2D,
-            ImageType::Tex2DArray => vk::ImageViewType::TYPE_2D_ARRAY,
+        match image.desc.ty {
+            vk::ImageType::TYPE_1D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_1D,
+            vk::ImageType::TYPE_1D => vk::ImageViewType::TYPE_1D_ARRAY,
+            vk::ImageType::TYPE_2D if image.desc.array_elements == 2 => vk::ImageViewType::TYPE_2D,
+            vk::ImageType::TYPE_2D => vk::ImageViewType::TYPE_2D_ARRAY,
+            vk::ImageType::TYPE_3D => vk::ImageViewType::TYPE_3D,
+            ty => panic!("Unknown image type {ty:?}"),
         }
     }
 }
 
 #[derive(Debug)]
-pub enum SubImage {
-    All,
-    Layer(u32),
-    LayerAndMip(u32, u32),
-}
-
-/// Изображение
-///
-/// Хранит вулкановское изображение, описание, выделенную память и все ассоциированные виды.
-#[derive(Debug)]
 pub struct Image {
-    device: Arc<Device>,
-    raw: vk::Image,
-    desc: ImageDesc,
-    allocation: Option<MemoryBlock<vk::DeviceMemory>>,
-    views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
-}
-
-unsafe impl Send for Image {}
-unsafe impl Sync for Image {}
-
-impl PartialEq for Image {
-    fn eq(&self, other: &Self) -> bool {
-        self.raw == other.raw
-    }
-}
-
-impl Eq for Image {}
-
-impl Hash for Image {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.raw.hash(state);
-    }
+    pub(crate) raw: vk::Image,
+    pub desc: ImageDesc,
+    pub(crate) memory: Option<GpuMemory>,
+    pub(crate) views: RwLock<HashMap<ImageViewDesc, vk::ImageView>>,
 }
 
 impl Image {
-    pub fn texture(device: &Arc<Device>, desc: ImageDesc) -> Result<Self, BackendError> {
-        let image = unsafe { device.raw().create_image(&desc.build(), None) }?;
-        let requirement = unsafe { device.raw().get_image_memory_requirements(image) };
-        let allocation = unsafe {
-            device.allocator().alloc(
-                AshMemoryDevice::wrap(device.raw()),
-                Request {
-                    size: requirement.size,
-                    align_mask: requirement.alignment,
-                    memory_types: requirement.memory_type_bits,
-                    usage: UsageFlags::FAST_DEVICE_ACCESS,
-                },
-            )
-        }?;
-        unsafe {
-            device
-                .raw()
-                .bind_image_memory(image, *allocation.memory(), allocation.offset())
-        }?;
-
-        Ok(Self {
-            device: device.clone(),
-            raw: image,
-            desc,
-            views: Default::default(),
-            allocation: Some(allocation),
-        })
-    }
-
-    pub fn get_or_create_view(&self, desc: ImageViewDesc) -> Result<vk::ImageView, BackendError> {
+    pub fn get_or_create_view(
+        &self,
+        device: &ash::Device,
+        desc: ImageViewDesc,
+    ) -> BackendResult<vk::ImageView> {
         let views = self.views.upgradable_read();
         if let Some(view) = views.get(&desc) {
             Ok(*view)
@@ -198,18 +137,7 @@ impl Image {
             if let Some(view) = views.get(&desc) {
                 Ok(*view)
             } else {
-                if self.desc.format == vk::Format::D32_SFLOAT
-                    && !desc.aspect_mask.contains(vk::ImageAspectFlags::DEPTH)
-                {
-                    panic!("Depth-only resource used without vk::ImageAspectFlags::DEPTH flag");
-                }
-                let create_info = vk::ImageViewCreateInfo {
-                    image: self.raw,
-                    ..desc.build(self)
-                };
-
-                let view = unsafe { self.device.raw().create_image_view(&create_info, None) }?;
-
+                let view = unsafe { device.create_image_view(&desc.build(self), None) }?;
                 views.insert(desc, view);
 
                 Ok(view)
@@ -217,203 +145,232 @@ impl Image {
         }
     }
 
-    pub(crate) fn destroy_all_views(&self) {
+    pub(crate) fn clear_views(&self, device: &ash::Device) {
         let mut views = self.views.write();
-        views.iter().for_each(|(_, view)| {
-            unsafe { self.device.raw().destroy_image_view(*view, None) };
-        });
+        for (_, view) in views.iter() {
+            unsafe { device.destroy_image_view(*view, None) }
+        }
         views.clear();
     }
 
-    pub fn external(device: &Arc<Device>, image: vk::Image, image_desc: ImageDesc) -> Self {
-        Self {
-            device: device.clone(),
-            raw: image,
-            desc: image_desc,
-            views: Default::default(),
-            allocation: None,
+    fn drop_views(&self, drop_list: &mut DropList) {
+        let mut views = self.views.write();
+        for (_, view) in views.iter() {
+            drop_list.drop_image_view(*view);
         }
-    }
-
-    /// Возвращает отдельно взятый мип для отдельного соля текстуры
-    pub fn subresource_layer(
-        &self,
-        layer: u32,
-        mip: u32,
-        aspect: vk::ImageAspectFlags,
-    ) -> vk::ImageSubresourceLayers {
-        vk::ImageSubresourceLayers::builder()
-            .aspect_mask(aspect)
-            .mip_level(mip)
-            .base_array_layer(layer)
-            .layer_count(1)
-            .build()
-    }
-
-    /// Возвращает область изображения
-    pub fn subresource_range(
-        &self,
-        subimage: SubImage,
-        aspect: vk::ImageAspectFlags,
-    ) -> vk::ImageSubresourceRange {
-        let desc = vk::ImageSubresourceRange::builder().aspect_mask(aspect);
-        match subimage {
-            SubImage::All => desc
-                .base_array_layer(0)
-                .layer_count(self.desc.array_elements)
-                .base_mip_level(0)
-                .level_count(self.desc.mip_levels)
-                .build(),
-            SubImage::Layer(layer) => desc
-                .base_array_layer(layer)
-                .layer_count(1)
-                .base_mip_level(0)
-                .level_count(self.desc.mip_levels)
-                .build(),
-            SubImage::LayerAndMip(layer, mip) => desc
-                .base_array_layer(layer)
-                .base_mip_level(mip)
-                .layer_count(1)
-                .level_count(1)
-                .build(),
-        }
-    }
-
-    pub fn desc(&self) -> &ImageDesc {
-        &self.desc
-    }
-
-    pub fn raw(&self) -> vk::Image {
-        self.raw
-    }
-
-    pub fn name(&self, name: &str) {
-        self.device.set_object_name(self.raw, name);
+        views.clear();
     }
 }
 
-impl Drop for Image {
-    fn drop(&mut self) {
-        let mut drop_list = self.device.drop_list();
-        self.views
-            .write()
-            .drain()
-            .for_each(|(_, view)| drop_list.drop_image_view(view));
-        if let Some(memory) = self.allocation.take() {
-            drop_list.drop_image(self.raw);
+impl ToDrop for Image {
+    fn to_drop(&mut self, drop_list: &mut DropList) {
+        self.drop_views(drop_list);
+        if let Some(memory) = self.memory.take() {
             drop_list.free_memory(memory);
+            drop_list.drop_image(self.raw);
         }
     }
 }
 
-impl ImageDesc {
-    pub fn new(format: vk::Format, image_type: ImageType, extent: [u32; 2]) -> Self {
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct ImageCreateDesc<'a> {
+    pub extent: [u32; 2],
+    pub ty: vk::ImageType,
+    pub usage: vk::ImageUsageFlags,
+    pub flags: vk::ImageCreateFlags,
+    pub format: vk::Format,
+    pub tiling: vk::ImageTiling,
+    pub mip_levels: usize,
+    pub array_elements: usize,
+    pub dedicated: bool,
+    pub name: Option<&'a str>,
+}
+
+impl<'a> ImageCreateDesc<'a> {
+    pub fn new(format: vk::Format, extent: [u32; 2]) -> Self {
         Self {
-            image_type,
-            usage: vk::ImageUsageFlags::default(),
+            extent,
+            ty: vk::ImageType::TYPE_2D,
+            usage: vk::ImageUsageFlags::empty(),
             flags: vk::ImageCreateFlags::empty(),
             format,
+            tiling: vk::ImageTiling::OPTIMAL,
+            mip_levels: 0,
+            array_elements: 0,
+            dedicated: false,
+            name: None,
+        }
+    }
+
+    pub fn texture(format: vk::Format, extent: [u32; 2]) -> Self {
+        Self {
             extent,
+            ty: vk::ImageType::TYPE_2D,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            flags: vk::ImageCreateFlags::empty(),
+            format,
             tiling: vk::ImageTiling::OPTIMAL,
             mip_levels: 1,
             array_elements: 1,
+            dedicated: false,
+            name: None,
         }
     }
 
-    pub fn image_type(mut self, image_type: ImageType) -> Self {
-        self.image_type = image_type;
+    pub fn cubemap(format: vk::Format, extent: [u32; 2]) -> Self {
+        Self {
+            extent,
+            ty: vk::ImageType::TYPE_2D,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+            flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
+            format,
+            tiling: vk::ImageTiling::OPTIMAL,
+            mip_levels: 1,
+            array_elements: 6,
+            dedicated: false,
+            name: None,
+        }
+    }
+
+    pub fn color_attachment(format: vk::Format, extent: [u32; 2]) -> Self {
+        Self {
+            extent,
+            ty: vk::ImageType::TYPE_2D,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT,
+            flags: vk::ImageCreateFlags::empty(),
+            format,
+            tiling: vk::ImageTiling::OPTIMAL,
+            mip_levels: 1,
+            array_elements: 1,
+            dedicated: false,
+            name: None,
+        }
+    }
+
+    pub fn depth_stencil_attachment(format: vk::Format, extent: [u32; 2]) -> Self {
+        Self {
+            extent,
+            ty: vk::ImageType::TYPE_2D,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            flags: vk::ImageCreateFlags::empty(),
+            format,
+            tiling: vk::ImageTiling::OPTIMAL,
+            mip_levels: 1,
+            array_elements: 1,
+            dedicated: false,
+            name: None,
+        }
+    }
+
+    pub fn ty(mut self, value: vk::ImageType) -> Self {
+        self.ty = value;
         self
     }
 
-    pub fn usage(mut self, usage: vk::ImageUsageFlags) -> Self {
-        self.usage = usage;
+    pub fn usage(mut self, value: vk::ImageUsageFlags) -> Self {
+        self.usage = value;
         self
     }
 
-    pub fn flags(mut self, flags: vk::ImageCreateFlags) -> Self {
-        self.flags = flags;
+    pub fn flags(mut self, value: vk::ImageCreateFlags) -> Self {
+        self.flags = value;
         self
     }
 
-    pub fn format(mut self, format: vk::Format) -> Self {
-        self.format = format;
+    pub fn tiling(mut self, value: vk::ImageTiling) -> Self {
+        self.tiling = value;
         self
     }
 
-    pub fn extents(mut self, extents: [u32; 2]) -> Self {
-        self.extent = extents;
+    pub fn mip_levels(mut self, value: usize) -> Self {
+        self.mip_levels = value;
         self
     }
 
-    pub fn tiling(mut self, tiling: vk::ImageTiling) -> Self {
-        self.tiling = tiling;
+    pub fn array_elements(mut self, value: usize) -> Self {
+        self.array_elements = value;
         self
     }
 
-    pub fn mip_levels(mut self, mip_levels: u32) -> Self {
-        self.mip_levels = mip_levels;
-        self
-    }
-
-    pub fn array_elements(mut self, array_elements: u32) -> Self {
-        self.array_elements = array_elements;
+    pub fn name(mut self, name: &'a str) -> Self {
+        self.name = Some(name);
         self
     }
 
     fn build(&self) -> vk::ImageCreateInfo {
-        let (image_type, image_extents, _image_layers) = match self.image_type {
-            ImageType::Tex1D => (
-                vk::ImageType::TYPE_1D,
-                vk::Extent3D {
-                    width: self.extent[0],
-                    height: 1,
-                    depth: 1,
-                },
-                1,
-            ),
+        vk::ImageCreateInfo::builder()
+            .array_layers(self.array_elements as _)
+            .mip_levels(self.mip_levels as _)
+            .usage(self.usage)
+            .flags(self.flags)
+            .format(self.format)
+            .image_type(self.ty)
+            .tiling(self.tiling)
+            .extent(self.create_extents())
+            .build()
+    }
 
-            ImageType::Tex1DArray => (
-                vk::ImageType::TYPE_1D,
-                vk::Extent3D {
-                    width: self.extent[0],
-                    height: 1,
-                    depth: 1,
-                },
-                self.array_elements,
-            ),
-            ImageType::Tex2D => (
-                vk::ImageType::TYPE_2D,
-                vk::Extent3D {
-                    width: self.extent[0],
-                    height: self.extent[1],
-                    depth: 1,
-                },
-                1,
-            ),
-            ImageType::Tex2DArray => (
-                vk::ImageType::TYPE_2D,
-                vk::Extent3D {
-                    width: self.extent[0],
-                    height: self.extent[1],
-                    depth: 1,
-                },
-                self.array_elements,
-            ),
-        };
-
-        vk::ImageCreateInfo {
-            flags: self.flags,
-            image_type,
-            format: self.format,
-            extent: image_extents,
-            mip_levels: self.mip_levels,
-            array_layers: 1,
-            samples: vk::SampleCountFlags::TYPE_1,
-            tiling: self.tiling,
-            usage: self.usage,
-            sharing_mode: vk::SharingMode::EXCLUSIVE,
-            initial_layout: vk::ImageLayout::UNDEFINED,
-            ..Default::default()
+    fn create_extents(&self) -> vk::Extent3D {
+        match self.ty {
+            vk::ImageType::TYPE_1D => vk::Extent3D {
+                width: self.extent[0],
+                height: 1,
+                depth: 1,
+            },
+            vk::ImageType::TYPE_2D => vk::Extent3D {
+                width: self.extent[0],
+                height: self.extent[1],
+                depth: 1,
+            },
+            vk::ImageType::TYPE_3D => vk::Extent3D {
+                width: self.extent[0],
+                height: self.extent[1],
+                depth: self.array_elements as u32,
+            },
+            ty => panic!("Unknown image type {ty:?}"),
         }
+    }
+}
+
+impl Device {
+    pub fn create_image(&self, desc: ImageCreateDesc) -> BackendResult<ImageHandle> {
+        let image =
+            Self::create_image_impl(&self.instance, &self.raw, &self.memory_allocator, desc)?;
+        Ok(self.image_storage.write().push(image.raw, image))
+    }
+
+    fn create_image_impl(
+        instance: &Instance,
+        device: &ash::Device,
+        allocator: &Mutex<GpuAllocator>,
+        desc: ImageCreateDesc,
+    ) -> BackendResult<Image> {
+        let image = unsafe { device.create_image(&desc.build(), None) }?;
+        let requirements = unsafe { device.get_image_memory_requirements(image) };
+        let memory = Self::allocate_impl(
+            device,
+            &mut allocator.lock(),
+            requirements,
+            gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
+            desc.dedicated,
+        )?;
+        unsafe { device.bind_image_memory(image, *memory.memory(), memory.offset()) }?;
+        if let Some(name) = desc.name {
+            Self::set_object_name_impl(instance, device, image, name);
+        }
+        Ok(Image {
+            raw: image,
+            desc: ImageDesc {
+                extent: desc.extent,
+                ty: desc.ty,
+                usage: desc.usage,
+                format: desc.format,
+                tiling: desc.tiling,
+                mip_levels: desc.mip_levels as u32,
+                array_elements: desc.array_elements as u32,
+            },
+            memory: Some(memory),
+            views: RwLock::default(),
+        })
     }
 }

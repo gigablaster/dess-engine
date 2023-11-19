@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023 Vladimir Kuskov
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -15,25 +15,21 @@
 
 use std::{
     collections::HashMap,
-    io::{self, Cursor, Seek},
-    mem::size_of,
+    fs::File,
+    io::{self, Cursor, Read},
     path::Path,
 };
 
-use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
-use dess_common::traits::{BinaryDeserialization, BinarySerialization};
-use four_cc::FourCC;
+use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
 use crate::{AssetBundle, AssetRef, MappedFile};
 
-pub const LOCAL_BUNDLE_ALIGN: u64 = 4096;
-pub const LOCAL_BUNDLE_MAGIC: FourCC = FourCC(*b"BNDL");
-pub const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
-pub const LOCAL_BUNDLE_DICT_SIZE: usize = 64536;
-pub const LOCAL_BUNDLE_DICT_USAGE_LIMIT: usize = LOCAL_BUNDLE_DICT_SIZE * 2;
+const LOCAL_BUNDLE_MAGIC: [u8; 4] = *b"BNDL";
+const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
+pub const ROOT_ASSET_PATH: &str = "assets";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Readable, Writable)]
 pub struct BundleDirectoryEntry {
     ty: Uuid,
     offset: u64,
@@ -52,38 +48,35 @@ impl BundleDirectoryEntry {
     }
 }
 
-impl BinarySerialization for BundleDirectoryEntry {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        self.ty.serialize(w)?;
-        w.write_u64::<LittleEndian>(self.offset)?;
-        w.write_u32::<LittleEndian>(self.size)?;
-        w.write_u32::<LittleEndian>(self.packed)?;
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for BundleDirectoryEntry {
-    fn deserialize(r: &mut impl std::io::Read) -> std::io::Result<Self> {
-        let ty = Uuid::deserialize(r)?;
-        let offset = r.read_u64::<LittleEndian>()?;
-        let size = r.read_u32::<LittleEndian>()?;
-        let packed = r.read_u32::<LittleEndian>()?;
-
-        Ok(Self {
-            ty,
-            offset,
-            size,
-            packed,
-        })
-    }
-}
-
 #[derive(Debug, Default)]
 pub struct LocalBundleDesc {
     assets: HashMap<AssetRef, BundleDirectoryEntry>,
     dependencies: HashMap<AssetRef, Vec<AssetRef>>,
     names: HashMap<String, AssetRef>,
+}
+
+impl<'a, C: Context> Readable<'a, C> for LocalBundleDesc {
+    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
+        reader
+            .read_value::<LocalBundleHeader>()
+            .map(|x| x.is_valid())?;
+        Ok(Self {
+            assets: reader.read_value()?,
+            dependencies: reader.read_value()?,
+            names: reader.read_value()?,
+        })
+    }
+}
+
+impl<C: Context> Writable<C> for LocalBundleDesc {
+    fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
+        writer.write_value(&LocalBundleHeader::default())?;
+        writer.write_value(&self.assets)?;
+        writer.write_value(&self.dependencies)?;
+        writer.write_value(&self.names)?;
+
+        Ok(())
+    }
 }
 
 impl LocalBundleDesc {
@@ -113,58 +106,36 @@ impl LocalBundleDesc {
     }
 }
 
-impl BinarySerialization for LocalBundleDesc {
-    fn serialize(&self, w: &mut impl std::io::Write) -> std::io::Result<()> {
-        self.assets.serialize(w)?;
-        self.dependencies.serialize(w)?;
-        self.names.serialize(w)?;
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for LocalBundleDesc {
-    fn deserialize(r: &mut impl std::io::Read) -> io::Result<Self> {
-        let assets = HashMap::deserialize(r)?;
-        let dependencies = HashMap::deserialize(r)?;
-        let names = HashMap::deserialize(r)?;
-
-        Ok(Self {
-            assets,
-            dependencies,
-            names,
-        })
-    }
-}
-
 pub struct LocalBundle {
     file: MappedFile,
     desc: LocalBundleDesc,
 }
 
 impl AssetBundle for LocalBundle {
-    fn asset_by_name(&self, name: &str) -> Option<AssetRef> {
+    fn get(&self, name: &str) -> Option<AssetRef> {
         self.desc.names.get(name).copied()
     }
 
-    fn load(&self, asset: AssetRef, expect_ty: Uuid) -> io::Result<Vec<u8>> {
+    fn load(&self, ty: Uuid, asset: AssetRef) -> io::Result<Vec<u8>> {
         let entry = self.desc.get_asset(asset).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Asset id {} isn't found", asset),
+            format!("Asset id {asset} isn't found"),
         ))?;
-        if entry.ty != expect_ty {
+        if entry.ty != ty {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Wrong asset type: expected {} got {}", expect_ty, entry.ty),
+                format!("Wrong asset type: expected {} got {}", ty, entry.ty),
             ));
         }
         let size = entry.size as usize;
         let packed = entry.packed as usize;
         let offset = entry.offset as usize;
-        let slice = &self.file.as_ref()[offset..offset + packed];
+        let slice = &self.file.data()[offset..offset + packed];
         if packed != size {
-            lz4_flex::decompress(slice, size)
-                .map_err(|x| io::Error::new(io::ErrorKind::InvalidData, x))
+            let mut result = vec![0u8; size];
+            let mut decoder = lz4_flex::frame::FrameDecoder::new(Cursor::new(slice));
+            decoder.read_exact(&mut result)?;
+            Ok(result)
         } else {
             Ok(Vec::from(slice))
         }
@@ -179,26 +150,36 @@ impl AssetBundle for LocalBundle {
     }
 }
 
-impl LocalBundle {
-    pub fn load(path: &Path) -> io::Result<Box<dyn AssetBundle>> {
-        let file = MappedFile::open(path)?;
-        let mut cursor = Cursor::new(file.as_ref());
-        let magic = FourCC::deserialize(&mut cursor)?;
-        if magic != LOCAL_BUNDLE_MAGIC {
-            return Err(io::Error::new(io::ErrorKind::Other, "Wrong bundle header"));
-        }
-        let version = cursor.read_u32::<LittleEndian>()?;
-        if version != LOCAL_BUNDLE_FILE_VERSION {
-            return Err(io::Error::new(io::ErrorKind::Other, "Wrong bundle version"));
-        }
-        cursor.seek(io::SeekFrom::End(0))?;
-        let size = cursor.stream_position()?;
-        cursor.seek(io::SeekFrom::Start(size - size_of::<u64>() as u64))?;
-        let offset = cursor.read_u64::<LittleEndian>()?;
-        cursor.seek(io::SeekFrom::Start(offset as _))?;
-        let desc = LocalBundleDesc::deserialize(&mut cursor)?;
+#[derive(Debug, Readable, Copy, Clone, Writable, PartialEq, Eq)]
+struct LocalBundleHeader {
+    pub magic: [u8; 4],
+    pub version: u32,
+}
 
-        Ok(Box::new(LocalBundle { file, desc }))
+impl LocalBundleHeader {
+    pub fn is_valid(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl Default for LocalBundleHeader {
+    fn default() -> Self {
+        Self {
+            magic: LOCAL_BUNDLE_MAGIC,
+            version: LOCAL_BUNDLE_FILE_VERSION,
+        }
+    }
+}
+
+impl LocalBundle {
+    pub fn load(name: &str) -> io::Result<Box<dyn AssetBundle>> {
+        let index_path = Path::new(ROOT_ASSET_PATH).join(format!("{name}.idx"));
+        let desc = LocalBundleDesc::read_from_stream_buffered(File::open(index_path)?)?;
+
+        Ok(Box::new(LocalBundle {
+            file: MappedFile::open(&Path::new(ROOT_ASSET_PATH).join(format!("{name}.bin")))?,
+            desc,
+        }))
     }
 }
 
@@ -206,7 +187,7 @@ impl LocalBundle {
 mod test {
     use std::io::Cursor;
 
-    use dess_common::traits::{BinaryDeserialization, BinarySerialization};
+    use speedy::{Readable, Writable};
     use uuid::Uuid;
 
     use crate::{AssetRef, BundleDirectoryEntry, LocalBundleDesc};
@@ -226,10 +207,10 @@ mod test {
         let mut target = Vec::<u8>::new();
         let mut writer = Cursor::new(&mut target);
 
-        desc.serialize(&mut writer).unwrap();
+        desc.write_to_stream(&mut writer).unwrap();
 
         let mut reader = Cursor::new(target);
-        let desc = LocalBundleDesc::deserialize(&mut reader).unwrap();
+        let desc = LocalBundleDesc::read_from_stream_buffered(&mut reader).unwrap();
         assert_eq!(Some(asset1), desc.get_by_name("abc"));
         assert_eq!(None, desc.get_by_name("fuck"));
         assert_eq!(Some(vec![asset2].as_ref()), desc.get_dependencies(asset1));

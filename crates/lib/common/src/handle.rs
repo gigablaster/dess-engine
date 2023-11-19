@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{hash::Hash, marker::PhantomData};
+use std::{fmt::Display, hash::Hash, marker::PhantomData};
 
 const DEFAULT_SPACE: usize = 4096;
 const GENERATION_BITS: u32 = 12;
@@ -98,15 +98,20 @@ impl<T, U> Default for Handle<T, U> {
     }
 }
 
+impl<T, U> Display for Handle<T, U> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "(idx: {} gen: {})", self.index(), self.generation())
+    }
+}
 #[derive(Debug)]
-pub struct HandleContainer<T, U> {
+pub struct Pool<T, U> {
     hot: Vec<Option<T>>,
     cold: Vec<Option<U>>,
     generations: Vec<u32>,
     empty: Vec<u32>,
 }
 
-impl<T, U> HandleContainer<T, U> {
+impl<T, U> Pool<T, U> {
     pub fn new() -> Self {
         Self {
             hot: Vec::with_capacity(DEFAULT_SPACE),
@@ -250,7 +255,7 @@ impl<T, U> HandleContainer<T, U> {
     }
 }
 
-impl<T, U> Default for HandleContainer<T, U> {
+impl<T, U> Default for Pool<T, U> {
     fn default() -> Self {
         Self::new()
     }
@@ -258,7 +263,7 @@ impl<T, U> Default for HandleContainer<T, U> {
 
 #[derive(Debug)]
 pub struct Iter<'a, T, U> {
-    container: &'a HandleContainer<T, U>,
+    container: &'a Pool<T, U>,
     current: usize,
 }
 
@@ -317,7 +322,7 @@ impl<T, U> Iterator for Drain<T, U> {
 
 #[cfg(test)]
 mod test {
-    use crate::{Handle, HandleContainer};
+    use crate::{Handle, Pool};
 
     #[test]
     fn handle() {
@@ -328,7 +333,7 @@ mod test {
 
     #[test]
     fn handle_container_push_get() {
-        let mut container = HandleContainer::<u32, i32>::new();
+        let mut container = Pool::<u32, i32>::new();
         let handle1 = container.push(1, -1);
         let handle2 = container.push(2, -2);
         let handle3 = container.push(3, -3);
@@ -341,7 +346,7 @@ mod test {
 
     #[test]
     fn reuse_slot() {
-        let mut container = HandleContainer::<u32, i32>::new();
+        let mut container = Pool::<u32, i32>::new();
         let handle = container.push(1, -1);
         container.remove(handle);
         let handle = container.push(2, -2);
@@ -352,7 +357,7 @@ mod test {
 
     #[test]
     fn old_handle_returns_none() {
-        let mut container = HandleContainer::<u32, i32>::new();
+        let mut container = Pool::<u32, i32>::new();
         let handle1 = container.push(1, -1);
         assert_eq!(Some((1, -1)), container.remove(handle1));
         let handle2 = container.push(2, -2);
@@ -362,7 +367,7 @@ mod test {
 
     #[test]
     fn mutate_by_handle() {
-        let mut container = HandleContainer::<u32, i32>::new();
+        let mut container = Pool::<u32, i32>::new();
         let handle = container.push(1, -1);
         assert_eq!(Some((&1, &-1)), container.get(handle));
         assert_eq!(Some((1, -1)), container.replace(handle, 2, -2));
@@ -374,14 +379,14 @@ mod test {
 
     #[test]
     fn iterate_empty() {
-        let container = HandleContainer::<u32, i32>::new();
+        let container = Pool::<u32, i32>::new();
         let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
         assert!(cont.is_empty());
     }
 
     #[test]
     fn iterate_full() {
-        let mut container = HandleContainer::<u32, i32>::new();
+        let mut container = Pool::<u32, i32>::new();
         container.push(1, -1);
         container.push(2, -2);
         container.push(3, -3);
@@ -391,7 +396,7 @@ mod test {
 
     #[test]
     fn iterate_hole() {
-        let mut container = HandleContainer::<u32, i32>::new();
+        let mut container = Pool::<u32, i32>::new();
         container.push(1, -1);
         let handle = container.push(2, -2);
         container.push(3, -3);
@@ -402,7 +407,7 @@ mod test {
 
     #[test]
     fn drain() {
-        let mut container = HandleContainer::<u32, i32>::new();
+        let mut container = Pool::<u32, i32>::new();
         container.push(1, -1);
         container.push(2, -2);
         container.push(3, -3);

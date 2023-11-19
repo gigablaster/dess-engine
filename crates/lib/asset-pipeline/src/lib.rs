@@ -17,28 +17,27 @@ use std::{
     collections::{HashMap, HashSet},
     env,
     fs::{self, File},
-    io::{self, BufReader, BufWriter, Read},
+    io::{self, BufWriter, Read},
     path::{Path, PathBuf},
 };
 
-use dess_assets::{Asset, AssetRef, GpuImage, GpuModel, GpuShader};
-use dess_common::traits::{BinaryDeserialization, BinarySerialization};
+use dess_assets::{AddressableAsset, Asset, AssetRef, EffectAsset, ImageAsset, ModelAsset};
 use log::info;
 use parking_lot::Mutex;
 
 mod bundler;
-mod compile_shaders;
-mod desc;
+pub mod desc;
 mod gltf_import;
 mod image_import;
+mod import_effect;
 mod pipeline;
 
 pub use bundler::*;
-pub use compile_shaders::*;
-pub use desc::*;
 pub use gltf_import::*;
 pub use image_import::*;
+pub use import_effect::*;
 pub use pipeline::*;
+use speedy::{Readable, Writable};
 use uuid::Uuid;
 
 #[derive(Debug)]
@@ -49,12 +48,19 @@ pub enum Error {
     WrongDependency,
     ProcessingFailed(String),
     BadSourceData,
+    Fail,
     Io(io::Error),
 }
 
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
         Error::Io(value)
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(value: serde_json::Error) -> Self {
+        Error::ImportFailed(value.to_string())
     }
 }
 
@@ -77,11 +83,11 @@ struct AssetProcessingContextImpl {
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
     /// Shaders that should be imported
-    shaders_to_process: HashMap<AssetRef, ShaderSource>,
+    shaders_to_process: HashMap<AssetRef, EffectSource>,
     /// Hashes for all inline assets, to catch and reuse same resources
     assets: HashSet<AssetInfo>,
     /// Asset ownership. Every asset have source, direct or indirect.
-    owners: HashMap<AssetRef, PathBuf>,
+    owners: HashMap<AssetRef, String>,
     /// Asset dependencies
     dependencies: HashMap<AssetRef, HashSet<AssetRef>>,
 }
@@ -117,7 +123,7 @@ impl AssetProcessingContextImpl {
             let asset = AssetRef::from_path(&model.path);
             self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model.clone());
-            self.assets.insert(AssetInfo::new::<GpuModel>(asset));
+            self.assets.insert(AssetInfo::new::<ModelAsset>(asset));
             self.add_source(asset, &path);
 
             asset
@@ -135,7 +141,7 @@ impl AssetProcessingContextImpl {
                     info!("Requested image import {:?} ref: {}", path, asset);
                     self.images.insert(path.clone(), asset);
                     self.images_to_process.insert(asset, image.clone());
-                    self.assets.insert(AssetInfo::new::<GpuImage>(asset));
+                    self.assets.insert(AssetInfo::new::<ImageAsset>(asset));
                     let owner = owner.unwrap_or(&path);
                     self.add_source(asset, owner);
 
@@ -144,14 +150,14 @@ impl AssetProcessingContextImpl {
             }
             ImageDataSource::Bytes(bytes) => {
                 let asset = AssetRef::from_bytes(bytes);
-                if self.assets.contains(&AssetInfo::new::<GpuImage>(asset)) {
+                if self.assets.contains(&AssetInfo::new::<ImageAsset>(asset)) {
                     asset
                 } else {
                     let owner =
                         get_relative_asset_path(owner.expect("Can't add image without owner"))
                             .unwrap();
                     info!("Added image from blob ref {} owner {:?}", asset, owner);
-                    self.assets.insert(AssetInfo::new::<GpuImage>(asset));
+                    self.assets.insert(AssetInfo::new::<ImageAsset>(asset));
                     self.images_to_process.insert(asset, image.clone());
                     self.add_source(asset, &owner);
 
@@ -160,14 +166,14 @@ impl AssetProcessingContextImpl {
             }
             ImageDataSource::Placeholder(value) => {
                 let asset = AssetRef::from_bytes_with(value, &image.purpose);
-                if self.assets.contains(&AssetInfo::new::<GpuImage>(asset)) {
+                if self.assets.contains(&AssetInfo::new::<ImageAsset>(asset)) {
                     asset
                 } else {
                     let owner =
                         get_relative_asset_path(owner.expect("Can't add image without owner"))
                             .unwrap();
                     info!("Added image placeholder {} owner {:?}", asset, owner);
-                    self.assets.insert(AssetInfo::new::<GpuImage>(asset));
+                    self.assets.insert(AssetInfo::new::<ImageAsset>(asset));
                     self.images_to_process.insert(asset, image.clone());
                     self.add_source(asset, &owner);
 
@@ -177,15 +183,15 @@ impl AssetProcessingContextImpl {
         }
     }
 
-    pub fn import_shader(&mut self, shader: &ShaderSource) -> AssetRef {
-        let path = get_relative_asset_path(&shader.path).unwrap();
+    pub fn import_effect(&mut self, effect: &EffectSource) -> AssetRef {
+        let path = get_relative_asset_path(&effect.path).unwrap();
         if let Some(asset) = self.shaders.get(&path) {
             *asset
         } else {
             let asset = AssetRef::from_path(&path);
-            info!("Requested shader import {:?} ref: {}", shader, asset);
-            self.assets.insert(AssetInfo::new::<GpuShader>(asset));
-            self.shaders_to_process.insert(asset, shader.clone());
+            info!("Requested effect import {:?} ref: {}", effect, asset);
+            self.assets.insert(AssetInfo::new::<EffectAsset>(asset));
+            self.shaders_to_process.insert(asset, effect.clone());
             self.add_source(asset, &path);
 
             asset
@@ -212,7 +218,7 @@ impl AssetProcessingContextImpl {
         self.images_to_process.drain().collect()
     }
 
-    pub fn drain_shaders_to_process(&mut self) -> Vec<(AssetRef, ShaderSource)> {
+    pub fn drain_shaders_to_process(&mut self) -> Vec<(AssetRef, EffectSource)> {
         self.shaders_to_process.drain().collect()
     }
 
@@ -228,11 +234,12 @@ impl AssetProcessingContextImpl {
     }
 
     pub fn get_owner(&self, asset: AssetRef) -> Option<PathBuf> {
-        self.owners.get(&asset).cloned()
+        self.owners.get(&asset).map(|x| Path::new(x).to_owned())
     }
 
     pub fn add_source(&mut self, asset: AssetRef, owner: &Path) {
-        self.owners.insert(asset, owner.into());
+        self.owners
+            .insert(asset, owner.to_str().unwrap().to_owned());
     }
 
     pub fn get_model_id(&self, path: &Path) -> Option<AssetRef> {
@@ -274,8 +281,8 @@ impl AssetProcessingContext {
         self.inner.lock().import_image(image, owner)
     }
 
-    pub fn import_shader(&self, shader: &ShaderSource) -> AssetRef {
-        self.inner.lock().import_shader(shader)
+    pub fn import_effect(&self, effect: &EffectSource) -> AssetRef {
+        self.inner.lock().import_effect(effect)
     }
 
     pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
@@ -286,7 +293,7 @@ impl AssetProcessingContext {
         self.inner.lock().drain_images_to_process()
     }
 
-    pub fn drain_shaders_to_process(&self) -> Vec<(AssetRef, ShaderSource)> {
+    pub fn drain_effects_to_process(&self) -> Vec<(AssetRef, EffectSource)> {
         self.inner.lock().drain_shaders_to_process()
     }
 
@@ -375,19 +382,18 @@ fn cached_asset_path(asset: AssetRef) -> PathBuf {
     Path::new(ASSET_CACHE_PATH).join(Path::new(&format!("{}.bin", asset)))
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Readable, Writable)]
 pub struct AssetDatabase {
     pub assets: HashSet<AssetInfo>,
     pub dependencies: HashMap<AssetRef, HashSet<AssetRef>>,
     pub names: HashMap<String, AssetRef>,
-    pub owners: HashMap<AssetRef, PathBuf>,
+    pub owners: HashMap<AssetRef, String>,
 }
 
 impl AssetDatabase {
     pub fn try_load(name: &str) -> Option<AssetDatabase> {
         if let Ok(file) = File::open(Path::new(ASSET_CACHE_PATH).join(format!("{}.db", name))) {
-            let mut buf = BufReader::new(&file);
-            if let Ok(database) = AssetDatabase::deserialize(&mut buf) {
+            if let Ok(database) = AssetDatabase::read_from_stream_buffered(file) {
                 return Some(database);
             }
         }
@@ -395,68 +401,23 @@ impl AssetDatabase {
     }
 
     pub fn save(&self, name: &str) -> io::Result<()> {
-        self.serialize(&mut BufWriter::new(File::create(
+        Ok(self.write_to_stream(&mut BufWriter::new(File::create(
             Path::new(ASSET_CACHE_PATH).join(format!("{}.db", name)),
-        )?))
+        )?))?)
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Readable, Writable)]
 pub struct AssetInfo {
     pub asset: AssetRef,
     pub ty: Uuid,
 }
 
 impl AssetInfo {
-    pub fn new<T: Asset>(asset: AssetRef) -> Self {
+    pub fn new<T: AddressableAsset>(asset: AssetRef) -> Self {
         Self {
             asset,
             ty: T::TYPE_ID,
         }
-    }
-}
-
-impl BinaryDeserialization for AssetInfo {
-    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
-        Ok(Self {
-            asset: AssetRef::deserialize(r)?,
-            ty: Uuid::deserialize(r)?,
-        })
-    }
-}
-
-impl BinarySerialization for AssetInfo {
-    fn serialize(&self, w: &mut impl io::Write) -> io::Result<()> {
-        self.asset.serialize(w)?;
-        self.ty.serialize(w)?;
-
-        Ok(())
-    }
-}
-
-impl BinaryDeserialization for AssetDatabase {
-    fn deserialize(r: &mut impl Read) -> io::Result<Self> {
-        let assets = HashSet::deserialize(r)?;
-        let dependencies = HashMap::deserialize(r)?;
-        let names = HashMap::deserialize(r)?;
-        let owners = HashMap::deserialize(r)?;
-
-        Ok(Self {
-            assets,
-            dependencies,
-            names,
-            owners,
-        })
-    }
-}
-
-impl BinarySerialization for AssetDatabase {
-    fn serialize(&self, w: &mut impl io::Write) -> io::Result<()> {
-        self.assets.serialize(w)?;
-        self.dependencies.serialize(w)?;
-        self.names.serialize(w)?;
-        self.owners.serialize(w)?;
-
-        Ok(())
     }
 }

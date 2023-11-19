@@ -13,44 +13,67 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{hash::Hash, ptr::NonNull, sync::Arc};
+use ash::vk;
+use dess_common::{Handle, Pool};
+use parking_lot::{Mutex, RwLock};
 
-use ash::vk::{self, BufferCreateInfo, Handle};
-use gpu_alloc::{Dedicated, Request, UsageFlags};
-use gpu_alloc_ash::AshMemoryDevice;
-use vk_sync::AccessType;
+use crate::{BackendError, BackendResult};
 
-use crate::BackendError;
+use super::{
+    BufferHandle, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop,
+};
 
-use super::{Device, GpuMemory, MemoryAllocationInfo};
-
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferDesc {
     pub size: usize,
     pub usage: vk::BufferUsageFlags,
-    pub memory_location: UsageFlags,
-    pub alignment: Option<u64>,
-    pub dedicated: bool,
 }
 
-impl BufferDesc {
-    pub fn gpu_only(size: usize, usage: vk::BufferUsageFlags) -> Self {
+pub struct Buffer {
+    pub(crate) raw: vk::Buffer,
+    pub desc: BufferDesc,
+    pub(crate) memory: Option<GpuMemory>,
+}
+
+impl ToDrop for Buffer {
+    fn to_drop(&mut self, drop_list: &mut DropList) {
+        if let Some(memory) = self.memory.take() {
+            drop_list.free_memory(memory);
+            drop_list.drop_buffer(self.raw);
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct BufferCreateDesc<'a> {
+    pub size: usize,
+    pub usage: vk::BufferUsageFlags,
+    pub memory_location: gpu_alloc::UsageFlags,
+    pub alignment: Option<u64>,
+    pub dedicated: bool,
+    pub name: Option<&'a str>,
+}
+
+impl<'a> BufferCreateDesc<'a> {
+    pub fn gpu(size: usize, usage: vk::BufferUsageFlags) -> Self {
         Self {
             size,
             usage,
-            memory_location: UsageFlags::FAST_DEVICE_ACCESS,
+            memory_location: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
             dedicated: false,
+            name: None,
         }
     }
 
-    pub fn host_only(size: usize, usage: vk::BufferUsageFlags) -> Self {
+    pub fn host(size: usize, usage: vk::BufferUsageFlags) -> Self {
         Self {
             size,
             usage,
-            memory_location: UsageFlags::HOST_ACCESS,
+            memory_location: gpu_alloc::UsageFlags::HOST_ACCESS,
             alignment: None,
             dedicated: false,
+            name: None,
         }
     }
 
@@ -58,9 +81,10 @@ impl BufferDesc {
         Self {
             size,
             usage,
-            memory_location: UsageFlags::UPLOAD,
+            memory_location: gpu_alloc::UsageFlags::UPLOAD,
             alignment: None,
             dedicated: false,
+            name: None,
         }
     }
 
@@ -68,9 +92,11 @@ impl BufferDesc {
         Self {
             size,
             usage,
-            memory_location: UsageFlags::HOST_ACCESS | UsageFlags::FAST_DEVICE_ACCESS,
+            memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
+                | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
-            dedicated: false,
+            dedicated: true,
+            name: None,
         }
     }
 
@@ -83,159 +109,78 @@ impl BufferDesc {
         self.dedicated = value;
         self
     }
-}
 
-#[derive(Debug)]
-pub struct Buffer {
-    device: Arc<Device>,
-    raw: vk::Buffer,
-    desc: BufferDesc,
-    allocation: Option<GpuMemory>,
-    access: Vec<AccessType>,
-}
+    pub fn name(mut self, value: &'a str) -> Self {
+        self.name = Some(value);
+        self
+    }
 
-impl Hash for Buffer {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        state.write_u64(self.raw.as_raw());
+    pub fn build(&self) -> vk::BufferCreateInfo {
+        vk::BufferCreateInfo::builder()
+            .usage(self.usage)
+            .size(self.size as _)
+            .build()
     }
 }
 
-impl PartialEq for Buffer {
-    fn eq(&self, other: &Self) -> bool {
-        self.raw == other.raw
+impl Device {
+    pub fn create_buffer(&self, desc: BufferCreateDesc) -> BackendResult<BufferHandle> {
+        let buffer =
+            Self::create_buffer_impl(&self.instance, &self.raw, &self.memory_allocator, desc)?;
+        Ok(self.buffer_storage.write().push(buffer.raw, buffer))
     }
-}
 
-impl Eq for Buffer {}
+    pub fn destroy_buffer(&self, handle: BufferHandle) {
+        self.destroy_resource(handle, &self.buffer_storage);
+    }
 
-unsafe impl Send for Buffer {}
+    pub fn destroy_image(&self, handle: ImageHandle) {
+        self.destroy_resource(handle, &self.image_storage);
+    }
 
-impl Buffer {
-    pub fn new(device: &Arc<Device>, desc: BufferDesc) -> Result<Self, BackendError> {
-        let buffer_create_info = BufferCreateInfo::builder()
-            .size(desc.size as _)
-            .usage(desc.usage)
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(&[device.queue_family_index()])
-            .build();
-        let buffer = unsafe { device.raw().create_buffer(&buffer_create_info, None) }?;
-        let requirement = unsafe { device.raw().get_buffer_memory_requirements(buffer) };
-        let aligment = if let Some(aligment) = desc.alignment {
-            aligment.max(requirement.alignment)
-        } else {
-            requirement.alignment
-        };
-        let request = Request {
-            size: requirement.size,
-            align_mask: aligment,
-            memory_types: requirement.memory_type_bits,
-            usage: desc.memory_location,
-        };
-        let allocation = if desc.dedicated {
-            unsafe {
-                device.allocator().alloc_with_dedicated(
-                    AshMemoryDevice::wrap(device.raw()),
-                    request,
-                    Dedicated::Required,
-                )
-            }?
-        } else {
-            unsafe {
-                device
-                    .allocator()
-                    .alloc(AshMemoryDevice::wrap(device.raw()), request)
-            }?
-        };
-        unsafe {
-            device
-                .raw()
-                .bind_buffer_memory(buffer, *allocation.memory(), allocation.offset())
-        }?;
+    fn destroy_resource<T, U: ToDrop>(&self, handle: Handle<T, U>, storage: &RwLock<Pool<T, U>>) {
+        let item: Option<(T, U)> = storage.write().remove(handle);
+        if let Some((_, mut item)) = item {
+            item.to_drop(&mut self.current_drop_list.lock());
+        }
+    }
 
-        Ok(Self {
-            access: Self::create_access_type(&desc),
-            device: device.clone(),
+    pub fn get_buffer_desc(&self, handle: BufferHandle) -> BackendResult<BufferDesc> {
+        Ok(self
+            .buffer_storage
+            .read()
+            .get(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .1
+            .desc)
+    }
+
+    fn create_buffer_impl(
+        instance: &Instance,
+        device: &ash::Device,
+        allocator: &Mutex<GpuAllocator>,
+        desc: BufferCreateDesc,
+    ) -> BackendResult<Buffer> {
+        let buffer = unsafe { device.create_buffer(&desc.build(), None) }?;
+        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
+        let memory = Self::allocate_impl(
+            device,
+            &mut allocator.lock(),
+            requirements,
+            desc.memory_location,
+            desc.dedicated,
+        )?;
+        unsafe { device.bind_buffer_memory(buffer, *memory.memory(), memory.offset()) }?;
+        if let Some(name) = desc.name {
+            Self::set_object_name_impl(instance, device, buffer, name);
+        }
+        Ok(Buffer {
             raw: buffer,
-            desc,
-            allocation: Some(allocation),
+            desc: BufferDesc {
+                size: desc.size,
+                usage: desc.usage,
+            },
+            memory: Some(memory),
         })
-    }
-
-    fn create_access_type(desc: &BufferDesc) -> Vec<AccessType> {
-        let mut flags = Vec::new();
-        if desc.usage.contains(vk::BufferUsageFlags::VERTEX_BUFFER) {
-            flags.push(AccessType::VertexBuffer);
-        }
-        if desc.usage.contains(vk::BufferUsageFlags::INDEX_BUFFER) {
-            flags.push(AccessType::IndexBuffer);
-        }
-        if desc.usage.contains(vk::BufferUsageFlags::UNIFORM_BUFFER) {
-            flags.push(AccessType::AnyShaderReadUniformBuffer);
-        }
-        if desc.usage.contains(vk::BufferUsageFlags::INDIRECT_BUFFER) {
-            flags.push(AccessType::IndirectBuffer);
-        }
-        if desc.usage.contains(vk::BufferUsageFlags::TRANSFER_DST) {
-            flags.push(AccessType::TransferWrite);
-        }
-        if desc.usage.contains(vk::BufferUsageFlags::TRANSFER_SRC) {
-            flags.push(AccessType::TransferRead);
-        }
-
-        flags
-    }
-
-    pub fn access_type(&self) -> &[AccessType] {
-        &self.access
-    }
-
-    pub fn map(&mut self) -> Result<NonNull<u8>, BackendError> {
-        if let Some(allocation) = &mut self.allocation {
-            let ptr = unsafe {
-                allocation.map(AshMemoryDevice::wrap(self.device.raw()), 0, self.desc.size)
-            }?
-            .as_ptr();
-
-            Ok(NonNull::new(ptr).unwrap())
-        } else {
-            panic!("Buffer is already retired");
-        }
-    }
-
-    pub fn unmap(&mut self) {
-        if let Some(allocation) = &mut self.allocation {
-            unsafe { allocation.unmap(AshMemoryDevice::wrap(self.device.raw())) };
-        }
-    }
-
-    pub fn desc(&self) -> &BufferDesc {
-        &self.desc
-    }
-
-    pub fn raw(&self) -> vk::Buffer {
-        self.raw
-    }
-
-    pub fn name(&self, name: &str) {
-        self.device.set_object_name(self.raw, name);
-    }
-
-    pub fn allocation_info(&self) -> Option<MemoryAllocationInfo> {
-        self.allocation.as_ref().map(|memory| MemoryAllocationInfo {
-            memory: memory.memory(),
-            offset: memory.offset(),
-            size: memory.size(),
-            flags: memory.props(),
-        })
-    }
-}
-
-impl Drop for Buffer {
-    fn drop(&mut self) {
-        let mut drop_list = self.device.drop_list();
-        drop_list.drop_buffer(self.raw);
-        if let Some(allocation) = self.allocation.take() {
-            drop_list.free_memory(allocation);
-        }
     }
 }

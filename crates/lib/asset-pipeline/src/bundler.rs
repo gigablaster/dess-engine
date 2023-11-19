@@ -19,24 +19,21 @@ use std::{
     path::Path,
 };
 
-use byteorder::{LittleEndian, WriteBytesExt};
-use dess_assets::{
-    LocalBundleDesc, LOCAL_BUNDLE_ALIGN, LOCAL_BUNDLE_FILE_VERSION, LOCAL_BUNDLE_MAGIC,
-};
-use dess_common::traits::BinarySerialization;
+use dess_assets::{LocalBundleDesc, ROOT_ASSET_PATH};
 use log::{error, info};
+use speedy::Writable;
 
 use crate::{cached_asset_path, read_to_end, AssetProcessingContext};
+
+const LOCAL_BUNDLE_ALIGN: u64 = 4096;
 
 /// Builds local asset bundle
 ///
 /// Doesn't do processing work, just collect already processed files and put them
 /// in bundle in sorted way.
-pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Result<()> {
-    let mut target = File::create(target)?;
+pub fn build_bundle(context: AssetProcessingContext, name: &str) -> io::Result<()> {
+    let mut target = File::create(Path::new(ROOT_ASSET_PATH).join(format!("{name}.bin")))?;
     let mut desc = LocalBundleDesc::default();
-    LOCAL_BUNDLE_MAGIC.serialize(&mut target)?;
-    LOCAL_BUNDLE_FILE_VERSION.serialize(&mut target)?;
     let all_assets = context.all_assets();
     for info in all_assets {
         let src_path = cached_asset_path(info.asset);
@@ -45,7 +42,9 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
             let size = data.len() as u32;
             let data = if size >= LOCAL_BUNDLE_ALIGN as u32 {
                 info!("Compress {}", info.asset);
-                lz4_flex::compress(&data)
+                let mut encoder = lz4_flex::frame::FrameEncoder::new(Vec::new());
+                encoder.write_all(&data)?;
+                encoder.finish()?
             } else {
                 info!("Write small asset {}", info.asset);
                 data
@@ -64,15 +63,18 @@ pub fn build_bundle(context: AssetProcessingContext, target: &Path) -> io::Resul
         .all_names()
         .iter()
         .for_each(|(name, asset)| desc.set_name(*asset, name));
-    let offset = try_align(&mut target)?;
-    desc.serialize(&mut target)?;
-    target.write_u64::<LittleEndian>(offset)?;
+    desc.write_to_stream(File::create(
+        Path::new(ROOT_ASSET_PATH).join(format!("{name}.idx")),
+    )?)?;
 
     Ok(())
 }
 
 fn try_align<W: Seek>(w: &mut W) -> io::Result<u64> {
     let offset = w.stream_position()?;
+    if offset == 0 {
+        return Ok(0);
+    }
     let offset_align = (offset & !(LOCAL_BUNDLE_ALIGN - 1)) + LOCAL_BUNDLE_ALIGN;
 
     // Align if possible, current position if not.

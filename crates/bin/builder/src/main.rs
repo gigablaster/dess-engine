@@ -5,20 +5,17 @@ use std::{
 };
 
 use clap::{Arg, ArgAction};
-use dess_asset_pipeline::{AssetPipeline, BundleDesc, BundledAsset, BUNDLE_DESC_PATH};
-use dess_assets::GpuShaderStage;
+use dess_asset_pipeline::{
+    desc::{BundleDesc, BundledAsset},
+    AssetPipeline, BUNDLE_DESC_PATH,
+};
 use log::info;
 use serde_json::from_str;
 
 fn process_assets(pipeline: &AssetPipeline, desc: &BundleDesc) -> Result<(), io::Error> {
     for (name, asset) in desc.assets() {
         let asset = match asset {
-            BundledAsset::Shader(shader) => match shader.ty {
-                GpuShaderStage::Vertex => pipeline.import_vertex_shader(Path::new(&shader.source)),
-                GpuShaderStage::Fragment => {
-                    pipeline.import_fragment_shader(Path::new(&shader.source))
-                }
-            },
+            BundledAsset::Effect(path) => pipeline.import_effect(Path::new(&path)),
             BundledAsset::Model(path) => pipeline.import_model(Path::new(&path)),
             BundledAsset::Image(image) => {
                 pipeline.import_image(Path::new(&image.source), image.purpose)
@@ -49,7 +46,7 @@ fn build_bundle(path: &Path, pack: bool) -> io::Result<()> {
 
     if pack {
         info!("======= Pack bundle \"{}\"", desc.name());
-        pipeline.bundle(Path::new(&format!("{}.bundle", desc.name())))?
+        pipeline.bundle(desc.name())?
     }
 
     Ok(())
@@ -71,7 +68,7 @@ fn main() {
     let args = clap::Command::new("builder")
         .version("0.1.0")
         .author("gigablaster")
-        .about("Asset builder for dess engine")
+        .about("Asset builder for kiri engine")
         .arg(
             Arg::new("bundle")
                 .long("bundle")

@@ -101,7 +101,7 @@ version = "0.37.3+1.3.251"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39e9c3835d686b0a6084ab4234fcd1b07dbf6e4767dce60874b12356a25ecd4a"
 dependencies = [
- "libloading 0.7.4",
+ "libloading",
 ]
 
 [[package]]
@@ -375,6 +375,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam"
+version = "0.8.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2801af0d36612ae591caa9568261fddce32ce6e08a7275ea334a06a4ad021a2c"
+dependencies = [
+ "cfg-if",
+ "crossbeam-channel",
+ "crossbeam-deque",
+ "crossbeam-epoch",
+ "crossbeam-queue",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-channel"
+version = "0.5.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a33c2bf77f2df06183c3aa30d1e96c0695a313d4f9c453cc3762a6db39f99200"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-deque"
 version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -394,8 +418,18 @@ dependencies = [
  "autocfg",
  "cfg-if",
  "crossbeam-utils",
- "memoffset",
+ "memoffset 0.9.0",
  "scopeguard",
+]
+
+[[package]]
+name = "crossbeam-queue"
+version = "0.3.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d1cfb3ea8a53f37c40dea2c7bedcbd88bdfae54f5e2175d6ecaff1c988353add"
+dependencies = [
+ "cfg-if",
+ "crossbeam-utils",
 ]
 
 [[package]]
@@ -434,7 +468,6 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "byte-slice-cast",
- "byteorder",
  "bytes",
  "ddsfile",
  "dess-assets",
@@ -454,8 +487,10 @@ dependencies = [
  "parking_lot",
  "rayon",
  "serde",
+ "serde_json",
  "shader-prepper",
  "siphasher",
+ "speedy",
  "spirv-tools",
  "uuid",
 ]
@@ -469,11 +504,11 @@ dependencies = [
  "bytes",
  "dess-common",
  "four-cc",
- "glam 0.24.2",
  "lz4_flex",
  "memmap2",
  "serde",
  "siphasher",
+ "speedy",
  "uuid",
 ]
 
@@ -485,10 +520,9 @@ dependencies = [
  "ash",
  "ash-window",
  "byte-slice-cast",
- "byteorder",
+ "crossbeam",
  "dess-common",
  "directories",
- "four-cc",
  "gpu-alloc",
  "gpu-alloc-ash",
  "gpu-descriptor",
@@ -500,8 +534,8 @@ dependencies = [
  "rayon",
  "rspirv-reflect",
  "siphasher",
+ "speedy",
  "uuid",
- "vk-sync",
 ]
 
 [[package]]
@@ -509,11 +543,6 @@ name = "dess-common"
 version = "0.1.0"
 dependencies = [
  "arrayvec",
- "byteorder",
- "four-cc",
- "glam 0.24.2",
- "log",
- "uuid",
 ]
 
 [[package]]
@@ -803,7 +832,7 @@ dependencies = [
  "bitflags 2.4.1",
  "com",
  "libc",
- "libloading 0.8.1",
+ "libloading",
  "thiserror",
  "widestring",
  "winapi",
@@ -911,16 +940,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "libloading"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c571b676ddfc9a8c12f1f3d3085a7b163966a8fd8098a90640953ce5f6170161"
-dependencies = [
- "cfg-if",
- "windows-sys 0.48.0",
-]
-
-[[package]]
 name = "libredox"
 version = "0.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -984,6 +1003,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "deaba38d7abf1d4cca21cc89e932e542ba2b9258664d2a9ef0e61512039c9375"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "memoffset"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d61c719bcfbcf5d62b3a09efa6088de8c54bc0bfcd3ea7ae39fcc186108b8de1"
+dependencies = [
+ "autocfg",
 ]
 
 [[package]]
@@ -1369,6 +1397,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4dccd0940a2dcdf68d092b8cbab7dc0ad8fa938bf95787e1b916b0e3d0e8e970"
 
 [[package]]
+name = "speedy"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7642861d1a1569b105c57008df95fb12ba648f7f90358f46e99bdfbf26729b84"
+dependencies = [
+ "memoffset 0.8.0",
+ "speedy-derive",
+ "uuid",
+]
+
+[[package]]
+name = "speedy-derive"
+version = "0.8.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d395866cb6778625150f77a430cc0af764ce0300f6a3d3413477785fa34b6c7"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.39",
+]
+
+[[package]]
 name = "spirv"
 version = "0.2.0+1.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1564,14 +1614,6 @@ name = "version_check"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "49874b5167b65d7193b8aba1567f5c7d93d001cafc34600cee003eda787e483f"
-
-[[package]]
-name = "vk-sync"
-version = "0.1.6"
-source = "git+https://git.sr.ht/~gigablaster/vk-sync-rs#6512dc39a53c1e3aed88b6e59e767785be076f4c"
-dependencies = [
- "ash",
-]
 
 [[package]]
 name = "wasi"
