@@ -29,6 +29,7 @@ pub struct BufferDesc {
     pub usage: vk::BufferUsageFlags,
 }
 
+#[derive(Debug)]
 pub struct Buffer {
     pub(crate) raw: vk::Buffer,
     pub desc: BufferDesc,

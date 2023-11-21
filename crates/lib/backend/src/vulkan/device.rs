@@ -42,7 +42,22 @@ pub type ImageHandle = Handle<vk::Image, Image>;
 pub type BufferHandle = Handle<vk::Buffer, Buffer>;
 pub type ProgramHandle = Index<Program>;
 pub type PipelineHandle = Index<(vk::Pipeline, vk::PipelineLayout)>;
-pub struct BufferSlice(BufferHandle, u32);
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct BufferSlice {
+    pub buffer: BufferHandle,
+    pub offset: u32,
+}
+
+impl BufferSlice {
+    pub fn new(buffer: BufferHandle, offset: u32) -> Self {
+        Self { buffer, offset }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.buffer.is_valid()
+    }
+}
 
 pub(crate) type ImageStorage = Pool<vk::Image, Image>;
 pub(crate) type BufferStorage = Pool<vk::Buffer, Buffer>;

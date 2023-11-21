@@ -65,4 +65,26 @@ impl<T> Index<T> {
     pub fn index(&self) -> usize {
         self.0 as usize
     }
+
+    pub fn is_valid(&self) -> bool {
+        self.0 != u32::MAX
+    }
+}
+
+impl<T> Default for Index<T> {
+    fn default() -> Self {
+        Self(u32::MAX, PhantomData)
+    }
+}
+
+impl<T> From<Index<T>> for u32 {
+    fn from(value: Index<T>) -> Self {
+        value.0
+    }
+}
+
+impl<T> From<u32> for Index<T> {
+    fn from(value: u32) -> Self {
+        Index(value, PhantomData)
+    }
 }
