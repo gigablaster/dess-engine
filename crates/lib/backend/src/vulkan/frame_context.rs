@@ -19,8 +19,8 @@ use ash::vk::{self};
 use crate::{BackendError, BackendResult, DrawStream};
 
 use super::{
-    frame::Frame, BufferHandle, BufferStorage, DescriptorHandle, DescriptorStorage, Device,
-    ImageHandle, ImageStorage, ImageViewDesc, PipelineHandle, PipelineStorage,
+    frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorHandle, DescriptorStorage,
+    Device, ImageHandle, ImageStorage, ImageViewDesc, PipelineHandle, PipelineStorage,
 };
 
 pub struct RenderAttachment {
@@ -80,6 +80,7 @@ pub struct FrameContext<'a> {
     pub(crate) buffers: &'a BufferStorage,
     pub(crate) descriptors: &'a DescriptorStorage,
     pub(crate) pipelins: &'a PipelineStorage,
+    pub(crate) temp_buffer_handle: BufferHandle,
 }
 
 pub struct RenderContext<'a> {
@@ -99,6 +100,11 @@ impl<'a> FrameContext<'a> {
         }?;
 
         Ok(RenderContext { frame: self })
+    }
+
+    pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
+        let offset = self.frame.temp_allocate(data)?;
+        Ok(BufferSlice::new(self.temp_buffer_handle, offset))
     }
 }
 

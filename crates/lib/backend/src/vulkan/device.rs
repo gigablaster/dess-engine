@@ -29,7 +29,8 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{mem, slice, thread};
 
-use crate::vulkan::ImageViewDesc;
+use crate::vulkan::frame::MAX_TEMP_MEMORY;
+use crate::vulkan::{BufferDesc, ImageViewDesc};
 use crate::{BackendError, BackendResult};
 
 use super::pipeline_cache::{load_or_create_pipeline_cache, save_pipeline_cache};
@@ -383,26 +384,39 @@ impl Device {
     ) -> BackendResult<FrameResult> {
         puffin::profile_function!();
         // Sync compiled pipelines
-        let mut pipelines = self.pipelines.write();
-        self.pipeline_compiled_receiver
-            .iter()
-            .for_each(|(index, pipeline, layout)| {
-                pipelines[index.index()] = (pipeline, layout);
-                self.pipelines_in_fly.fetch_sub(1, Ordering::SeqCst);
-            });
+        {
+            let mut pipelines = self.pipelines.write();
+            self.pipeline_compiled_receiver
+                .iter()
+                .for_each(|(index, pipeline, layout)| {
+                    pipelines[index.index()] = (pipeline, layout);
+                    self.pipelines_in_fly.fetch_sub(1, Ordering::SeqCst);
+                });
+        }
 
-        // Upload staging
+        // Upload staging and descriptor sets
         let staging_semaphore = self.staging.lock().upload(self)?;
+        self.update_descriptor_sets()?;
 
         let backbuffer = match swapchain.acquire_next_image()? {
             crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
             crate::vulkan::AcquiredSurface::Image(image) => image,
         };
-
-        // Update descriptor sets
-        self.update_descriptor_sets()?;
-
         let frame = self.begin_frame()?;
+        let temp_buffer_handle = self.buffer_storage.write().push(
+            frame.temp_buffer,
+            Buffer {
+                raw: frame.temp_buffer,
+                desc: BufferDesc {
+                    size: MAX_TEMP_MEMORY as usize,
+                    usage: vk::BufferUsageFlags::VERTEX_BUFFER
+                        | vk::BufferUsageFlags::INDEX_BUFFER
+                        | vk::BufferUsageFlags::UNIFORM_BUFFER,
+                },
+                memory: None,
+            },
+        );
+
         let context = FrameContext {
             device: self,
             frame: &frame,
@@ -410,6 +424,7 @@ impl Device {
             buffers: &self.buffer_storage.read(),
             descriptors: &self.descriptor_storage.read(),
             pipelins: &self.pipelines.read(),
+            temp_buffer_handle,
         };
         frame_fn(
             context,
@@ -418,6 +433,7 @@ impl Device {
                 .get_or_create_view(&self.raw, ImageViewDesc::default())?,
             vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
         )?;
+        self.buffer_storage.write().remove(temp_buffer_handle);
         self.submit(
             frame.main_cb.raw,
             &[
@@ -441,7 +457,7 @@ impl Device {
             )?;
             let barrier = vk::ImageMemoryBarrier2::builder()
                 .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
                 .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
                 .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
                 .src_queue_family_index(self.queue_familt_index)

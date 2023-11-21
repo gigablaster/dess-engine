@@ -29,7 +29,7 @@ use super::{
     CommandBuffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, UniformStorage,
 };
 
-const MAX_TEMP_MEMORY: u32 = 16 * 1024 * 1024;
+pub(crate) const MAX_TEMP_MEMORY: u32 = 16 * 1024 * 1024;
 const ALIGMENT: u32 = 256;
 
 pub struct Frame {
@@ -37,7 +37,7 @@ pub struct Frame {
     pub(crate) main_cb: CommandBuffer,
     pub(crate) present_cb: CommandBuffer,
     pub(crate) finished: vk::Semaphore,
-    pub(crate) _temp_buffer: vk::Buffer,
+    pub(crate) temp_buffer: vk::Buffer,
     pub(crate) temp_mapping: NonNull<u8>,
     pub(crate) temp_memory: Option<GpuMemory>,
     pub(crate) temp_top: AtomicU32,
@@ -91,7 +91,7 @@ impl Frame {
                 main_cb: CommandBuffer::primary(device, pool)?,
                 present_cb: CommandBuffer::primary(device, pool)?,
                 finished,
-                _temp_buffer: temp_buffer,
+                temp_buffer,
                 temp_mapping,
                 temp_memory: Some(memory),
                 temp_top: AtomicU32::new(0),
@@ -140,7 +140,7 @@ impl Frame {
         }
     }
 
-    pub fn push_temp<T: Sized>(&self, data: &[T]) -> BackendResult<u32> {
+    pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<u32> {
         let bytes = std::mem::size_of_val(data);
         let offset = self
             .allocate(bytes as _)
