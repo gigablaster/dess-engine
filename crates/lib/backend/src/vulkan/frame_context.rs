@@ -13,6 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::cmp::{max, min};
+
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 
@@ -84,7 +86,12 @@ pub struct FrameContext<'a> {
 }
 
 pub struct RenderContext<'a> {
-    frame: &'a FrameContext<'a>,
+    device: &'a ash::Device,
+    cb: vk::CommandBuffer,
+    buffers: &'a BufferStorage,
+    images: &'a ImageStorage,
+    descriptors: &'a DescriptorStorage,
+    pipelins: &'a PipelineStorage,
 }
 
 impl<'a> FrameContext<'a> {
@@ -99,7 +106,14 @@ impl<'a> FrameContext<'a> {
                 .begin_command_buffer(self.frame.main_cb.raw, &info)
         }?;
 
-        Ok(RenderContext { frame: self })
+        Ok(RenderContext {
+            cb: self.frame.main_cb.raw,
+            device: &self.device.raw,
+            buffers: self.buffers,
+            images: self.images,
+            descriptors: self.descriptors,
+            pipelins: self.pipelins,
+        })
     }
 
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
@@ -109,32 +123,31 @@ impl<'a> FrameContext<'a> {
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn resolve_buffer(&self, handle: BufferHandle) -> Option<vk::Buffer> {
-        self.frame.buffers.get_hot(handle).copied()
+    fn resolve_buffer(&self, handle: BufferHandle) -> Option<vk::Buffer> {
+        self.buffers.get_hot(handle).copied()
     }
 
-    pub fn resolve_descriptor_set(&self, handle: DescriptorHandle) -> Option<vk::DescriptorSet> {
-        self.frame.descriptors.get_hot(handle).copied()
+    fn resolve_descriptor_set(&self, handle: DescriptorHandle) -> Option<vk::DescriptorSet> {
+        self.descriptors.get_hot(handle).copied()
     }
 
-    pub fn resolve_pipeline(
+    fn resolve_pipeline(
         &self,
         handle: PipelineHandle,
     ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
-        self.frame.pipelins.get(handle.index()).copied()
+        self.pipelins.get(handle.index()).copied()
     }
 
-    pub fn resolve_image_view(
+    pub fn get_or_create_view(
         &self,
         handle: ImageHandle,
         desc: ImageViewDesc,
     ) -> BackendResult<vk::ImageView> {
         let image = self
-            .frame
             .images
             .get_cold(handle)
             .ok_or(BackendError::InvalidHandle)?;
-        image.get_or_create_view(&self.frame.device.raw, desc)
+        image.get_or_create_view(self.device, desc)
     }
 
     pub fn execute(
@@ -142,7 +155,7 @@ impl<'a> RenderContext<'a> {
         area: vk::Rect2D,
         color_attachments: &[RenderAttachment],
         depth_attachment: Option<RenderAttachment>,
-        _stream: DrawStream,
+        streams: impl Iterator<Item = DrawStream>,
     ) -> BackendResult<()> {
         let color_attachments = color_attachments
             .iter()
@@ -158,34 +171,121 @@ impl<'a> RenderContext<'a> {
         } else {
             info
         };
-        unsafe {
-            self.frame
-                .device
-                .raw
-                .cmd_begin_rendering(self.frame.frame.main_cb.raw, &info)
-        };
+        unsafe { self.device.cmd_begin_rendering(self.cb, &info) };
 
-        // TODO:: execute draw stream
+        for stream in streams {
+            self.execute_stream(stream)?;
+        }
 
-        unsafe {
-            self.frame
-                .device
-                .raw
-                .cmd_end_rendering(self.frame.frame.main_cb.raw)
-        };
+        unsafe { self.device.cmd_end_rendering(self.cb) };
 
+        Ok(())
+    }
+
+    fn execute_stream(&self, stream: DrawStream) -> BackendResult<()> {
+        let mut pipeline_layout = vk::PipelineLayout::null();
+        let mut dynamic_buffer_offsets = [u32::MAX; 2];
+        let mut dynamic_buffer_offset_count = 0usize;
+        for command in stream.iter() {
+            match command {
+                crate::DrawCommand::BindPipeline(handle) => {
+                    let (pipeline, layout) = self
+                        .resolve_pipeline(handle)
+                        .ok_or(BackendError::InvalidHandle)?;
+                    if pipeline == vk::Pipeline::null() || layout == vk::PipelineLayout::null() {
+                        return Err(BackendError::Fail);
+                    }
+                    unsafe {
+                        self.device.cmd_bind_pipeline(
+                            self.cb,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            pipeline,
+                        )
+                    };
+                    pipeline_layout = layout;
+                }
+                crate::DrawCommand::BindVertexBuffer(index, slice) => {
+                    let buffer = self
+                        .resolve_buffer(slice.buffer)
+                        .ok_or(BackendError::InvalidHandle)?;
+                    unsafe {
+                        self.device.cmd_bind_vertex_buffers(
+                            self.cb,
+                            index,
+                            &[buffer],
+                            &[slice.offset as u64],
+                        )
+                    };
+                }
+                crate::DrawCommand::UnbindVertexBuffer(index) => unsafe {
+                    self.device
+                        .cmd_bind_vertex_buffers(self.cb, index, &[vk::Buffer::null()], &[0])
+                },
+                crate::DrawCommand::BindIndexBuffer(slice) => {
+                    let buffer = self
+                        .resolve_buffer(slice.buffer)
+                        .ok_or(BackendError::InvalidHandle)?;
+                    unsafe {
+                        self.device.cmd_bind_index_buffer(
+                            self.cb,
+                            buffer,
+                            slice.offset as _,
+                            vk::IndexType::UINT16,
+                        )
+                    }
+                }
+                crate::DrawCommand::SetDynamicBufferOffset(index, offset) => {
+                    dynamic_buffer_offsets[index as usize] = offset;
+                    dynamic_buffer_offset_count = max(index as usize, dynamic_buffer_offset_count);
+                }
+                crate::DrawCommand::UnsetDynamicBufferOffset(index) => {
+                    dynamic_buffer_offset_count = min(index as usize, dynamic_buffer_offset_count);
+                }
+                crate::DrawCommand::BindDescriptorSet(index, handle) => {
+                    let descriptor_set = self
+                        .resolve_descriptor_set(handle)
+                        .ok_or(BackendError::InvalidHandle)?;
+                    let mut dynamic_offsets = ArrayVec::<_, 2>::new();
+                    for offset in dynamic_buffer_offsets
+                        .iter()
+                        .take(dynamic_buffer_offset_count)
+                    {
+                        dynamic_offsets.push(*offset);
+                    }
+                    unsafe {
+                        self.device.cmd_bind_descriptor_sets(
+                            self.cb,
+                            vk::PipelineBindPoint::GRAPHICS,
+                            pipeline_layout,
+                            index,
+                            &[descriptor_set],
+                            &dynamic_offsets,
+                        )
+                    };
+                }
+                crate::DrawCommand::UnbindDescriptorSet(index) => unsafe {
+                    self.device.cmd_bind_descriptor_sets(
+                        self.cb,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline_layout,
+                        index,
+                        &[vk::DescriptorSet::null()],
+                        &[],
+                    );
+                },
+                crate::DrawCommand::Draw(first_index, triangle_count) => unsafe {
+                    self.device
+                        .cmd_draw(self.cb, triangle_count * 3, 1, first_index, 0)
+                },
+                crate::DrawCommand::DrawInstanced(_, _, _) => unimplemented!(),
+            }
+        }
         Ok(())
     }
 }
 
 impl<'a> Drop for RenderContext<'a> {
     fn drop(&mut self) {
-        unsafe {
-            self.frame
-                .device
-                .raw
-                .end_command_buffer(self.frame.frame.main_cb.raw)
-        }
-        .unwrap();
+        unsafe { self.device.end_command_buffer(self.cb) }.unwrap();
     }
 }

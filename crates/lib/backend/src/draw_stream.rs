@@ -16,7 +16,7 @@
 use crate::vulkan::{BufferSlice, DescriptorHandle, PipelineHandle};
 
 pub(crate) const MAX_VERTEX_STREAMS: u32 = 3;
-pub(crate) const MAX_DESCRIPTOR_SETS: u32 = 3;
+pub(crate) const MAX_DESCRIPTOR_SETS: u32 = 4;
 pub(crate) const MAX_DYNAMIC_OFFSETS: u32 = 2;
 
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +45,7 @@ impl Default for Draw {
                 DescriptorHandle::default(),
                 DescriptorHandle::default(),
                 DescriptorHandle::default(),
+                DescriptorHandle::default(),
             ],
             dynamic_offsets: [u32::MAX, u32::MAX],
             instance_count: u32::MAX,
@@ -59,14 +60,15 @@ const VERTEX_BUFFER0: u16 = 1 << 1;
 const VERTEX_BUFFER1: u16 = 1 << 2;
 const VERTEX_BUFFER2: u16 = 1 << 3;
 const INDEX_BUFFER: u16 = 1 << 4;
-const DS1: u16 = 1 << 5;
-const DS2: u16 = 1 << 6;
-const DS3: u16 = 1 << 7;
-const DYNAMIC_OFFSET0: u16 = 1 << 8;
-const DYNAMIC_OFFSET1: u16 = 1 << 9;
-const INSTANCE_COUNT: u16 = 1 << 10;
-const FIRST_INDEX: u16 = 1 << 11;
-const TRIANGLE_COUNT: u16 = 1 << 12;
+const DS0: u16 = 1 << 5;
+const DS1: u16 = 1 << 6;
+const DS2: u16 = 1 << 7;
+const DS3: u16 = 1 << 8;
+const DYNAMIC_OFFSET0: u16 = 1 << 9;
+const DYNAMIC_OFFSET1: u16 = 1 << 10;
+const INSTANCE_COUNT: u16 = 1 << 11;
+const FIRST_INDEX: u16 = 1 << 12;
+const TRIANGLE_COUNT: u16 = 1 << 13;
 const MAX_BIT: u16 = 13;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,6 +78,7 @@ pub enum DrawCommand {
     UnbindVertexBuffer(u32),
     BindIndexBuffer(BufferSlice),
     SetDynamicBufferOffset(u32, u32),
+    UnsetDynamicBufferOffset(u32),
     BindDescriptorSet(u32, DescriptorHandle),
     UnbindDescriptorSet(u32),
     Draw(u32, u32),
@@ -84,21 +87,22 @@ pub enum DrawCommand {
 
 #[derive(Debug)]
 pub struct DrawStream {
-    pass_ds: DescriptorHandle,
     stream: Vec<u16>,
     current: Draw,
     mask: u16,
 }
 
-impl DrawStream {
-    pub fn new(pass_ds: DescriptorHandle) -> Self {
+impl Default for DrawStream {
+    fn default() -> Self {
         Self {
-            pass_ds,
             stream: Vec::with_capacity(1024),
             current: Draw::default(),
             mask: 0,
         }
     }
+}
+
+impl DrawStream {
     pub fn bind_pipeline(&mut self, handle: PipelineHandle) {
         if self.current.pipeline != handle {
             self.mask |= PIPELINE;
@@ -160,10 +164,6 @@ impl DrawStream {
             self.mask |= TRIANGLE_COUNT;
             self.current.triangle_count = triangle_count;
         }
-    }
-
-    pub fn pass_descriptor_set(&self) -> DescriptorHandle {
-        self.pass_ds
     }
 
     pub fn draw(&mut self) {
@@ -302,6 +302,15 @@ impl<'a> Iter<'a> {
         }
     }
 
+    fn read_dynamic_buffer_command(&mut self, index: u32) -> Result<DrawCommand, ()> {
+        let offset = self.read_u32()?;
+        if offset != u32::MAX {
+            Ok(DrawCommand::SetDynamicBufferOffset(index, offset))
+        } else {
+            Ok(DrawCommand::UnsetDynamicBufferOffset(index))
+        }
+    }
+
     fn read_index_buffer_command(&mut self) -> Result<DrawCommand, ()> {
         Ok(DrawCommand::BindIndexBuffer(self.read_buffer_slice()?))
     }
@@ -347,35 +356,31 @@ impl<'a> Iter<'a> {
                         self.advance_next_bit();
                         return self.read_index_buffer_command().ok();
                     }
-
-                    DS1 => {
+                    DS0 => {
                         self.advance_next_bit();
                         return self.read_bind_group_command(0).ok();
                     }
-                    DS2 => {
+
+                    DS1 => {
                         self.advance_next_bit();
                         return self.read_bind_group_command(1).ok();
                     }
-                    DS3 => {
+                    DS2 => {
                         self.advance_next_bit();
                         return self.read_bind_group_command(2).ok();
+                    }
+                    DS3 => {
+                        self.advance_next_bit();
+                        return self.read_bind_group_command(3).ok();
                     }
 
                     DYNAMIC_OFFSET0 => {
                         self.advance_next_bit();
-
-                        return self
-                            .read_u32()
-                            .map(|x| DrawCommand::SetDynamicBufferOffset(0, x))
-                            .ok();
+                        return self.read_dynamic_buffer_command(0).ok();
                     }
                     DYNAMIC_OFFSET1 => {
                         self.advance_next_bit();
-
-                        return self
-                            .read_u32()
-                            .map(|x| DrawCommand::SetDynamicBufferOffset(1, x))
-                            .ok();
+                        return self.read_dynamic_buffer_command(1).ok();
                     }
 
                     INSTANCE_COUNT => {
@@ -445,13 +450,13 @@ mod test {
     #[test]
     #[should_panic]
     fn fail_default_state() {
-        let mut stream = DrawStream::new(Handle::default());
+        let mut stream = DrawStream::default();
         stream.draw();
     }
 
     #[test]
     fn basic_usage() {
-        let mut stream = DrawStream::new(Handle::default());
+        let mut stream = DrawStream::default();
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
         stream.bind_index_buffer(BufferSlice::new(Handle::new(2, 2), 0));
@@ -474,7 +479,7 @@ mod test {
 
     #[test]
     fn full_usage() {
-        let mut stream = DrawStream::new(Handle::default());
+        let mut stream = DrawStream::default();
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
         stream.bind_vertex_buffer(1, Some(BufferSlice::new(Handle::new(2, 2), 0)));
@@ -528,7 +533,7 @@ mod test {
 
     #[test]
     fn reduce_state_changes() {
-        let mut stream = DrawStream::new(Handle::default());
+        let mut stream = DrawStream::default();
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(100, 100), 100)));
         stream.bind_vertex_buffer(1, Some(BufferSlice::new(Handle::new(200, 200), 999)));
