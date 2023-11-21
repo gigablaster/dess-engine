@@ -19,18 +19,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use byte_slice_cast::AsSliceOf;
+use crate::{get_absolute_asset_path, Content, ContentImporter, ContentProcessor, Error};
 use dess_assets::{EffectAsset, Pipeline, Shader, ShaderPass, ShaderStage, SpecializationConstant};
-use log::{debug, error, info, warn};
 use normalize_path::NormalizePath;
 use serde::{Deserialize, Serialize};
-use spirv_tools::{
-    error::{MessageCallback, MessageLevel},
-    opt::Optimizer,
-    val::Validator,
-};
-
-use crate::{get_absolute_asset_path, Content, ContentImporter, ContentProcessor, Error};
 
 #[derive(Debug, Clone)]
 pub struct EffectSource {
@@ -160,7 +152,7 @@ impl CompileEffect {
             profile,
             &[
                 "-spirv",
-                "-fspv-target-env=vulkan1.1",
+                "-fspv-target-env=vulkan1.3",
                 "-WX",
                 "-Ges",
                 "-HV 2021",
@@ -169,34 +161,7 @@ impl CompileEffect {
         )
         .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
 
-        let mut optimizer = spirv_tools::opt::create(Some(spirv_tools::TargetEnv::Vulkan_1_1));
-        optimizer.register_performance_passes();
-        let data = spirv.as_slice_of::<u32>().unwrap();
-        let spirv = optimizer
-            .optimize(data, &mut OptCallbacks {}, None)
-            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
-
-        let validator = spirv_tools::val::create(Some(spirv_tools::TargetEnv::Vulkan_1_1));
-        validator
-            .validate(spirv.as_words(), None)
-            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
-
-        Ok(spirv.as_bytes().to_vec())
-    }
-}
-
-struct OptCallbacks;
-
-impl MessageCallback for OptCallbacks {
-    fn on_message(&mut self, msg: spirv_tools::error::Message) {
-        match msg.level {
-            MessageLevel::Info => info!("{} - {}", msg.line, msg.message),
-            MessageLevel::Debug => debug!("{} - {}", msg.line, msg.message),
-            MessageLevel::Error | MessageLevel::Fatal | MessageLevel::InternalError => {
-                error!("{} - {}", msg.line, msg.message)
-            }
-            MessageLevel::Warning => warn!("{} - {}", msg.line, msg.message),
-        }
+        Ok(spirv)
     }
 }
 
