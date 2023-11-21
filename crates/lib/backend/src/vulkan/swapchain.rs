@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::slice;
+use std::{
+    slice,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use arrayvec::ArrayVec;
 use ash::{
@@ -75,7 +78,7 @@ pub struct Swapchain {
     pub loader: khr::Swapchain,
     pub acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
     pub rendering_finished_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
-    pub next_semaphore: usize,
+    pub next_semaphore: AtomicUsize,
     pub dims: [u32; 2],
     pub format: vk::Format,
 }
@@ -221,17 +224,18 @@ impl Swapchain {
             images,
             acquire_semaphores,
             rendering_finished_semaphores,
-            next_semaphore: 0,
+            next_semaphore: AtomicUsize::new(0),
             loader,
             format: format.format,
             dims: [surface_resolution.width, surface_resolution.height],
         })
     }
 
-    pub fn acquire_next_image(&mut self) -> BackendResult<AcquiredSurface> {
-        puffin::profile_scope!("wait for swapchain");
-        let acquire_semaphore = self.acquire_semaphores[self.next_semaphore];
-        let rendering_finished_semaphore = self.rendering_finished_semaphores[self.next_semaphore];
+    pub fn acquire_next_image(&self) -> BackendResult<AcquiredSurface> {
+        puffin::profile_function!();
+        let current_semaphore = self.next_semaphore.load(Ordering::Acquire);
+        let acquire_semaphore = self.acquire_semaphores[current_semaphore];
+        let rendering_finished_semaphore = self.rendering_finished_semaphores[current_semaphore];
 
         let present_index = match unsafe {
             self.loader
@@ -244,9 +248,20 @@ impl Swapchain {
             Err(err) => return Err(BackendError::from(err)),
         };
 
-        assert_eq!(present_index as usize, self.next_semaphore);
+        assert_eq!(present_index as usize, current_semaphore);
 
-        self.next_semaphore = (self.next_semaphore + 1) % self.images.len();
+        let next_semaphore = (current_semaphore + 1) % self.images.len();
+        assert_eq!(
+            self.next_semaphore
+                .compare_exchange(
+                    current_semaphore,
+                    next_semaphore,
+                    Ordering::Release,
+                    Ordering::Acquire
+                )
+                .unwrap(),
+            next_semaphore
+        );
         Ok(AcquiredSurface::Image(SwapchainImage {
             image: &self.images[present_index as usize],
             image_index: present_index,

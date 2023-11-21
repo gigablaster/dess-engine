@@ -132,7 +132,7 @@ impl<'a> Drop for ScopedCommandBufferLabel<'a> {
 }
 
 pub struct Device {
-    frames: [Mutex<Arc<Frame>>; 2],
+    frames: [Mutex<Frame>; 2],
     pub(crate) instance: Instance,
     pub(crate) raw: Arc<ash::Device>,
     pub(crate) pdevice: PhysicalDevice,
@@ -240,16 +240,16 @@ impl Device {
         let descriptor_allocator = DescriptorAllocator::new(0);
 
         let frames = [
-            Mutex::new(Arc::new(Frame::new(
+            Mutex::new(Frame::new(
                 &device,
                 &mut memory_allocator,
                 universal_queue_index,
-            )?)),
-            Mutex::new(Arc::new(Frame::new(
+            )?),
+            Mutex::new(Frame::new(
                 &device,
                 &mut memory_allocator,
                 universal_queue_index,
-            )?)),
+            )?),
         ];
 
         let uniform_storage = UniformStorage::new(&device, &mut memory_allocator)?;
@@ -335,56 +335,35 @@ impl Device {
         result
     }
 
-    fn begin_frame(&self) -> BackendResult<Arc<Frame>> {
-        puffin::profile_function!();
-        let mut frame0 = self.frames[0].lock();
-        {
-            let frame0 = Arc::get_mut(&mut frame0)
-                .expect("Unable to begin frame: frame data is being held by user code");
-            unsafe {
-                self.raw.wait_for_fences(
-                    &[frame0.present_cb.fence, frame0.main_cb.fence],
-                    true,
-                    u64::MAX,
-                )
-            }?;
-            let mut memory_allocator = self.memory_allocator.lock();
-            let mut descriptor_allocator = self.descriptor_allocator.lock();
-            let mut uniforms = self.uniform_storage.lock();
-            frame0.reset(
-                &self.raw,
-                &mut memory_allocator,
-                &mut descriptor_allocator,
-                &mut uniforms,
-            )?;
-            frame0
-                .drop_list
-                .replace(mem::take(&mut self.current_drop_list.lock()));
-        }
-        Ok(frame0.clone())
-    }
-
-    fn end_frame(&self, frame: Arc<Frame>) {
-        drop(frame);
-
-        let mut frame0 = self.frames[0].lock();
-        {
-            let frame0 = Arc::get_mut(&mut frame0)
-                .expect("Unable to finish frame: frame data is being held by user code");
-            let mut frame1 = self.frames[1].lock();
-            let frame1 = Arc::get_mut(&mut frame1).unwrap();
-            std::mem::swap(frame0, frame1);
-        }
-    }
-
     pub fn frame<F: FnOnce(FrameContext, vk::ImageView, vk::ImageLayout) -> BackendResult<()>>(
         &self,
         swapchain: &mut Swapchain,
         frame_fn: F,
     ) -> BackendResult<FrameResult> {
         puffin::profile_function!();
-        // Sync compiled pipelines
+        let mut frame = self.frames[0].lock();
+        unsafe {
+            self.raw.wait_for_fences(
+                &[frame.present_cb.fence, frame.main_cb.fence],
+                true,
+                u64::MAX,
+            )
+        }?;
+        let mut memory_allocator = self.memory_allocator.lock();
+        let mut descriptor_allocator = self.descriptor_allocator.lock();
+        let mut uniforms = self.uniform_storage.lock();
+        frame.reset(
+            &self.raw,
+            &mut memory_allocator,
+            &mut descriptor_allocator,
+            &mut uniforms,
+        )?;
+        frame
+            .drop_list
+            .replace(mem::take(&mut self.current_drop_list.lock()));
+
         {
+            // Sync compiled pipelines
             let mut pipelines = self.pipelines.write();
             self.pipeline_compiled_receiver
                 .iter()
@@ -402,7 +381,6 @@ impl Device {
             crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
             crate::vulkan::AcquiredSurface::Image(image) => image,
         };
-        let frame = self.begin_frame()?;
         let temp_buffer_handle = self.buffer_storage.write().push(
             frame.temp_buffer,
             Buffer {
@@ -417,22 +395,25 @@ impl Device {
             },
         );
 
-        let context = FrameContext {
-            device: self,
-            frame: &frame,
-            images: &self.image_storage.read(),
-            buffers: &self.buffer_storage.read(),
-            descriptors: &self.descriptor_storage.read(),
-            pipelins: &self.pipelines.read(),
-            temp_buffer_handle,
-        };
-        frame_fn(
-            context,
-            backbuffer
-                .image
-                .get_or_create_view(&self.raw, ImageViewDesc::default())?,
-            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-        )?;
+        {
+            puffin::profile_scope!("Record frame");
+            let context = FrameContext {
+                device: self,
+                frame: &frame,
+                images: &self.image_storage.read(),
+                buffers: &self.buffer_storage.read(),
+                descriptors: &self.descriptor_storage.read(),
+                pipelins: &self.pipelines.read(),
+                temp_buffer_handle,
+            };
+            frame_fn(
+                context,
+                backbuffer
+                    .image
+                    .get_or_create_view(&self.raw, ImageViewDesc::default())?,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )?;
+        }
         self.buffer_storage.write().remove(temp_buffer_handle);
         self.submit(
             frame.main_cb.raw,
@@ -448,47 +429,52 @@ impl Device {
                 vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             )],
         )?;
-        unsafe {
-            self.raw.begin_command_buffer(
+        {
+            puffin::profile_scope!("Present");
+            unsafe {
+                self.raw.begin_command_buffer(
+                    frame.present_cb.raw,
+                    &vk::CommandBufferBeginInfo::builder()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+                        .build(),
+                )?;
+                let barrier = vk::ImageMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                    .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                    .src_queue_family_index(self.queue_familt_index)
+                    .dst_queue_family_index(self.queue_familt_index)
+                    .image(backbuffer.image.raw)
+                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                    .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .build();
+                let dependency = vk::DependencyInfo::builder()
+                    .image_memory_barriers(slice::from_ref(&barrier))
+                    .build();
+                self.raw
+                    .cmd_pipeline_barrier2(frame.present_cb.raw, &dependency);
+                self.raw.end_command_buffer(frame.present_cb.raw)?;
+            };
+            self.submit(
                 frame.present_cb.raw,
-                &vk::CommandBufferBeginInfo::builder()
-                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
-                    .build(),
+                &[(
+                    frame.finished,
+                    vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                )],
+                &[(backbuffer.rendering_finished, vk::PipelineStageFlags2::NONE)],
             )?;
-            let barrier = vk::ImageMemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
-                .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
-                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                .src_queue_family_index(self.queue_familt_index)
-                .dst_queue_family_index(self.queue_familt_index)
-                .image(backbuffer.image.raw)
-                .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .build();
-            let dependency = vk::DependencyInfo::builder()
-                .image_memory_barriers(slice::from_ref(&barrier))
-                .build();
-            self.raw
-                .cmd_pipeline_barrier2(frame.present_cb.raw, &dependency);
-            self.raw.end_command_buffer(frame.present_cb.raw)?;
-        };
-        self.submit(
-            frame.present_cb.raw,
-            &[(
-                frame.finished,
-                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            )],
-            &[(backbuffer.rendering_finished, vk::PipelineStageFlags2::NONE)],
-        )?;
-        self.end_frame(frame);
+            swapchain.present_image(backbuffer, *self.universal_queue.lock());
+        }
+        let mut next_frame = self.frames[1].lock();
+        std::mem::swap(&mut frame, &mut next_frame);
 
         Ok(FrameResult::Rendered)
     }
@@ -635,20 +621,23 @@ impl Drop for Device {
             &mut uniform_storage,
         );
 
+        self.pipelines
+            .write()
+            .drain(..)
+            .for_each(|x| unsafe { self.raw.destroy_pipeline(x.0, None) });
+
         self.program_storage
             .write()
             .drain(..)
             .for_each(|x| x.free(&self.raw));
 
         self.frames.iter().for_each(|x| {
-            Arc::get_mut(&mut x.lock())
-                .expect("Frame data shouldn't be kept by anybody else at this point")
-                .free(
-                    &self.raw,
-                    &mut memory_allocator,
-                    &mut descriptor_allocator,
-                    &mut uniform_storage,
-                )
+            x.lock().free(
+                &self.raw,
+                &mut memory_allocator,
+                &mut descriptor_allocator,
+                &mut uniform_storage,
+            )
         });
 
         uniform_storage.free(&self.raw, &mut memory_allocator);
