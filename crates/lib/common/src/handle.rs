@@ -103,6 +103,23 @@ impl<T, U> Display for Handle<T, U> {
         write!(f, "(idx: {} gen: {})", self.index(), self.generation())
     }
 }
+
+impl<T, U> From<Handle<T, U>> for u32 {
+    fn from(value: Handle<T, U>) -> Self {
+        value.data
+    }
+}
+
+impl<T, U> From<u32> for Handle<T, U> {
+    fn from(value: u32) -> Self {
+        Handle {
+            data: value,
+            _phantom1: PhantomData,
+            _phantom2: PhantomData,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct Pool<T, U> {
     hot: Vec<Option<T>>,
