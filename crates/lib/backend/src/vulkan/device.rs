@@ -29,6 +29,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::{mem, slice, thread};
 
+use crate::vulkan::ImageViewDesc;
 use crate::{BackendError, BackendResult};
 
 use super::pipeline_cache::{load_or_create_pipeline_cache, save_pipeline_cache};
@@ -36,12 +37,19 @@ use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
     PhysicalDevice, ToDrop, UniformStorage,
 };
-use super::{DescriptorHandle, DescriptorStorage, Index, Program, Staging};
+use super::{
+    DescriptorHandle, DescriptorStorage, FrameContext, Index, Program, Staging, Swapchain,
+};
 
 pub type ImageHandle = Handle<vk::Image, Image>;
 pub type BufferHandle = Handle<vk::Buffer, Buffer>;
 pub type ProgramHandle = Index<Program>;
 pub type PipelineHandle = Index<(vk::Pipeline, vk::PipelineLayout)>;
+
+pub enum FrameResult {
+    Rendered,
+    NeedRecreate,
+}
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BufferSlice {
@@ -145,6 +153,7 @@ pub struct Device {
     pub(crate) pipeline_compiled_receiver:
         Receiver<(PipelineHandle, vk::Pipeline, vk::PipelineLayout)>,
     pub(crate) pipelines_in_fly: AtomicUsize,
+    queue_familt_index: u32,
 }
 
 impl Device {
@@ -273,6 +282,7 @@ impl Device {
             pipeline_compiled_sender,
             pipelines_in_fly: AtomicUsize::new(0),
             raw: Arc::new(device),
+            queue_familt_index: universal_queue_index,
         })
     }
 
@@ -324,7 +334,7 @@ impl Device {
         result
     }
 
-    pub fn begin_frame(&self) -> BackendResult<Arc<Frame>> {
+    fn begin_frame(&self) -> BackendResult<Arc<Frame>> {
         puffin::profile_function!();
         let mut frame0 = self.frames[0].lock();
         {
@@ -349,23 +359,11 @@ impl Device {
             frame0
                 .drop_list
                 .replace(mem::take(&mut self.current_drop_list.lock()));
-
-            // Sync compiled pipelines
-            let mut pipelines = self.pipelines.write();
-            self.pipeline_compiled_receiver
-                .iter()
-                .for_each(|(index, pipeline, layout)| {
-                    pipelines[index.index()] = (pipeline, layout);
-                    self.pipelines_in_fly.fetch_sub(1, Ordering::SeqCst);
-                });
-
-            // Update descriptor sets
-            self.update_descriptor_sets()?;
         }
         Ok(frame0.clone())
     }
 
-    pub fn end_frame(&self, frame: Arc<Frame>) {
+    fn end_frame(&self, frame: Arc<Frame>) {
         drop(frame);
 
         let mut frame0 = self.frames[0].lock();
@@ -376,6 +374,107 @@ impl Device {
             let frame1 = Arc::get_mut(&mut frame1).unwrap();
             std::mem::swap(frame0, frame1);
         }
+    }
+
+    pub fn frame<F: FnOnce(FrameContext, vk::ImageView, vk::ImageLayout) -> BackendResult<()>>(
+        &self,
+        swapchain: &mut Swapchain,
+        frame_fn: F,
+    ) -> BackendResult<FrameResult> {
+        puffin::profile_function!();
+        // Sync compiled pipelines
+        let mut pipelines = self.pipelines.write();
+        self.pipeline_compiled_receiver
+            .iter()
+            .for_each(|(index, pipeline, layout)| {
+                pipelines[index.index()] = (pipeline, layout);
+                self.pipelines_in_fly.fetch_sub(1, Ordering::SeqCst);
+            });
+
+        // Upload staging
+        let staging_semaphore = self.staging.lock().upload(self)?;
+
+        let backbuffer = match swapchain.acquire_next_image()? {
+            crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
+            crate::vulkan::AcquiredSurface::Image(image) => image,
+        };
+
+        // Update descriptor sets
+        self.update_descriptor_sets()?;
+
+        let frame = self.begin_frame()?;
+        let context = FrameContext {
+            device: self,
+            frame: &frame,
+            images: &self.image_storage.read(),
+            buffers: &self.buffer_storage.read(),
+            descriptors: &self.descriptor_storage.read(),
+            pipelins: &self.pipelines.read(),
+        };
+        frame_fn(
+            context,
+            backbuffer
+                .image
+                .get_or_create_view(&self.raw, ImageViewDesc::default())?,
+            vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+        )?;
+        self.submit(
+            frame.main_cb.raw,
+            &[
+                staging_semaphore,
+                (
+                    backbuffer.acquire_semaphore,
+                    vk::PipelineStageFlags2::ALL_COMMANDS,
+                ),
+            ],
+            &[(
+                frame.finished,
+                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            )],
+        )?;
+        unsafe {
+            self.raw.begin_command_buffer(
+                frame.present_cb.raw,
+                &vk::CommandBufferBeginInfo::builder()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+                    .build(),
+            )?;
+            let barrier = vk::ImageMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
+                .src_queue_family_index(self.queue_familt_index)
+                .dst_queue_family_index(self.queue_familt_index)
+                .image(backbuffer.image.raw)
+                .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .build();
+            let dependency = vk::DependencyInfo::builder()
+                .image_memory_barriers(slice::from_ref(&barrier))
+                .build();
+            self.raw
+                .cmd_pipeline_barrier2(frame.present_cb.raw, &dependency);
+            self.raw.end_command_buffer(frame.present_cb.raw)?;
+        };
+        self.submit(
+            frame.present_cb.raw,
+            &[(
+                frame.finished,
+                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+            )],
+            &[(backbuffer.rendering_finished, vk::PipelineStageFlags2::NONE)],
+        )?;
+        self.end_frame(frame);
+
+        Ok(FrameResult::Rendered)
     }
 
     pub fn submit(

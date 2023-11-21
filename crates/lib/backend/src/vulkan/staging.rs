@@ -300,7 +300,7 @@ impl Staging {
         Ok(can_send)
     }
 
-    fn upload(
+    pub fn upload(
         &mut self,
         device: &Device,
     ) -> BackendResult<(vk::Semaphore, vk::PipelineStageFlags2)> {
