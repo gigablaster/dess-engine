@@ -357,7 +357,10 @@ impl Device {
                 .for_each(|(index, pipeline, layout)| {
                     pipelines[index.index()] = (pipeline, layout);
                     self.pipelines_in_fly.fetch_sub(1, Ordering::SeqCst);
-                })
+                });
+
+            // Update descriptor sets
+            self.update_descriptor_sets()?;
         }
         Ok(frame0.clone())
     }

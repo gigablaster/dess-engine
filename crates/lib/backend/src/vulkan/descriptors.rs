@@ -285,7 +285,7 @@ impl<'a> Drop for UpdateDescriptorContext<'a> {
 }
 
 impl Device {
-    pub fn update_descriptor_sets(&self) -> Result<(), BackendError> {
+    pub(crate) fn update_descriptor_sets(&self) -> Result<(), BackendError> {
         puffin::profile_function!();
         let mut drop_list = self.current_drop_list.lock();
         let mut allocator = self.descriptor_allocator.lock();
