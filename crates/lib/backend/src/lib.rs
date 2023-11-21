@@ -13,9 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod draw_stream;
 mod error;
 pub mod vulkan;
 
+pub use draw_stream::*;
 pub use error::*;
 
 pub type BackendResult<T> = Result<T, BackendError>;
