@@ -132,7 +132,7 @@ impl DrawStream {
         let slot = slot as usize;
         let ds = ds.unwrap_or_default();
         if self.current.descriptors[slot] != ds {
-            self.mask |= DS1 << slot;
+            self.mask |= DS0 << slot;
             self.current.descriptors[slot] = ds;
         }
     }
@@ -197,7 +197,7 @@ impl DrawStream {
             self.encode_buffer_slice(self.current.index_buffer);
         }
         for slot in 0..MAX_DESCRIPTOR_SETS {
-            if self.mask & (DS1 << slot) != 0 {
+            if self.mask & (DS0 << slot) != 0 {
                 let slot = slot as usize;
                 self.write_u32(self.current.descriptors[slot].into());
             }
@@ -302,7 +302,7 @@ impl<'a> Iter<'a> {
         }
     }
 
-    fn read_dynamic_buffer_command(&mut self, index: u32) -> Result<DrawCommand, ()> {
+    fn read_dynamic_offset_command(&mut self, index: u32) -> Result<DrawCommand, ()> {
         let offset = self.read_u32()?;
         if offset != u32::MAX {
             Ok(DrawCommand::SetDynamicBufferOffset(index, offset))
@@ -376,11 +376,11 @@ impl<'a> Iter<'a> {
 
                     DYNAMIC_OFFSET0 => {
                         self.advance_next_bit();
-                        return self.read_dynamic_buffer_command(0).ok();
+                        return self.read_dynamic_offset_command(0).ok();
                     }
                     DYNAMIC_OFFSET1 => {
                         self.advance_next_bit();
-                        return self.read_dynamic_buffer_command(1).ok();
+                        return self.read_dynamic_offset_command(1).ok();
                     }
 
                     INSTANCE_COUNT => {
@@ -448,6 +448,31 @@ mod test {
     };
 
     #[test]
+    fn dynamic_offsets() {
+        let mut stream = DrawStream::default();
+        stream.bind_pipeline(Index::new(0));
+        stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
+        stream.bind_index_buffer(BufferSlice::new(Handle::new(2, 2), 0));
+        stream.set_mesh(10, 100);
+        stream.set_dynamic_buffer_offset(0, Some(100));
+        stream.draw();
+
+        let stream = stream.iter().collect::<Vec<_>>();
+
+        assert_eq!(5, stream.len());
+        assert_eq!(DrawCommand::BindPipeline(Index::new(0)), stream[0]);
+        assert_eq!(
+            DrawCommand::BindVertexBuffer(0, BufferSlice::new(Handle::new(1, 1), 0)),
+            stream[1]
+        );
+        assert_eq!(
+            DrawCommand::BindIndexBuffer(BufferSlice::new(Handle::new(2, 2), 0)),
+            stream[2]
+        );
+        assert_eq!(DrawCommand::Draw(10, 100), stream[4]);
+    }
+
+    #[test]
     #[should_panic]
     fn fail_default_state() {
         let mut stream = DrawStream::default();
@@ -495,6 +520,8 @@ mod test {
         stream.draw();
 
         let stream = stream.iter().collect::<Vec<_>>();
+
+        stream.iter().for_each(|x| println!(">> {:?}", x));
         assert_eq!(12, stream.len());
         assert_eq!(DrawCommand::BindPipeline(Index::new(0)), stream[0]);
         assert_eq!(
