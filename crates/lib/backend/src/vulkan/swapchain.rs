@@ -71,8 +71,8 @@ impl Drop for Surface {
     }
 }
 
-pub struct Swapchain {
-    pub surface: Surface,
+pub struct Swapchain<'a> {
+    pub surface: &'a Surface,
     pub raw: vk::SwapchainKHR,
     pub images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
     pub loader: khr::Swapchain,
@@ -95,8 +95,8 @@ pub enum AcquiredSurface<'a> {
     Image(SwapchainImage<'a>),
 }
 
-impl Swapchain {
-    pub fn new(device: &Device, surface: Surface, resolution: [u32; 2]) -> BackendResult<Self> {
+impl<'a> Swapchain<'a> {
+    pub fn new(device: &Device, surface: &'a Surface, resolution: [u32; 2]) -> BackendResult<Self> {
         info!(
             "Create swapchain for resolution {} x {}",
             resolution[0], resolution[1]
@@ -107,7 +107,7 @@ impl Swapchain {
                 .get_physical_device_surface_capabilities(device.pdevice.raw, surface.raw)
         }?;
 
-        let formats = Self::enumerate_surface_formats(&device.pdevice, &surface)?;
+        let formats = Self::enumerate_surface_formats(&device.pdevice, surface)?;
         let format = match Self::select_surface_format(&formats) {
             Some(format) => format,
             None => return Err(BackendError::NotSupported),
@@ -260,7 +260,7 @@ impl Swapchain {
                     Ordering::Acquire
                 )
                 .unwrap(),
-            next_semaphore
+            current_semaphore
         );
         Ok(AcquiredSurface::Image(SwapchainImage {
             image: &self.images[present_index as usize],
@@ -309,6 +309,16 @@ impl Swapchain {
         ];
 
         prefered.into_iter().find(|format| formats.contains(format))
+    }
+
+    pub fn render_area(&self) -> vk::Rect2D {
+        vk::Rect2D {
+            offset: vk::Offset2D { x: 0, y: 0 },
+            extent: vk::Extent2D {
+                width: self.dims[0],
+                height: self.dims[1],
+            },
+        }
     }
 
     pub fn free(&mut self, device: &ash::Device) {

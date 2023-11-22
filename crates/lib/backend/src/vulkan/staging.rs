@@ -337,7 +337,7 @@ impl Staging {
 
         if let Some(last) = self.last {
             device.submit(
-                cb.raw,
+                cb,
                 &[(self.semaphores[last], vk::PipelineStageFlags2::TRANSFER)],
                 &[
                     (semaphore, vk::PipelineStageFlags2::TRANSFER),
@@ -350,7 +350,7 @@ impl Staging {
             )?;
         } else {
             device.submit(
-                cb.raw,
+                cb,
                 &[],
                 &[
                     (semaphore, vk::PipelineStageFlags2::TRANSFER),

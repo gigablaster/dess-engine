@@ -85,44 +85,11 @@ pub struct FrameContext<'a> {
     pub(crate) temp_buffer_handle: BufferHandle,
 }
 
-pub struct RenderContext<'a> {
-    device: &'a ash::Device,
-    cb: vk::CommandBuffer,
-    buffers: &'a BufferStorage,
-    images: &'a ImageStorage,
-    descriptors: &'a DescriptorStorage,
-    pipelins: &'a PipelineStorage,
-}
-
 impl<'a> FrameContext<'a> {
-    pub fn render(&'a self) -> BackendResult<RenderContext<'a>> {
-        let info = vk::CommandBufferBeginInfo::builder()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
-            .build();
-
-        unsafe {
-            self.device
-                .raw
-                .begin_command_buffer(self.frame.main_cb.raw, &info)
-        }?;
-
-        Ok(RenderContext {
-            cb: self.frame.main_cb.raw,
-            device: &self.device.raw,
-            buffers: self.buffers,
-            images: self.images,
-            descriptors: self.descriptors,
-            pipelins: self.pipelins,
-        })
-    }
-
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
         let offset = self.frame.temp_allocate(data)?;
         Ok(BufferSlice::new(self.temp_buffer_handle, offset))
     }
-}
-
-impl<'a> RenderContext<'a> {
     fn resolve_buffer(&self, handle: BufferHandle) -> Option<vk::Buffer> {
         self.buffers.get_hot(handle).copied()
     }
@@ -147,7 +114,7 @@ impl<'a> RenderContext<'a> {
             .images
             .get_cold(handle)
             .ok_or(BackendError::InvalidHandle)?;
-        image.get_or_create_view(self.device, desc)
+        image.get_or_create_view(&self.device.raw, desc)
     }
 
     pub fn execute(
@@ -165,19 +132,24 @@ impl<'a> RenderContext<'a> {
 
         let info = vk::RenderingInfo::builder()
             .render_area(area)
-            .color_attachments(&color_attachments);
+            .color_attachments(&color_attachments)
+            .layer_count(1);
         let info = if let Some(depth_attachment) = depth_attachment.as_ref() {
             info.depth_attachment(depth_attachment)
         } else {
             info
         };
-        unsafe { self.device.cmd_begin_rendering(self.cb, &info) };
+        unsafe {
+            self.device
+                .raw
+                .cmd_begin_rendering(self.frame.main_cb.raw, &info)
+        };
 
         for stream in streams {
             self.execute_stream(stream)?;
         }
 
-        unsafe { self.device.cmd_end_rendering(self.cb) };
+        unsafe { self.device.raw.cmd_end_rendering(self.frame.main_cb.raw) };
 
         Ok(())
     }
@@ -196,8 +168,8 @@ impl<'a> RenderContext<'a> {
                         return Err(BackendError::Fail);
                     }
                     unsafe {
-                        self.device.cmd_bind_pipeline(
-                            self.cb,
+                        self.device.raw.cmd_bind_pipeline(
+                            self.frame.main_cb.raw,
                             vk::PipelineBindPoint::GRAPHICS,
                             pipeline,
                         )
@@ -209,8 +181,8 @@ impl<'a> RenderContext<'a> {
                         .resolve_buffer(slice.buffer)
                         .ok_or(BackendError::InvalidHandle)?;
                     unsafe {
-                        self.device.cmd_bind_vertex_buffers(
-                            self.cb,
+                        self.device.raw.cmd_bind_vertex_buffers(
+                            self.frame.main_cb.raw,
                             index,
                             &[buffer],
                             &[slice.offset as u64],
@@ -218,16 +190,20 @@ impl<'a> RenderContext<'a> {
                     };
                 }
                 crate::DrawCommand::UnbindVertexBuffer(index) => unsafe {
-                    self.device
-                        .cmd_bind_vertex_buffers(self.cb, index, &[vk::Buffer::null()], &[0])
+                    self.device.raw.cmd_bind_vertex_buffers(
+                        self.frame.main_cb.raw,
+                        index,
+                        &[vk::Buffer::null()],
+                        &[0],
+                    )
                 },
                 crate::DrawCommand::BindIndexBuffer(slice) => {
                     let buffer = self
                         .resolve_buffer(slice.buffer)
                         .ok_or(BackendError::InvalidHandle)?;
                     unsafe {
-                        self.device.cmd_bind_index_buffer(
-                            self.cb,
+                        self.device.raw.cmd_bind_index_buffer(
+                            self.frame.main_cb.raw,
                             buffer,
                             slice.offset as _,
                             vk::IndexType::UINT16,
@@ -253,8 +229,8 @@ impl<'a> RenderContext<'a> {
                         dynamic_offsets.push(*offset);
                     }
                     unsafe {
-                        self.device.cmd_bind_descriptor_sets(
-                            self.cb,
+                        self.device.raw.cmd_bind_descriptor_sets(
+                            self.frame.main_cb.raw,
                             vk::PipelineBindPoint::GRAPHICS,
                             pipeline_layout,
                             index,
@@ -264,8 +240,8 @@ impl<'a> RenderContext<'a> {
                     };
                 }
                 crate::DrawCommand::UnbindDescriptorSet(index) => unsafe {
-                    self.device.cmd_bind_descriptor_sets(
-                        self.cb,
+                    self.device.raw.cmd_bind_descriptor_sets(
+                        self.frame.main_cb.raw,
                         vk::PipelineBindPoint::GRAPHICS,
                         pipeline_layout,
                         index,
@@ -274,18 +250,17 @@ impl<'a> RenderContext<'a> {
                     );
                 },
                 crate::DrawCommand::Draw(first_index, triangle_count) => unsafe {
-                    self.device
-                        .cmd_draw(self.cb, triangle_count * 3, 1, first_index, 0)
+                    self.device.raw.cmd_draw(
+                        self.frame.main_cb.raw,
+                        triangle_count * 3,
+                        1,
+                        first_index,
+                        0,
+                    )
                 },
                 crate::DrawCommand::DrawInstanced(_, _, _) => unimplemented!(),
             }
         }
         Ok(())
-    }
-}
-
-impl<'a> Drop for RenderContext<'a> {
-    fn drop(&mut self) {
-        unsafe { self.device.end_command_buffer(self.cb) }.unwrap();
     }
 }

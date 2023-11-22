@@ -100,6 +100,7 @@ impl ImageViewDesc {
                 base_array_layer: 0,
                 layer_count: 1,
             })
+            .image(image.raw)
             .build()
     }
 

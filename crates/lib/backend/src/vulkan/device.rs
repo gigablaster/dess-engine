@@ -155,6 +155,7 @@ pub struct Device {
         Receiver<(PipelineHandle, vk::Pipeline, vk::PipelineLayout)>,
     pub(crate) pipelines_in_fly: AtomicUsize,
     queue_familt_index: u32,
+    current_cpu_frame: AtomicUsize,
 }
 
 impl Device {
@@ -189,13 +190,11 @@ impl Device {
 
         let mut dynamic_rendering = vk::PhysicalDeviceDynamicRenderingFeatures::default();
         let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
-        let mut copy_commands2 = vk::PhysicalDeviceSynchronization2Features::default();
         let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
 
         let mut features = vk::PhysicalDeviceFeatures2::builder()
             .push_next(&mut dynamic_rendering)
             .push_next(&mut synchronization2)
-            .push_next(&mut copy_commands2)
             .push_next(&mut buffer_device_address)
             .build();
 
@@ -284,6 +283,7 @@ impl Device {
             pipelines_in_fly: AtomicUsize::new(0),
             raw: Arc::new(device),
             queue_familt_index: universal_queue_index,
+            current_cpu_frame: AtomicUsize::new(0),
         })
     }
 
@@ -297,7 +297,6 @@ impl Device {
             vk::SamplerAddressMode::REPEAT,
             vk::SamplerAddressMode::CLAMP_TO_EDGE,
             vk::SamplerAddressMode::MIRRORED_REPEAT,
-            vk::SamplerAddressMode::MIRROR_CLAMP_TO_EDGE,
         ];
         let aniso_levels = [0, 1, 2, 3, 4];
         let mut result = HashMap::new();
@@ -335,13 +334,16 @@ impl Device {
         result
     }
 
-    pub fn frame<F: FnOnce(FrameContext, vk::ImageView, vk::ImageLayout) -> BackendResult<()>>(
+    pub fn frame<
+        F: FnOnce(FrameContext, vk::Rect2D, vk::ImageView, vk::ImageLayout) -> BackendResult<()>,
+    >(
         &self,
-        swapchain: &mut Swapchain,
+        swapchain: &Swapchain,
         frame_fn: F,
     ) -> BackendResult<FrameResult> {
+        let current_cpu_frame = self.current_cpu_frame.load(Ordering::Acquire);
         puffin::profile_function!();
-        let mut frame = self.frames[0].lock();
+        let mut frame = self.frames[current_cpu_frame].lock();
         unsafe {
             self.raw.wait_for_fences(
                 &[frame.present_cb.fence, frame.main_cb.fence],
@@ -350,14 +352,16 @@ impl Device {
             )
         }?;
         let mut memory_allocator = self.memory_allocator.lock();
-        let mut descriptor_allocator = self.descriptor_allocator.lock();
-        let mut uniforms = self.uniform_storage.lock();
-        frame.reset(
-            &self.raw,
-            &mut memory_allocator,
-            &mut descriptor_allocator,
-            &mut uniforms,
-        )?;
+        {
+            let mut descriptor_allocator = self.descriptor_allocator.lock();
+            let mut uniforms = self.uniform_storage.lock();
+            frame.reset(
+                &self.raw,
+                &mut memory_allocator,
+                &mut descriptor_allocator,
+                &mut uniforms,
+            )?;
+        }
         frame
             .drop_list
             .replace(mem::take(&mut self.current_drop_list.lock()));
@@ -366,7 +370,7 @@ impl Device {
             // Sync compiled pipelines
             let mut pipelines = self.pipelines.write();
             self.pipeline_compiled_receiver
-                .iter()
+                .try_iter()
                 .for_each(|(index, pipeline, layout)| {
                     pipelines[index.index()] = (pipeline, layout);
                     self.pipelines_in_fly.fetch_sub(1, Ordering::SeqCst);
@@ -397,6 +401,39 @@ impl Device {
 
         {
             puffin::profile_scope!("Record frame");
+            let info = vk::CommandBufferBeginInfo::builder()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+                .build();
+
+            unsafe { self.raw.begin_command_buffer(frame.main_cb.raw, &info) }?;
+            let _ = self.scoped_label(frame.main_cb.raw, "Render");
+
+            let barrier = vk::ImageMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                .src_access_mask(vk::AccessFlags2::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+                .dst_access_mask(vk::AccessFlags2::SHADER_WRITE)
+                .src_queue_family_index(self.queue_familt_index)
+                .dst_queue_family_index(self.queue_familt_index)
+                .image(backbuffer.image.raw)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .build();
+            let dependency = vk::DependencyInfo::builder()
+                .image_memory_barriers(slice::from_ref(&barrier))
+                .build();
+            unsafe {
+                self.raw
+                    .cmd_pipeline_barrier2(frame.main_cb.raw, &dependency)
+            };
+
             let context = FrameContext {
                 device: self,
                 frame: &frame,
@@ -408,15 +445,18 @@ impl Device {
             };
             frame_fn(
                 context,
+                swapchain.render_area(),
                 backbuffer
                     .image
                     .get_or_create_view(&self.raw, ImageViewDesc::default())?,
                 vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             )?;
         }
+        unsafe { self.raw.end_command_buffer(frame.main_cb.raw) }.unwrap();
+
         self.buffer_storage.write().remove(temp_buffer_handle);
         self.submit(
-            frame.main_cb.raw,
+            &frame.main_cb,
             &[
                 staging_semaphore,
                 (
@@ -438,6 +478,7 @@ impl Device {
                         .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
                         .build(),
                 )?;
+                let _ = self.scoped_label(frame.present_cb.raw, "Present");
                 let barrier = vk::ImageMemoryBarrier2::builder()
                     .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
                     .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
@@ -464,7 +505,7 @@ impl Device {
                 self.raw.end_command_buffer(frame.present_cb.raw)?;
             };
             self.submit(
-                frame.present_cb.raw,
+                &frame.present_cb,
                 &[(
                     frame.finished,
                     vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
@@ -473,21 +514,31 @@ impl Device {
             )?;
             swapchain.present_image(backbuffer, *self.universal_queue.lock());
         }
-        let mut next_frame = self.frames[1].lock();
-        std::mem::swap(&mut frame, &mut next_frame);
 
+        let next_cpu_frame = (current_cpu_frame + 1) % 2;
+        assert_eq!(
+            self.current_cpu_frame
+                .compare_exchange(
+                    current_cpu_frame,
+                    next_cpu_frame,
+                    Ordering::Release,
+                    Ordering::Acquire
+                )
+                .unwrap(),
+            current_cpu_frame
+        );
         Ok(FrameResult::Rendered)
     }
 
     pub fn submit(
         &self,
-        cb: vk::CommandBuffer,
+        cb: &CommandBuffer,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
         triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
     ) -> BackendResult<()> {
         puffin::profile_function!();
         let command_buffers = vk::CommandBufferSubmitInfo::builder()
-            .command_buffer(cb)
+            .command_buffer(cb.raw)
             .build();
         let wait = wait
             .iter()
@@ -514,8 +565,9 @@ impl Device {
             .build();
         let queue = self.universal_queue.lock();
         unsafe {
+            self.raw.reset_fences(&[cb.fence])?;
             self.raw
-                .queue_submit2(*queue, slice::from_ref(&info), vk::Fence::null())
+                .queue_submit2(*queue, slice::from_ref(&info), cb.fence)
         }?;
 
         Ok(())
