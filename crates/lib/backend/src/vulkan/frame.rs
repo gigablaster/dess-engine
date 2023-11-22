@@ -16,11 +16,10 @@
 use std::{
     cell::Cell,
     ptr::{copy_nonoverlapping, NonNull},
-    sync::atomic::{AtomicU32, Ordering},
 };
 
 use ash::vk::{self};
-use dess_common::Align;
+use dess_common::BumpAllocator;
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{vulkan::Device, BackendError, BackendResult};
@@ -29,8 +28,8 @@ use super::{
     CommandBuffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, UniformStorage,
 };
 
-pub(crate) const MAX_TEMP_MEMORY: u32 = 16 * 1024 * 1024;
-const ALIGMENT: u32 = 256;
+pub(crate) const MAX_TEMP_MEMORY: usize = 16 * 1024 * 1024;
+const ALIGMENT: usize = 256;
 
 pub struct Frame {
     pub(crate) pool: vk::CommandPool,
@@ -40,7 +39,7 @@ pub struct Frame {
     pub(crate) temp_buffer: vk::Buffer,
     pub(crate) temp_mapping: NonNull<u8>,
     pub(crate) temp_memory: Option<GpuMemory>,
-    pub(crate) temp_top: AtomicU32,
+    pub(crate) temp_allocator: BumpAllocator,
     pub(crate) drop_list: Cell<DropList>,
 }
 
@@ -94,7 +93,7 @@ impl Frame {
                 temp_buffer,
                 temp_mapping,
                 temp_memory: Some(memory),
-                temp_top: AtomicU32::new(0),
+                temp_allocator: BumpAllocator::new(MAX_TEMP_MEMORY, ALIGMENT),
                 drop_list: Cell::new(drop_list),
             })
         }
@@ -110,7 +109,7 @@ impl Frame {
         self.drop_list
             .get_mut()
             .purge(device, memory_allocator, descriptor_allocator, uniforms);
-        self.temp_top.store(0, Ordering::Release);
+        self.temp_allocator.reset();
         unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
 
         Ok(())
@@ -144,6 +143,7 @@ impl Frame {
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<u32> {
         let bytes = std::mem::size_of_val(data);
         let offset = self
+            .temp_allocator
             .allocate(bytes as _)
             .ok_or(BackendError::OutOfTempMemory)?;
         unsafe {
@@ -154,19 +154,6 @@ impl Frame {
             );
         }
 
-        Ok(offset)
-    }
-
-    fn allocate(&self, size: u32) -> Option<u32> {
-        self.temp_top
-            .fetch_update(Ordering::Release, Ordering::SeqCst, |x| {
-                let new_top = (x + size).align(ALIGMENT);
-                if new_top <= MAX_TEMP_MEMORY {
-                    Some(new_top)
-                } else {
-                    None
-                }
-            })
-            .ok()
+        Ok(offset as u32)
     }
 }

@@ -237,8 +237,8 @@ impl RingAllocator {
 
 #[derive(Debug)]
 pub struct BumpAllocator {
+    top: AtomicUsize,
     size: usize,
-    top: usize,
     aligment: usize,
 }
 
@@ -247,26 +247,29 @@ impl BumpAllocator {
         Self {
             size,
             aligment,
-            top: 0,
+            top: AtomicUsize::new(0),
         }
     }
 
-    pub fn allocate(&mut self, size: usize) -> Option<usize> {
-        let base = self.top.align(self.aligment);
-        if base + size > self.size {
-            None
-        } else {
-            self.top = base + size;
-            Some(base)
-        }
+    pub fn allocate(&self, size: usize) -> Option<usize> {
+        self.top
+            .fetch_update(Ordering::Release, Ordering::SeqCst, |x| {
+                let new_top = (x + size).align(self.aligment);
+                if new_top <= self.size {
+                    Some(new_top)
+                } else {
+                    None
+                }
+            })
+            .ok()
     }
 
-    pub fn reset(&mut self) {
-        self.top = 0;
+    pub fn reset(&self) {
+        self.top.store(0, Ordering::SeqCst);
     }
 
     pub fn validate(&self, size: usize) -> usize {
-        let base = self.top.align(self.aligment);
+        let base = self.top.load(Ordering::SeqCst).align(self.aligment);
         min(size, self.size - base)
     }
 }
@@ -321,7 +324,7 @@ mod test {
 
     #[test]
     fn bump_allocator() {
-        let mut allocator = BumpAllocator::new(1024, 64);
+        let allocator = BumpAllocator::new(1024, 64);
         assert_eq!(Some(0), allocator.allocate(500));
         assert_eq!(Some(512), allocator.allocate(100));
         assert_eq!(Some(640), allocator.allocate(100));
@@ -335,7 +338,7 @@ mod test {
 
     #[test]
     fn bump_allocator_align() {
-        let mut allocator = BumpAllocator::new(1024, 128);
+        let allocator = BumpAllocator::new(1024, 128);
         assert_eq!(Some(0), allocator.allocate(10));
         assert_eq!(Some(128), allocator.allocate(10));
     }
