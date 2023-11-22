@@ -495,6 +495,9 @@ impl Staging {
         if let Some(memory) = self.memory.take() {
             unsafe {
                 allocator.dealloc(AshMemoryDevice::wrap(device), memory);
+                for cb in self.tranfser_cbs.drain(..) {
+                    cb.free(device);
+                }
                 device.destroy_buffer(self.buffer, None);
                 device.destroy_command_pool(self.pool, None);
                 for index in 0..STAGES {

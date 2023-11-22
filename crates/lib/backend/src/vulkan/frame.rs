@@ -130,6 +130,7 @@ impl Frame {
                 memory_allocator.dealloc(AshMemoryDevice::wrap(device), memory);
                 device.destroy_command_pool(self.pool, None);
                 device.destroy_semaphore(self.finished, None);
+                device.destroy_buffer(self.temp_buffer, None);
             }
             self.drop_list.get_mut().purge(
                 device,

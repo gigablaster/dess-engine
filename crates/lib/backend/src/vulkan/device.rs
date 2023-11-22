@@ -251,7 +251,7 @@ impl Device {
             )?),
         ];
 
-        let uniform_storage = UniformStorage::new(&device, &mut memory_allocator)?;
+        let uniform_storage = UniformStorage::new(&instance, &device, &mut memory_allocator)?;
 
         let (pipeline_compiled_sender, pipeline_compiled_receiver) = bounded(PIPELINES_IN_FLY);
         Ok(Self {
@@ -697,6 +697,10 @@ impl Drop for Device {
 
         if let Err(err) = save_pipeline_cache(&self.raw, &self.pdevice, self.pipeline_cache) {
             warn!("Failed to save pipeline cache: {:?}", err);
+        }
+
+        for (_, sampler) in self.samplers.drain() {
+            unsafe { self.raw.destroy_sampler(sampler, None) };
         }
 
         unsafe {

@@ -26,7 +26,7 @@ use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{vulkan::Device, BackendError, BackendResult};
 
-use super::{GpuAllocator, GpuMemory};
+use super::{GpuAllocator, GpuMemory, Instance};
 
 const BUCKET_SIZE: usize = 0xFFFF;
 const MIN_UNIFORM_SIZE: usize = 0x100;
@@ -109,7 +109,11 @@ pub struct UniformStorage {
 }
 
 impl UniformStorage {
-    pub fn new(device: &ash::Device, allocator: &mut GpuAllocator) -> BackendResult<Self> {
+    pub fn new(
+        instance: &Instance,
+        device: &ash::Device,
+        allocator: &mut GpuAllocator,
+    ) -> BackendResult<Self> {
         unsafe {
             let buffer = device.create_buffer(
                 &vk::BufferCreateInfo::builder()
@@ -117,6 +121,7 @@ impl UniformStorage {
                     .usage(vk::BufferUsageFlags::UNIFORM_BUFFER),
                 None,
             )?;
+            Device::set_object_name_impl(instance, device, buffer, "United uniform buffer");
             let requirements = device.get_buffer_memory_requirements(buffer);
             let mut memory = Device::allocate_impl(
                 device,

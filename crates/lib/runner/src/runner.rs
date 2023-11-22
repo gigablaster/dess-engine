@@ -157,6 +157,9 @@ impl<T: Client> Runner<T> {
                 }
             })
             .unwrap();
+        drop(swapchain);
+        drop(surface);
+        drop(device);
         info!("Main loop exit");
     }
 }

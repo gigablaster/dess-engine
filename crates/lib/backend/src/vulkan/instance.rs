@@ -191,7 +191,7 @@ impl Instance {
         );
 
         if message_severity == vk::DebugUtilsMessageSeverityFlagsEXT::ERROR {
-            panic!("!!!! VULKAN ERROR !!!!");
+            //panic!("!!!! VULKAN ERROR !!!!");
         }
 
         vk::FALSE
