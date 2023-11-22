@@ -25,7 +25,7 @@ impl Client for ClearBackbuffer {
             .store_output()
             .clear_input(vk::ClearValue {
                 color: vk::ClearColorValue {
-                    uint32: [255, 0, 0, 255],
+                    float32: [0.125, 0.25, 0.6, 1.0],
                 },
             });
         context.execute(
