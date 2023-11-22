@@ -73,6 +73,7 @@ impl Drop for Surface {
 
 pub struct Swapchain<'a> {
     pub surface: &'a Surface,
+    pub device: &'a Device,
     pub raw: vk::SwapchainKHR,
     pub images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
     pub loader: khr::Swapchain,
@@ -96,7 +97,11 @@ pub enum AcquiredSurface<'a> {
 }
 
 impl<'a> Swapchain<'a> {
-    pub fn new(device: &Device, surface: &'a Surface, resolution: [u32; 2]) -> BackendResult<Self> {
+    pub fn new(
+        device: &'a Device,
+        surface: &'a Surface,
+        resolution: [u32; 2],
+    ) -> BackendResult<Self> {
         info!(
             "Create swapchain for resolution {} x {}",
             resolution[0], resolution[1]
@@ -220,6 +225,7 @@ impl<'a> Swapchain<'a> {
         }
         Ok(Self {
             surface,
+            device,
             raw: swapchain,
             images,
             acquire_semaphores,
@@ -321,7 +327,7 @@ impl<'a> Swapchain<'a> {
         }
     }
 
-    pub fn free(&mut self, device: &ash::Device) {
+    fn free(&mut self, device: &ash::Device) {
         unsafe { device.device_wait_idle().unwrap() }
         unsafe { self.loader.destroy_swapchain(self.raw, None) };
         for semaphore in &self.acquire_semaphores {
@@ -333,5 +339,11 @@ impl<'a> Swapchain<'a> {
         for image in self.images.iter() {
             image.clear_views(device);
         }
+    }
+}
+
+impl<'a> Drop for Swapchain<'a> {
+    fn drop(&mut self) {
+        self.free(&self.device.raw);
     }
 }

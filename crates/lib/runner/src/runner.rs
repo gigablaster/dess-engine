@@ -112,9 +112,7 @@ impl<T: Client> Runner<T> {
                                         },
                                     )
                                     .unwrap()
-                                {
-                                    swapchain = None;
-                                }
+                                {}
                             }
                         }
                         WindowEvent::Resized(new_size) => {
