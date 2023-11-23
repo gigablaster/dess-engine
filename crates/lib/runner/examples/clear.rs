@@ -1,10 +1,9 @@
-use ash::vk::{self, Rect2D};
+use ash::vk::{self};
 use dess_backend::{
-    vulkan::{FrameContext, RenderAttachment},
-    DrawStream,
+    barrier, vulkan::RenderAttachment, DrawStream, PoolImageDesc, RelativeImageSize,
 };
 use dess_common::GameTime;
-use dess_runner::{Client, Runner};
+use dess_runner::{Client, RenderContext, Runner};
 
 #[derive(Default)]
 struct ClearBackbuffer {}
@@ -14,22 +13,69 @@ impl Client for ClearBackbuffer {
         dess_runner::ClientState::Continue
     }
 
-    fn render(
-        &self,
-        context: FrameContext,
-        render_area: Rect2D,
-        view: vk::ImageView,
-        layout: vk::ImageLayout,
-    ) -> Result<(), dess_backend::BackendError> {
-        let color_attachment = RenderAttachment::new(view, layout)
+    fn render(&self, context: RenderContext) -> Result<(), dess_backend::BackendError> {
+        {
+            let temp = context
+                .pool
+                .temp_image(
+                    [
+                        context.frame.render_area.extent.width,
+                        context.frame.render_area.extent.height,
+                    ],
+                    PoolImageDesc {
+                        format: vk::Format::R16G16B16A16_SFLOAT,
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
+                        resolution: RelativeImageSize::Backbuffer,
+                    },
+                )
+                .unwrap();
+            let color_attachment = RenderAttachment::new(
+                temp.as_ref().view,
+                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            )
             .store_output()
             .clear_input(vk::ClearValue {
                 color: vk::ClearColorValue {
-                    float32: [0.125, 0.25, 0.6, 1.0],
+                    float32: [100.0, 200.0, 400.0, 1.0],
                 },
             });
-        context.execute(
-            render_area,
+            context.frame.barrier(
+                &[barrier::undefined_to_color_attachment(
+                    &temp,
+                    context.frame.universal_queue,
+                )],
+                &[],
+            );
+            context
+                .frame
+                .execute(
+                    context.frame.render_area,
+                    &[color_attachment],
+                    None,
+                    [DrawStream::default()].into_iter(),
+                )
+                .unwrap();
+            context.frame.barrier(
+                &[barrier::color_attachment_to_sampled(
+                    &temp,
+                    context.frame.universal_queue,
+                )],
+                &[],
+            );
+
+        }
+
+        let color_attachment =
+            RenderAttachment::new(context.frame.target_view, context.frame.target_layout)
+                .store_output()
+                .clear_input(vk::ClearValue {
+                    color: vk::ClearColorValue {
+                        float32: [0.125, 0.25, 0.6, 1.0],
+                    },
+                });
+        context.frame.execute(
+            context.frame.render_area,
             &[color_attachment],
             None,
             [DrawStream::default()].into_iter(),

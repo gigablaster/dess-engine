@@ -334,9 +334,7 @@ impl Device {
         result
     }
 
-    pub fn frame<
-        F: FnOnce(FrameContext, vk::Rect2D, vk::ImageView, vk::ImageLayout) -> BackendResult<()>,
-    >(
+    pub fn frame<F: FnOnce(FrameContext) -> BackendResult<()>>(
         &self,
         swapchain: &Swapchain,
         frame_fn: F,
@@ -351,8 +349,8 @@ impl Device {
                 u64::MAX,
             )
         }?;
-        let mut memory_allocator = self.memory_allocator.lock();
         {
+            let mut memory_allocator = self.memory_allocator.lock();
             let mut descriptor_allocator = self.descriptor_allocator.lock();
             let mut uniforms = self.uniform_storage.lock();
             frame.reset(
@@ -435,6 +433,12 @@ impl Device {
             };
 
             let context = FrameContext {
+                render_area: swapchain.render_area(),
+                target_view: backbuffer
+                    .image
+                    .get_or_create_view(&self.raw, ImageViewDesc::default())?,
+                target_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                universal_queue: self.queue_familt_index,
                 device: self,
                 frame: &frame,
                 images: &self.image_storage.read(),
@@ -443,14 +447,7 @@ impl Device {
                 pipelins: &self.pipelines.read(),
                 temp_buffer_handle,
             };
-            frame_fn(
-                context,
-                swapchain.render_area(),
-                backbuffer
-                    .image
-                    .get_or_create_view(&self.raw, ImageViewDesc::default())?,
-                vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            )?;
+            frame_fn(context)?;
         }
         unsafe { self.raw.end_command_buffer(frame.main_cb.raw) }.unwrap();
 

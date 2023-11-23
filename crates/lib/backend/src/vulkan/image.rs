@@ -20,7 +20,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::BackendResult;
 
-use super::{Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop};
+use super::{Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop, AsVulkan};
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
@@ -186,6 +186,12 @@ impl ToDrop for Image {
     }
 }
 
+impl AsVulkan<vk::Image> for Image {
+    fn as_vk(&self) -> vk::Image {
+        self.raw
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageCreateDesc<'a> {
     pub extent: [u32; 2],
@@ -194,6 +200,7 @@ pub struct ImageCreateDesc<'a> {
     pub flags: vk::ImageCreateFlags,
     pub format: vk::Format,
     pub tiling: vk::ImageTiling,
+    pub samples: vk::SampleCountFlags,
     pub mip_levels: usize,
     pub array_elements: usize,
     pub dedicated: bool,
@@ -209,6 +216,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
+            samples: vk::SampleCountFlags::TYPE_1,
             mip_levels: 0,
             array_elements: 0,
             dedicated: false,
@@ -224,6 +232,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
+            samples: vk::SampleCountFlags::TYPE_1,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -239,6 +248,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
             format,
             tiling: vk::ImageTiling::OPTIMAL,
+            samples: vk::SampleCountFlags::TYPE_1,
             mip_levels: 1,
             array_elements: 6,
             dedicated: false,
@@ -254,6 +264,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
+            samples: vk::SampleCountFlags::TYPE_1,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -269,6 +280,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
+            samples: vk::SampleCountFlags::TYPE_1,
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -296,6 +308,11 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
+    pub fn samples(mut self, value: vk::SampleCountFlags) -> Self {
+        self.samples = value;
+        self
+    }
+
     pub fn mip_levels(mut self, value: usize) -> Self {
         self.mip_levels = value;
         self
@@ -318,6 +335,7 @@ impl<'a> ImageCreateDesc<'a> {
             .usage(self.usage)
             .flags(self.flags)
             .format(self.format)
+            .samples(self.samples)
             .image_type(self.ty)
             .tiling(self.tiling)
             .extent(self.create_extents())

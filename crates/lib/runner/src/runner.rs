@@ -1,8 +1,11 @@
 use std::time::Instant;
 
 use ash::vk;
-use dess_backend::vulkan::{
-    Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
+use dess_backend::{
+    vulkan::{
+        Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
+    },
+    ResourcePool,
 };
 use dess_common::TimeFilter;
 use log::info;
@@ -15,7 +18,7 @@ use winit::{
     window::{Fullscreen, WindowBuilder, WindowButtons},
 };
 
-use crate::{Client, ClientState};
+use crate::{Client, ClientState, RenderContext};
 
 pub struct Runner<T: Client> {
     client: T,
@@ -68,17 +71,11 @@ impl<T: Client> Runner<T> {
             )
             .unwrap();
         let device = Device::new(instance, pdevice).unwrap();
+        let pool = ResourcePool::new(&device).unwrap();
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
         let mut time_filter = TimeFilter::default();
-        // let context = InitContext {
-        //     resource_cache: &mut resource_cache,
-        //     render_backend: &render_backend,
-        // };
-        // info!("Init game");
-        // client.init(context);
-        // client.swapchain_created(resolution, &render_backend);
         info!("Main loop enter");
         let mut last_timestamp = Instant::now();
         let mut alt_pressed = false;
@@ -98,6 +95,7 @@ impl<T: Client> Runner<T> {
                                 return;
                             }
                             if swapchain.is_none() {
+                                pool.purge();
                                 let resolution =
                                     [window.inner_size().width, window.inner_size().height];
                                 swapchain =
@@ -105,12 +103,12 @@ impl<T: Client> Runner<T> {
                             }
                             if let Some(current_swapchain) = &swapchain {
                                 if let FrameResult::NeedRecreate = device
-                                    .frame(
-                                        current_swapchain,
-                                        |context, render_area, view, layout| {
-                                            self.client.render(context, render_area, view, layout)
-                                        },
-                                    )
+                                    .frame(current_swapchain, |context| {
+                                        self.client.render(RenderContext {
+                                            frame: &context,
+                                            pool: &pool,
+                                        })
+                                    })
                                     .unwrap()
                                 {}
                             }
@@ -159,6 +157,7 @@ impl<T: Client> Runner<T> {
             .unwrap();
         drop(swapchain);
         drop(surface);
+        drop(pool);
         drop(device);
         info!("Main loop exit");
     }

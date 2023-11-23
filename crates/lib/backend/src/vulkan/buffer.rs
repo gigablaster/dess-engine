@@ -20,7 +20,7 @@ use parking_lot::{Mutex, RwLock};
 use crate::{BackendError, BackendResult};
 
 use super::{
-    BufferHandle, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop,
+    BufferHandle, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop, AsVulkan,
 };
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -121,6 +121,12 @@ impl<'a> BufferCreateDesc<'a> {
             .usage(self.usage)
             .size(self.size as _)
             .build()
+    }
+}
+
+impl AsVulkan<vk::Buffer> for Buffer {
+    fn as_vk(&self) -> vk::Buffer {
+        self.raw
     }
 }
 

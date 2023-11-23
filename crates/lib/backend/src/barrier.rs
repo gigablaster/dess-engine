@@ -15,8 +15,10 @@
 
 use ash::vk;
 
-pub fn image_undefined_to_color_attachment(
-    image: vk::Image,
+use crate::vulkan::AsVulkan;
+
+pub fn undefined_to_color_attachment(
+    image: &impl AsVulkan<vk::Image>,
     queue_family_index: u32,
 ) -> vk::ImageMemoryBarrier2 {
     vk::ImageMemoryBarrier2::builder()
@@ -28,7 +30,7 @@ pub fn image_undefined_to_color_attachment(
         .dst_queue_family_index(queue_family_index)
         .old_layout(vk::ImageLayout::UNDEFINED)
         .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        .image(image)
+        .image(image.as_vk())
         .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
@@ -39,8 +41,8 @@ pub fn image_undefined_to_color_attachment(
         .build()
 }
 
-pub fn image_undefined_to_depth_attachment(
-    image: vk::Image,
+pub fn undefined_to_depth_attachment(
+    image: &impl AsVulkan<vk::Image>,
     queue_family_index: u32,
 ) -> vk::ImageMemoryBarrier2 {
     vk::ImageMemoryBarrier2::builder()
@@ -52,7 +54,7 @@ pub fn image_undefined_to_depth_attachment(
         .dst_queue_family_index(queue_family_index)
         .old_layout(vk::ImageLayout::UNDEFINED)
         .new_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
-        .image(image)
+        .image(image.as_vk())
         .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::DEPTH,
             base_mip_level: 0,
@@ -63,12 +65,12 @@ pub fn image_undefined_to_depth_attachment(
         .build()
 }
 
-pub fn image_color_attachment_to_sampled(
-    image: vk::Image,
+pub fn color_attachment_to_sampled(
+    image: &impl AsVulkan<vk::Image>,
     queue_family_index: u32,
 ) -> vk::ImageMemoryBarrier2 {
     vk::ImageMemoryBarrier2::builder()
-        .src_access_mask(vk::AccessFlags2::SHADER_WRITE)
+        .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
         .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
         .dst_access_mask(vk::AccessFlags2::SHADER_READ)
         .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
@@ -76,9 +78,9 @@ pub fn image_color_attachment_to_sampled(
         .dst_queue_family_index(queue_family_index)
         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
         .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .image(image)
+        .image(image.as_vk())
         .subresource_range(vk::ImageSubresourceRange {
-            aspect_mask: vk::ImageAspectFlags::DEPTH,
+            aspect_mask: vk::ImageAspectFlags::COLOR,
             base_mip_level: 0,
             level_count: 1,
             base_array_layer: 0,
@@ -87,12 +89,12 @@ pub fn image_color_attachment_to_sampled(
         .build()
 }
 
-pub fn image_depth_attachment_to_sampled(
-    image: vk::Image,
+pub fn depth_attachment_to_sampled(
+    image: &impl AsVulkan<vk::Image>,
     queue_family_index: u32,
 ) -> vk::ImageMemoryBarrier2 {
     vk::ImageMemoryBarrier2::builder()
-        .src_access_mask(vk::AccessFlags2::SHADER_WRITE)
+        .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
         .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
         .dst_access_mask(vk::AccessFlags2::SHADER_READ)
         .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
@@ -100,7 +102,7 @@ pub fn image_depth_attachment_to_sampled(
         .dst_queue_family_index(queue_family_index)
         .old_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
         .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-        .image(image)
+        .image(image.as_vk())
         .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::DEPTH,
             base_mip_level: 0,
@@ -111,8 +113,8 @@ pub fn image_depth_attachment_to_sampled(
         .build()
 }
 
-pub fn image_color_write_to_write(
-    image: vk::Image,
+pub fn color_write_to_write(
+    image: &impl AsVulkan<vk::Image>,
     queue_family_index: u32,
 ) -> vk::ImageMemoryBarrier2 {
     vk::ImageMemoryBarrier2::builder()
@@ -124,7 +126,7 @@ pub fn image_color_write_to_write(
         .dst_queue_family_index(queue_family_index)
         .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
         .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-        .image(image)
+        .image(image.as_vk())
         .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::DEPTH,
             base_mip_level: 0,

@@ -20,7 +20,7 @@ use parking_lot::{Mutex, RwLock};
 use smol_str::SmolStr;
 
 use crate::{
-    vulkan::{Device, Image, ImageCreateDesc, ImageDesc, ImageViewDesc},
+    vulkan::{Device, Image, ImageCreateDesc, ImageDesc, ImageViewDesc, AsVulkan},
     BackendError, BackendResult,
 };
 
@@ -65,6 +65,12 @@ pub struct PoolImage {
     pub view: vk::ImageView,
 }
 
+impl AsVulkan<vk::Image> for PoolImage {
+    fn as_vk(&self) -> vk::Image {
+        self.image.as_vk()
+    }
+}
+
 /// Pool for render resources
 ///
 /// Supports only images for now. Should work for any other resources, until their size isn't
@@ -86,6 +92,12 @@ pub struct ResourcePool<'a> {
 pub struct TemporaryImage<'a> {
     pool: &'a ResourcePool<'a>,
     image: PoolImage,
+}
+
+impl<'a> AsVulkan<vk::Image> for TemporaryImage<'a> {
+    fn as_vk(&self) -> vk::Image {
+        self.image.as_vk()
+    }
 }
 
 impl<'a> AsRef<PoolImage> for TemporaryImage<'a> {

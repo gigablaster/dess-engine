@@ -76,6 +76,10 @@ impl RenderAttachment {
 }
 
 pub struct FrameContext<'a> {
+    pub render_area: vk::Rect2D,
+    pub target_view: vk::ImageView,
+    pub target_layout: vk::ImageLayout,
+    pub universal_queue: u32,
     pub(crate) device: &'a Device,
     pub(crate) frame: &'a Frame,
     pub(crate) images: &'a ImageStorage,
@@ -262,5 +266,23 @@ impl<'a> FrameContext<'a> {
             }
         }
         Ok(())
+    }
+
+    pub fn barrier(
+        &self,
+        images: &[vk::ImageMemoryBarrier2],
+        buffers: &[vk::BufferMemoryBarrier2],
+    ) {
+        let dependency = vk::DependencyInfo::builder()
+            .image_memory_barriers(images)
+            .buffer_memory_barriers(buffers)
+            .dependency_flags(vk::DependencyFlags::BY_REGION)
+            .build();
+
+        unsafe {
+            self.device
+                .raw
+                .cmd_pipeline_barrier2(self.frame.main_cb.raw, &dependency)
+        };
     }
 }

@@ -90,3 +90,19 @@ impl<T> From<u32> for Index<T> {
         Index(value, PhantomData)
     }
 }
+
+pub trait AsVulkan<T> {
+    fn as_vk(&self) -> T;
+}
+
+impl AsVulkan<vk::Image> for vk::Image {
+    fn as_vk(&self) -> vk::Image {
+        self.to_owned()
+    }
+}
+
+impl AsVulkan<vk::Buffer> for vk::Buffer {
+    fn as_vk(&self) -> vk::Buffer {
+        self.to_owned()
+    }
+}
