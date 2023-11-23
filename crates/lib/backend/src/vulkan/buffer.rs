@@ -20,7 +20,8 @@ use parking_lot::{Mutex, RwLock};
 use crate::{BackendError, BackendResult};
 
 use super::{
-    BufferHandle, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop, AsVulkan,
+    AsVulkan, BufferHandle, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance,
+    ToDrop,
 };
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]

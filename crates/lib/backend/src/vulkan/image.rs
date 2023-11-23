@@ -20,7 +20,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::BackendResult;
 
-use super::{Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop, AsVulkan};
+use super::{AsVulkan, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop};
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {

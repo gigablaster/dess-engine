@@ -20,7 +20,7 @@ use parking_lot::{Mutex, RwLock};
 use smol_str::SmolStr;
 
 use crate::{
-    vulkan::{Device, Image, ImageCreateDesc, ImageDesc, ImageViewDesc, AsVulkan},
+    vulkan::{AsVulkan, Device, Image, ImageCreateDesc, ImageDesc, ImageViewDesc},
     BackendError, BackendResult,
 };
 

@@ -63,7 +63,6 @@ impl Client for ClearBackbuffer {
                 )],
                 &[],
             );
-
         }
 
         let color_attachment =
