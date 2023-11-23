@@ -652,6 +652,12 @@ impl Drop for Device {
         let mut descriptor_allocator = self.descriptor_allocator.lock();
         let mut uniform_storage = self.uniform_storage.lock();
 
+        self.current_drop_list.lock().purge(
+            &self.raw,
+            &mut memory_allocator,
+            &mut descriptor_allocator,
+            &mut uniform_storage,
+        );
         let mut drop_list = DropList::default();
         let mut images = self.image_storage.write().drain().collect::<Vec<_>>();
         let mut buffers = self.buffer_storage.write().drain().collect::<Vec<_>>();
