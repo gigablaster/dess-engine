@@ -149,6 +149,7 @@ impl Frame {
         unsafe {
             copy_nonoverlapping(
                 data.as_ptr() as *const u8,
+                #[allow(clippy::ptr_offset_with_cast)]
                 self.temp_mapping.as_ptr().offset(offset as _),
                 bytes,
             );

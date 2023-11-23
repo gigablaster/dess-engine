@@ -154,7 +154,7 @@ pub struct Device {
     pub(crate) pipeline_compiled_receiver:
         Receiver<(PipelineHandle, vk::Pipeline, vk::PipelineLayout)>,
     pub(crate) pipelines_in_fly: AtomicUsize,
-    queue_familt_index: u32,
+    pub queue_familt_index: u32,
     current_cpu_frame: AtomicUsize,
 }
 
@@ -390,7 +390,7 @@ impl Device {
             Buffer {
                 raw: frame.temp_buffer,
                 desc: BufferDesc {
-                    size: MAX_TEMP_MEMORY as usize,
+                    size: MAX_TEMP_MEMORY,
                     usage: vk::BufferUsageFlags::VERTEX_BUFFER
                         | vk::BufferUsageFlags::INDEX_BUFFER
                         | vk::BufferUsageFlags::UNIFORM_BUFFER,

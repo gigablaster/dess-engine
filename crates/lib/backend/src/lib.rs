@@ -15,9 +15,10 @@
 
 mod draw_stream;
 mod error;
+mod pool;
 pub mod vulkan;
 
 pub use draw_stream::*;
 pub use error::*;
-
+pub use pool::*;
 pub type BackendResult<T> = Result<T, BackendError>;

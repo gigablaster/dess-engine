@@ -22,7 +22,7 @@ use crate::BackendResult;
 
 use super::{Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop};
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
     pub extent: [u32; 2],
     pub ty: vk::ImageType,
@@ -125,6 +125,15 @@ pub struct Image {
 }
 
 impl Image {
+    pub(crate) fn new(device: &Device, desc: ImageCreateDesc) -> BackendResult<Self> {
+        Device::create_image_impl(
+            &device.instance,
+            &device.raw,
+            &device.memory_allocator,
+            desc,
+        )
+    }
+
     pub fn get_or_create_view(
         &self,
         device: &ash::Device,
@@ -160,6 +169,10 @@ impl Image {
             drop_list.drop_image_view(*view);
         }
         views.clear();
+    }
+
+    pub fn free(&mut self, device: &Device) {
+        self.to_drop(&mut device.current_drop_list.lock());
     }
 }
 
