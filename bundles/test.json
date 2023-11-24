@@ -2,10 +2,10 @@
     "name": "test",
     "assets": {
         "helmet": {
-            "model": "data/models/FlightHelmet/FlightHelmet.gltf"
+            "model": "models/FlightHelmet/FlightHelmet.gltf"
         },
         "unlit": {
-            "effect": "data/effects/unlit.json"
+            "effect": "effects/unlit.json"
         }
     }
 }

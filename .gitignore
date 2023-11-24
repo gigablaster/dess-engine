@@ -11,5 +11,6 @@ target/
 .vscode/
 
 # Compiled asset cache
-.cache/
-assets/
+/.cache/
+# Compiled asset bundles
+/data/
