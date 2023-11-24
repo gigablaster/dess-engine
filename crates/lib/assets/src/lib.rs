@@ -99,20 +99,11 @@ impl Display for AssetRef {
 }
 
 pub trait Asset: Sized + Any {
+    const TYPE_ID: Uuid;
+
     fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()>;
     fn deserialize<R: Read>(r: &mut R) -> io::Result<Self>;
     fn collect_depenencies(&self, dependencies: &mut HashSet<AssetRef>);
-}
-
-pub trait AddressableAsset: Asset {
-    const TYPE_ID: Uuid;
-}
-
-pub trait AssetBundle: Sync + Send {
-    fn load(&self, ty: Uuid, asset: AssetRef) -> io::Result<Vec<u8>>;
-    fn dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]>;
-    fn get(&self, name: &str) -> Option<AssetRef>;
-    fn contains(&self, asset: AssetRef) -> bool;
 }
 
 struct MappedFile {

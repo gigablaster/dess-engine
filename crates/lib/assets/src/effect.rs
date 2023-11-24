@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use speedy::{Readable, Writable};
 
-use crate::{AddressableAsset, Asset};
+use crate::Asset;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
 pub enum ShaderStage {
@@ -156,11 +156,8 @@ pub struct EffectAsset {
     pub passes: HashMap<String, ShaderPass>,
 }
 
-impl AddressableAsset for EffectAsset {
-    const TYPE_ID: uuid::Uuid = uuid::uuid!("8eb9f260-5912-46a3-8dc6-fb4fd30ab2c5");
-}
-
 impl Asset for EffectAsset {
+    const TYPE_ID: uuid::Uuid = uuid::uuid!("8eb9f260-5912-46a3-8dc6-fb4fd30ab2c5");
     fn serialize<W: std::io::prelude::Write>(&self, w: &mut W) -> std::io::Result<()> {
         Ok(self.write_to_stream(w)?)
     }

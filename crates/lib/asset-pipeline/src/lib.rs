@@ -21,7 +21,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dess_assets::{AddressableAsset, Asset, AssetRef, EffectAsset, ImageAsset, ModelAsset};
+use dess_assets::{Asset, AssetRef, EffectAsset, ImageAsset, ModelAsset};
 use log::info;
 use parking_lot::Mutex;
 
@@ -64,7 +64,7 @@ impl From<serde_json::Error> for Error {
     }
 }
 
-pub const ROOT_DATA_PATH: &str = "data";
+pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";
 pub const BUNDLE_DESC_PATH: &str = "bundles";
 
@@ -414,7 +414,7 @@ pub struct AssetInfo {
 }
 
 impl AssetInfo {
-    pub fn new<T: AddressableAsset>(asset: AssetRef) -> Self {
+    pub fn new<T: Asset>(asset: AssetRef) -> Self {
         Self {
             asset,
             ty: T::TYPE_ID,

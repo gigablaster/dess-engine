@@ -16,18 +16,18 @@
 use std::{
     collections::HashMap,
     fs::File,
-    io::{self, Cursor, Read},
+    io::{self, Cursor},
     path::Path,
 };
 
 use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
-use crate::{AssetBundle, AssetRef, MappedFile};
+use crate::{Asset, AssetRef, MappedFile};
 
 const LOCAL_BUNDLE_MAGIC: [u8; 4] = *b"BNDL";
 const LOCAL_BUNDLE_FILE_VERSION: u32 = 1;
-pub const ROOT_ASSET_PATH: &str = "assets";
+pub const ROOT_ASSET_PATH: &str = "data";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Readable, Writable)]
 pub struct BundleDirectoryEntry {
@@ -106,25 +106,35 @@ impl LocalBundleDesc {
     }
 }
 
-pub struct LocalBundle {
+pub struct AssetBundle {
     file: MappedFile,
     desc: LocalBundleDesc,
 }
 
-impl AssetBundle for LocalBundle {
-    fn get(&self, name: &str) -> Option<AssetRef> {
+impl AssetBundle {
+    pub fn by_name(name: &str) -> io::Result<AssetBundle> {
+        let index_path = Path::new(ROOT_ASSET_PATH).join(format!("{name}.idx"));
+        let desc = LocalBundleDesc::read_from_stream_buffered(File::open(index_path)?)?;
+
+        Ok(AssetBundle {
+            file: MappedFile::open(&Path::new(ROOT_ASSET_PATH).join(format!("{name}.bin")))?,
+            desc,
+        })
+    }
+
+    pub fn get(&self, name: &str) -> Option<AssetRef> {
         self.desc.names.get(name).copied()
     }
 
-    fn load(&self, ty: Uuid, asset: AssetRef) -> io::Result<Vec<u8>> {
+    pub fn load<T: Asset>(&self, asset: AssetRef) -> io::Result<T> {
         let entry = self.desc.get_asset(asset).ok_or(io::Error::new(
             io::ErrorKind::NotFound,
             format!("Asset id {asset} isn't found"),
         ))?;
-        if entry.ty != ty {
+        if entry.ty != T::TYPE_ID {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Wrong asset type: expected {} got {}", ty, entry.ty),
+                format!("Wrong asset type: expected {} got {}", T::TYPE_ID, entry.ty),
             ));
         }
         let size = entry.size as usize;
@@ -132,20 +142,18 @@ impl AssetBundle for LocalBundle {
         let offset = entry.offset as usize;
         let slice = &self.file.data()[offset..offset + packed];
         if packed != size {
-            let mut result = vec![0u8; size];
             let mut decoder = lz4_flex::frame::FrameDecoder::new(Cursor::new(slice));
-            decoder.read_exact(&mut result)?;
-            Ok(result)
+            Ok(T::deserialize(&mut decoder)?)
         } else {
-            Ok(Vec::from(slice))
+            Ok(T::deserialize(&mut Cursor::new(slice))?)
         }
     }
 
-    fn dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]> {
+    pub fn dependencies(&self, asset: AssetRef) -> Option<&[AssetRef]> {
         self.desc.dependencies.get(&asset).map(|x| x.as_ref())
     }
 
-    fn contains(&self, asset: AssetRef) -> bool {
+    pub fn contains(&self, asset: AssetRef) -> bool {
         self.desc.assets.contains_key(&asset)
     }
 }
@@ -168,18 +176,6 @@ impl Default for LocalBundleHeader {
             magic: LOCAL_BUNDLE_MAGIC,
             version: LOCAL_BUNDLE_FILE_VERSION,
         }
-    }
-}
-
-impl LocalBundle {
-    pub fn load(name: &str) -> io::Result<Box<dyn AssetBundle>> {
-        let index_path = Path::new(ROOT_ASSET_PATH).join(format!("{name}.idx"));
-        let desc = LocalBundleDesc::read_from_stream_buffered(File::open(index_path)?)?;
-
-        Ok(Box::new(LocalBundle {
-            file: MappedFile::open(&Path::new(ROOT_ASSET_PATH).join(format!("{name}.bin")))?,
-            desc,
-        }))
     }
 }
 

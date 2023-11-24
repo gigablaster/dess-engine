@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 
 use speedy::{Context, Readable, Writable};
 
-use crate::{AddressableAsset, Asset, AssetRef, Material};
+use crate::{Asset, AssetRef, Material};
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
@@ -138,11 +138,9 @@ pub struct ModelAsset {
     pub node_to_mesh: Vec<(u32, u32)>,
 }
 
-impl AddressableAsset for ModelAsset {
-    const TYPE_ID: uuid::Uuid = uuid::uuid!("7b229650-8f34-4d5a-b140-8e5d9ce599aa");
-}
-
 impl Asset for ModelAsset {
+    const TYPE_ID: uuid::Uuid = uuid::uuid!("7b229650-8f34-4d5a-b140-8e5d9ce599aa");
+
     fn serialize<W: std::io::prelude::Write>(&self, w: &mut W) -> std::io::Result<()> {
         Ok(self.write_to_stream(w)?)
     }

@@ -16,7 +16,7 @@
 use ash::vk;
 use speedy::{Context, Readable, Writable};
 
-use crate::{AddressableAsset, Asset};
+use crate::Asset;
 
 #[derive(Debug)]
 pub struct ImageAsset {
@@ -48,11 +48,9 @@ impl<C: Context> Writable<C> for ImageAsset {
     }
 }
 
-impl AddressableAsset for ImageAsset {
-    const TYPE_ID: uuid::Uuid = uuid::uuid!("c2871b90-6b51-427f-b1d8-4cedbedc8993");
-}
-
 impl Asset for ImageAsset {
+    const TYPE_ID: uuid::Uuid = uuid::uuid!("c2871b90-6b51-427f-b1d8-4cedbedc8993");
+
     fn serialize<W: std::io::Write>(&self, w: &mut W) -> std::io::Result<()> {
         Ok(self.write_to_stream(w)?)
     }
