@@ -58,6 +58,4 @@ impl Asset for ImageAsset {
     fn deserialize<R: std::io::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self::read_from_stream_unbuffered(r)?)
     }
-
-    fn collect_depenencies(&self, _dependencies: &mut std::collections::HashSet<crate::AssetRef>) {}
 }

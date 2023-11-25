@@ -15,7 +15,6 @@
 
 use std::{
     any::Any,
-    collections::HashSet,
     fmt::Display,
     fs::File,
     hash::Hasher,
@@ -31,16 +30,16 @@ use speedy::{Readable, Writable};
 use uuid::Uuid;
 
 mod bundle;
-mod effect;
 mod image;
 mod material;
 mod model;
+mod shader;
 
 pub use bundle::*;
-pub use effect::*;
 pub use image::*;
 pub use material::*;
 pub use model::*;
+pub use shader::*;
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Readable, Writable)]
 pub struct AssetRef(Uuid);
@@ -103,7 +102,6 @@ pub trait Asset: Sized + Any {
 
     fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()>;
     fn deserialize<R: Read>(r: &mut R) -> io::Result<Self>;
-    fn collect_depenencies(&self, dependencies: &mut HashSet<AssetRef>);
 }
 
 struct MappedFile {

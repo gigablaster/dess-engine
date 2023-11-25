@@ -21,7 +21,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dess_assets::{Asset, AssetRef, EffectAsset, ImageAsset, ModelAsset};
+use desc::ShaderSource;
+use dess_assets::{Asset, AssetRef, ImageAsset, ModelAsset, ShaderAsset};
 use log::info;
 use parking_lot::Mutex;
 
@@ -29,13 +30,13 @@ mod bundler;
 pub mod desc;
 mod gltf_import;
 mod image_import;
-mod import_effect;
+mod import_shader;
 mod pipeline;
 
 pub use bundler::*;
 pub use gltf_import::*;
 pub use image_import::*;
-pub use import_effect::*;
+pub use import_shader::*;
 pub use pipeline::*;
 use speedy::{Readable, Writable};
 use uuid::Uuid;
@@ -83,7 +84,7 @@ struct AssetProcessingContextImpl {
     /// Images that should be imported.
     images_to_process: HashMap<AssetRef, ImageSource>,
     /// Shaders that should be imported
-    shaders_to_process: HashMap<AssetRef, EffectSource>,
+    shaders_to_process: HashMap<AssetRef, ShaderSource>,
     /// Hashes for all inline assets, to catch and reuse same resources
     assets: HashSet<AssetInfo>,
     /// Asset ownership. Every asset have source, direct or indirect.
@@ -183,15 +184,15 @@ impl AssetProcessingContextImpl {
         }
     }
 
-    pub fn import_effect(&mut self, effect: &EffectSource) -> AssetRef {
-        let path = get_relative_asset_path(&effect.path).unwrap();
+    pub fn import_shader(&mut self, shader: &ShaderSource) -> AssetRef {
+        let path = get_relative_asset_path(Path::new(&shader.source)).unwrap();
         if let Some(asset) = self.shaders.get(&path) {
             *asset
         } else {
             let asset = AssetRef::from_path(&path);
-            info!("Requested effect import {:?} ref: {}", effect, asset);
-            self.assets.insert(AssetInfo::new::<EffectAsset>(asset));
-            self.shaders_to_process.insert(asset, effect.clone());
+            info!("Requested shader import {:?} ref: {}", shader, asset);
+            self.assets.insert(AssetInfo::new::<ShaderAsset>(asset));
+            self.shaders_to_process.insert(asset, shader.clone());
             self.add_source(asset, &path);
 
             asset
@@ -218,7 +219,7 @@ impl AssetProcessingContextImpl {
         self.images_to_process.drain().collect()
     }
 
-    pub fn drain_shaders_to_process(&mut self) -> Vec<(AssetRef, EffectSource)> {
+    pub fn drain_shaders_to_process(&mut self) -> Vec<(AssetRef, ShaderSource)> {
         self.shaders_to_process.drain().collect()
     }
 
@@ -281,8 +282,8 @@ impl AssetProcessingContext {
         self.inner.lock().import_image(image, owner)
     }
 
-    pub fn import_effect(&self, effect: &EffectSource) -> AssetRef {
-        self.inner.lock().import_effect(effect)
+    pub fn import_effect(&self, effect: &ShaderSource) -> AssetRef {
+        self.inner.lock().import_shader(effect)
     }
 
     pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
@@ -293,7 +294,7 @@ impl AssetProcessingContext {
         self.inner.lock().drain_images_to_process()
     }
 
-    pub fn drain_effects_to_process(&self) -> Vec<(AssetRef, EffectSource)> {
+    pub fn drain_effects_to_process(&self) -> Vec<(AssetRef, ShaderSource)> {
         self.inner.lock().drain_shaders_to_process()
     }
 

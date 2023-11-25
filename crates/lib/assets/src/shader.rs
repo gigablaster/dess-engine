@@ -13,8 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
-
 use serde::{Deserialize, Serialize};
 use speedy::{Readable, Writable};
 
@@ -119,45 +117,15 @@ pub enum SpecializationConstant {
     LocalLightCount,
 }
 
-#[derive(Debug, Clone, Readable, Writable, Serialize, Deserialize)]
-pub struct Pipeline {
-    pub blend: Option<(BlendDesc, BlendDesc)>,
-    pub depth_test: Option<CompareOp>,
-    pub depth_write: bool,
-    pub cull: Option<(CullMode, FrontFace)>,
-}
-
-impl Default for Pipeline {
-    fn default() -> Self {
-        Self {
-            blend: None,
-            depth_test: Some(CompareOp::LessOrEqual),
-            depth_write: true,
-            cull: Some((CullMode::Back, FrontFace::Clockwise)),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Readable, Writable)]
-pub struct Shader {
+pub struct ShaderAsset {
     pub stage: ShaderStage,
-    pub code: Vec<u8>,
     pub specializations: Vec<(SpecializationConstant, u32)>,
+    pub code: Vec<u8>,
 }
 
-#[derive(Debug, Clone, Readable, Writable)]
-pub struct ShaderPass {
-    pub shaders: Vec<Shader>,
-    pub pipeline: Pipeline,
-}
-
-#[derive(Debug, Clone, Readable, Writable)]
-pub struct EffectAsset {
-    pub passes: HashMap<String, ShaderPass>,
-}
-
-impl Asset for EffectAsset {
-    const TYPE_ID: uuid::Uuid = uuid::uuid!("8eb9f260-5912-46a3-8dc6-fb4fd30ab2c5");
+impl Asset for ShaderAsset {
+    const TYPE_ID: uuid::Uuid = uuid::uuid!("0d35d32c-8b62-41b2-8bdc-d329f06a5564");
     fn serialize<W: std::io::prelude::Write>(&self, w: &mut W) -> std::io::Result<()> {
         Ok(self.write_to_stream(w)?)
     }
@@ -165,6 +133,4 @@ impl Asset for EffectAsset {
     fn deserialize<R: std::io::prelude::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self::read_from_stream_unbuffered(r)?)
     }
-
-    fn collect_depenencies(&self, _dependencies: &mut std::collections::HashSet<crate::AssetRef>) {}
 }

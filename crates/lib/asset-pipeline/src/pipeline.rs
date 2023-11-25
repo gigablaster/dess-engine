@@ -20,14 +20,14 @@ use std::{
     path::Path,
 };
 
-use dess_assets::{Asset, AssetRef, EffectAsset, ImageAsset, ModelAsset};
+use dess_assets::{Asset, AssetRef, ImageAsset, ModelAsset, ShaderAsset};
 use log::{error, info};
 
 use crate::{
-    build_bundle, cached_asset_path, import_effect::EffectSource, AssetDatabase,
-    AssetProcessingContext, CompileEffect, Content, ContentImporter, ContentProcessor,
-    CreateImageAsset, CreateModelAsset, EffectContent, Error, GltfSource, ImagePurpose,
-    ImageSource, LoadedGltf, RawImage, ASSET_CACHE_PATH, ROOT_DATA_PATH,
+    build_bundle, cached_asset_path, desc::ShaderSource, AssetDatabase, AssetProcessingContext,
+    CompileShader, Content, ContentImporter, ContentProcessor, CreateImageAsset, CreateModelAsset,
+    Error, GltfSource, ImagePurpose, ImageSource, LoadedGltf, RawImage, ShaderContent,
+    ASSET_CACHE_PATH, ROOT_DATA_PATH,
 };
 
 #[derive(Debug)]
@@ -59,10 +59,8 @@ impl AssetPipeline {
         self.context.import_model(&GltfSource::new(path))
     }
 
-    pub fn import_effect(&self, path: &Path) -> AssetRef {
-        self.context.import_effect(&EffectSource {
-            path: path.to_owned(),
-        })
+    pub fn import_effect(&self, shader: ShaderSource) -> AssetRef {
+        self.context.import_effect(&shader)
     }
 
     pub fn import_image(&self, path: &Path, purpose: ImagePurpose) -> AssetRef {
@@ -112,7 +110,7 @@ impl AssetPipeline {
             );
             let shades_to_process = self.context.drain_effects_to_process();
             need_work |= !shades_to_process.is_empty();
-            self.process_assets::<EffectAsset, EffectContent, CompileEffect, EffectSource>(
+            self.process_assets::<ShaderAsset, ShaderContent, CompileShader, ShaderSource>(
                 shades_to_process,
             );
         }

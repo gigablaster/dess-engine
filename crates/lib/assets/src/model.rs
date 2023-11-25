@@ -13,11 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use speedy::{Context, Readable, Writable};
 
-use crate::{Asset, AssetRef, Material};
+use crate::{Asset, Material};
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
@@ -120,12 +120,6 @@ impl StaticMeshGeometry {
     }
 }
 
-impl Surface {
-    pub(crate) fn collect_dependencies(&self, deps: &mut HashSet<AssetRef>) {
-        self.material.collect_dependencies(deps);
-    }
-}
-
 #[derive(Debug, Default, Readable, Writable)]
 pub struct ModelAsset {
     pub static_geometry: Vec<StaticMeshGeometry>,
@@ -147,13 +141,5 @@ impl Asset for ModelAsset {
 
     fn deserialize<R: std::io::prelude::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self::read_from_stream_unbuffered(r)?)
-    }
-
-    fn collect_depenencies(&self, dependencies: &mut std::collections::HashSet<AssetRef>) {
-        self.static_meshes.iter().for_each(|x| {
-            x.surfaces
-                .iter()
-                .for_each(|x| x.collect_dependencies(dependencies))
-        });
     }
 }

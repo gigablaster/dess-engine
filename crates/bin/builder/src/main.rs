@@ -15,7 +15,7 @@ use serde_json::from_str;
 fn process_assets(pipeline: &AssetPipeline, desc: &BundleDesc) -> Result<(), io::Error> {
     for (name, asset) in desc.assets() {
         let asset = match asset {
-            BundledAsset::Effect(path) => pipeline.import_effect(Path::new(&path)),
+            BundledAsset::Shader(desc) => pipeline.import_effect(desc),
             BundledAsset::Model(path) => pipeline.import_model(Path::new(&path)),
             BundledAsset::Image(image) => {
                 pipeline.import_image(Path::new(&image.source), image.purpose)
