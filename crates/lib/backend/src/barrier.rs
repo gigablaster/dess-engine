@@ -128,6 +128,30 @@ pub fn color_write_to_write(
         .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
         .image(image.as_vk())
         .subresource_range(vk::ImageSubresourceRange {
+            aspect_mask: vk::ImageAspectFlags::COLOR,
+            base_mip_level: 0,
+            level_count: 1,
+            base_array_layer: 0,
+            layer_count: 1,
+        })
+        .build()
+}
+
+pub fn depth_write_to_write(
+    image: &impl AsVulkan<vk::Image>,
+    queue_family_index: u32,
+) -> vk::ImageMemoryBarrier2 {
+    vk::ImageMemoryBarrier2::builder()
+        .src_access_mask(vk::AccessFlags2::SHADER_WRITE)
+        .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
+        .dst_access_mask(vk::AccessFlags2::SHADER_WRITE)
+        .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
+        .src_queue_family_index(queue_family_index)
+        .dst_queue_family_index(queue_family_index)
+        .old_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+        .new_layout(vk::ImageLayout::DEPTH_ATTACHMENT_OPTIMAL)
+        .image(image.as_vk())
+        .subresource_range(vk::ImageSubresourceRange {
             aspect_mask: vk::ImageAspectFlags::DEPTH,
             base_mip_level: 0,
             level_count: 1,

@@ -16,11 +16,11 @@
 use std::collections::HashMap;
 
 use ash::vk;
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 use smol_str::SmolStr;
 
 use crate::{
-    vulkan::{AsVulkan, Device, Image, ImageCreateDesc, ImageDesc, ImageViewDesc},
+    vulkan::{Device, ImageCreateDesc, ImageHandle, ImageViewDesc},
     BackendError, BackendResult,
 };
 
@@ -58,17 +58,11 @@ pub struct PoolImageDesc {
 }
 
 /// Image allocated from pool
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct PoolImage {
-    pub image: Image,
+    pub handle: ImageHandle,
     pub desc: PoolImageDesc,
     pub view: vk::ImageView,
-}
-
-impl AsVulkan<vk::Image> for PoolImage {
-    fn as_vk(&self) -> vk::Image {
-        self.image.as_vk()
-    }
 }
 
 /// Pool for render resources
@@ -94,33 +88,19 @@ pub struct TemporaryImage<'a> {
     image: PoolImage,
 }
 
-impl<'a> AsVulkan<vk::Image> for TemporaryImage<'a> {
-    fn as_vk(&self) -> vk::Image {
-        self.image.as_vk()
+impl<'a> TemporaryImage<'a> {
+    pub fn view(&self) -> vk::ImageView {
+        self.image.view
     }
-}
 
-impl<'a> AsRef<PoolImage> for TemporaryImage<'a> {
-    fn as_ref(&self) -> &PoolImage {
-        &self.image
+    pub fn image(&self) -> ImageHandle {
+        self.image.handle
     }
 }
 
 impl<'a> Drop for TemporaryImage<'a> {
     fn drop(&mut self) {
-        self.pool.deallocate(std::mem::replace(
-            &mut self.image,
-            PoolImage {
-                image: Image {
-                    raw: vk::Image::null(),
-                    desc: ImageDesc::default(),
-                    memory: None,
-                    views: RwLock::default(),
-                },
-                desc: PoolImageDesc::default(),
-                view: vk::ImageView::null(),
-            },
-        ));
+        self.pool.deallocate(std::mem::take(&mut self.image));
     }
 }
 
@@ -158,10 +138,16 @@ impl<'a> ResourcePool<'a> {
                 .tiling(vk::ImageTiling::OPTIMAL)
                 .ty(vk::ImageType::TYPE_2D)
                 .name(&name);
-            let image = Image::new(self.device, create_desc)?;
-            let view = image.get_or_create_view(&self.device.raw, ImageViewDesc::default())?;
+            let image = self.device.create_image(create_desc)?;
+            let view = self
+                .device
+                .get_or_create_view(image, ImageViewDesc::default())?;
 
-            PoolImage { image, desc, view }
+            PoolImage {
+                handle: image,
+                desc,
+                view,
+            }
         };
 
         Ok(image)
@@ -222,13 +208,15 @@ impl<'a> ResourcePool<'a> {
     pub fn purge(&self) {
         let mut pool = self.pool.lock();
         let mut resources = self.resources.lock();
-        pool.iter_mut().for_each(|x| x.image.free(self.device));
+        pool.iter_mut()
+            .for_each(|x| self.device.destroy_image(x.handle));
         resources.iter_mut().for_each(|(_, image)| {
-            image
-                .take()
-                .expect("All named resources must be in pool")
-                .image
-                .free(self.device)
+            self.device.destroy_image(
+                image
+                    .take()
+                    .expect("All named resources must be in pool")
+                    .handle,
+            )
         });
         pool.clear();
         resources.clear();

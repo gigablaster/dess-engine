@@ -17,14 +17,16 @@ use std::cmp::{max, min};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
+use parking_lot::Mutex;
 
-use crate::{BackendError, BackendResult, DrawStream};
+use crate::{barrier, BackendError, BackendResult, DrawStream};
 
 use super::{
-    frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorHandle, DescriptorStorage,
-    Device, ImageHandle, ImageStorage, ImageViewDesc, PipelineHandle, PipelineStorage,
+    frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
+    ImageStorage, PipelineStorage,
 };
 
+#[derive(Clone, Copy)]
 pub struct RenderAttachment {
     pub target: vk::ImageView,
     pub layout: vk::ImageLayout,
@@ -75,50 +77,122 @@ impl RenderAttachment {
     }
 }
 
+const MAX_BARRIERS: usize = 32;
+const MAX_COLOR_ATTACHMENTS: usize = 8;
+
+pub(crate) struct Pass {
+    color_attachments: ArrayVec<RenderAttachment, MAX_COLOR_ATTACHMENTS>,
+    depth_attachment: Option<RenderAttachment>,
+    rende_area: vk::Rect2D,
+    streams: Vec<DrawStream>,
+    barriers: ArrayVec<Barrier, MAX_BARRIERS>,
+}
+
 pub struct FrameContext<'a> {
     pub render_area: vk::Rect2D,
     pub target_view: vk::ImageView,
     pub target_layout: vk::ImageLayout,
-    pub universal_queue: u32,
-    pub(crate) device: &'a Device,
     pub(crate) frame: &'a Frame,
-    pub(crate) images: &'a ImageStorage,
-    pub(crate) buffers: &'a BufferStorage,
-    pub(crate) descriptors: &'a DescriptorStorage,
-    pub(crate) pipelins: &'a PipelineStorage,
     pub(crate) temp_buffer_handle: BufferHandle,
+    pub(crate) passes: Mutex<Vec<Pass>>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum BarrierType {
+    ColorToAttachment,
+    DepthToAttachment,
+    ColorFromAttachmentToSampled,
+    DepthFromAttachmentToSampled,
+    ColorAttachmentToAttachment,
+    DepthAttachmentToAttachment,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct Barrier {
+    pub image: ImageHandle,
+    pub ty: BarrierType,
+}
+
+impl Barrier {
+    pub fn depth_to_attachment(image: ImageHandle) -> Self {
+        Self {
+            image,
+            ty: BarrierType::DepthToAttachment,
+        }
+    }
+
+    pub fn color_to_attachment(image: ImageHandle) -> Self {
+        Self {
+            image,
+            ty: BarrierType::ColorToAttachment,
+        }
+    }
+
+    pub fn depth_attachment_to_sampled(image: ImageHandle) -> Self {
+        Self {
+            image,
+            ty: BarrierType::DepthFromAttachmentToSampled,
+        }
+    }
+
+    pub fn color_attachment_to_sampled(image: ImageHandle) -> Self {
+        Self {
+            image,
+            ty: BarrierType::ColorFromAttachmentToSampled,
+        }
+    }
+
+    pub fn depth_attachment_to_attachment(image: ImageHandle) -> Self {
+        Self {
+            image,
+            ty: BarrierType::DepthAttachmentToAttachment,
+        }
+    }
+
+    pub fn color_attachment_to_attachment(image: ImageHandle) -> Self {
+        Self {
+            image,
+            ty: BarrierType::ColorAttachmentToAttachment,
+        }
+    }
+
+    fn build(
+        &self,
+        images: &ImageStorage,
+        queue_family_index: u32,
+    ) -> BackendResult<vk::ImageMemoryBarrier2> {
+        let image = images
+            .get_hot(self.image)
+            .ok_or(BackendError::InvalidHandle)?;
+        let barrier = match self.ty {
+            BarrierType::ColorToAttachment => {
+                barrier::undefined_to_color_attachment(image, queue_family_index)
+            }
+            BarrierType::DepthToAttachment => {
+                barrier::undefined_to_depth_attachment(image, queue_family_index)
+            }
+            BarrierType::ColorFromAttachmentToSampled => {
+                barrier::color_attachment_to_sampled(image, queue_family_index)
+            }
+            BarrierType::DepthFromAttachmentToSampled => {
+                barrier::depth_attachment_to_sampled(image, queue_family_index)
+            }
+            BarrierType::ColorAttachmentToAttachment => {
+                barrier::color_write_to_write(image, queue_family_index)
+            }
+            BarrierType::DepthAttachmentToAttachment => {
+                barrier::depth_write_to_write(image, queue_family_index)
+            }
+        };
+
+        Ok(barrier)
+    }
 }
 
 impl<'a> FrameContext<'a> {
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
         let offset = self.frame.temp_allocate(data)?;
         Ok(BufferSlice::new(self.temp_buffer_handle, offset))
-    }
-    fn resolve_buffer(&self, handle: BufferHandle) -> Option<vk::Buffer> {
-        self.buffers.get_hot(handle).copied()
-    }
-
-    fn resolve_descriptor_set(&self, handle: DescriptorHandle) -> Option<vk::DescriptorSet> {
-        self.descriptors.get_hot(handle).copied()
-    }
-
-    fn resolve_pipeline(
-        &self,
-        handle: PipelineHandle,
-    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
-        self.pipelins.get(handle.index()).copied()
-    }
-
-    pub fn get_or_create_view(
-        &self,
-        handle: ImageHandle,
-        desc: ImageViewDesc,
-    ) -> BackendResult<vk::ImageView> {
-        let image = self
-            .images
-            .get_cold(handle)
-            .ok_or(BackendError::InvalidHandle)?;
-        image.get_or_create_view(&self.device.raw, desc)
     }
 
     pub fn execute(
@@ -127,15 +201,72 @@ impl<'a> FrameContext<'a> {
         color_attachments: &[RenderAttachment],
         depth_attachment: Option<RenderAttachment>,
         streams: impl Iterator<Item = DrawStream>,
-    ) -> BackendResult<()> {
-        let color_attachments = color_attachments
+        barriers: &[Barrier],
+    ) {
+        let pass = Pass {
+            color_attachments: color_attachments
+                .iter()
+                .copied()
+                .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
+            depth_attachment,
+            rende_area: area,
+            streams: streams.collect(),
+            barriers: barriers
+                .iter()
+                .copied()
+                .collect::<ArrayVec<_, MAX_BARRIERS>>(),
+        };
+        self.passes.lock().push(pass);
+    }
+}
+
+pub(crate) struct ExecutionContext<'a> {
+    pub universal_queue: u32,
+    pub device: &'a Device,
+    pub frame: &'a Frame,
+    pub images: &'a ImageStorage,
+    pub buffers: &'a BufferStorage,
+    pub pipelines: &'a PipelineStorage,
+    pub descriptors: &'a DescriptorStorage,
+}
+
+impl<'a> ExecutionContext<'a> {
+    pub fn execute<I>(&self, passes: I) -> BackendResult<()>
+    where
+        I: Iterator<Item = &'a Pass>,
+    {
+        for pass in passes {
+            self.execute_pass(pass)?;
+        }
+
+        Ok(())
+    }
+
+    fn execute_pass(&self, pass: &Pass) -> BackendResult<()> {
+        let color_attachments = pass
+            .color_attachments
             .iter()
             .map(RenderAttachment::build)
             .collect::<ArrayVec<_, 8>>();
-        let depth_attachment = depth_attachment.map(|x| x.build());
+        let depth_attachment = pass.depth_attachment.map(|x| x.build());
+        let mut image_barriers = ArrayVec::<_, MAX_BARRIERS>::new();
+        for barrier in &pass.barriers {
+            image_barriers.push(barrier.build(self.images, self.universal_queue)?);
+        }
+
+        let dependency = vk::DependencyInfo::builder()
+            .image_memory_barriers(&image_barriers)
+            .dependency_flags(vk::DependencyFlags::BY_REGION)
+            .build();
+
+        unsafe {
+            self.device
+                .raw
+                .cmd_pipeline_barrier2(self.frame.main_cb.raw, &dependency)
+        };
 
         let info = vk::RenderingInfo::builder()
-            .render_area(area)
+            .render_area(pass.rende_area)
             .color_attachments(&color_attachments)
             .layer_count(1);
         let info = if let Some(depth_attachment) = depth_attachment.as_ref() {
@@ -149,7 +280,7 @@ impl<'a> FrameContext<'a> {
                 .cmd_begin_rendering(self.frame.main_cb.raw, &info)
         };
 
-        for stream in streams {
+        for stream in &pass.streams {
             self.execute_stream(stream)?;
         }
 
@@ -158,7 +289,7 @@ impl<'a> FrameContext<'a> {
         Ok(())
     }
 
-    fn execute_stream(&self, stream: DrawStream) -> BackendResult<()> {
+    fn execute_stream(&self, stream: &DrawStream) -> BackendResult<()> {
         let mut pipeline_layout = vk::PipelineLayout::null();
         let mut dynamic_buffer_offsets = [u32::MAX; 2];
         let mut dynamic_buffer_offset_count = 0usize;
@@ -166,7 +297,9 @@ impl<'a> FrameContext<'a> {
             match command {
                 crate::DrawCommand::BindPipeline(handle) => {
                     let (pipeline, layout) = self
-                        .resolve_pipeline(handle)
+                        .pipelines
+                        .get(handle.index())
+                        .copied()
                         .ok_or(BackendError::InvalidHandle)?;
                     if pipeline == vk::Pipeline::null() || layout == vk::PipelineLayout::null() {
                         return Err(BackendError::Fail);
@@ -182,7 +315,9 @@ impl<'a> FrameContext<'a> {
                 }
                 crate::DrawCommand::BindVertexBuffer(index, slice) => {
                     let buffer = self
-                        .resolve_buffer(slice.buffer)
+                        .buffers
+                        .get_hot(slice.buffer)
+                        .copied()
                         .ok_or(BackendError::InvalidHandle)?;
                     unsafe {
                         self.device.raw.cmd_bind_vertex_buffers(
@@ -203,7 +338,9 @@ impl<'a> FrameContext<'a> {
                 },
                 crate::DrawCommand::BindIndexBuffer(slice) => {
                     let buffer = self
-                        .resolve_buffer(slice.buffer)
+                        .buffers
+                        .get_hot(slice.buffer)
+                        .copied()
                         .ok_or(BackendError::InvalidHandle)?;
                     unsafe {
                         self.device.raw.cmd_bind_index_buffer(
@@ -223,7 +360,9 @@ impl<'a> FrameContext<'a> {
                 }
                 crate::DrawCommand::BindDescriptorSet(index, handle) => {
                     let descriptor_set = self
-                        .resolve_descriptor_set(handle)
+                        .descriptors
+                        .get_hot(handle)
+                        .copied()
                         .ok_or(BackendError::InvalidHandle)?;
                     let mut dynamic_offsets = ArrayVec::<_, 2>::new();
                     for offset in dynamic_buffer_offsets
@@ -266,23 +405,5 @@ impl<'a> FrameContext<'a> {
             }
         }
         Ok(())
-    }
-
-    pub fn barrier(
-        &self,
-        images: &[vk::ImageMemoryBarrier2],
-        buffers: &[vk::BufferMemoryBarrier2],
-    ) {
-        let dependency = vk::DependencyInfo::builder()
-            .image_memory_barriers(images)
-            .buffer_memory_barriers(buffers)
-            .dependency_flags(vk::DependencyFlags::BY_REGION)
-            .build();
-
-        unsafe {
-            self.device
-                .raw
-                .cmd_pipeline_barrier2(self.frame.main_cb.raw, &dependency)
-        };
     }
 }

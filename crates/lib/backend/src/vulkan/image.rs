@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use ash::vk;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::BackendResult;
+use crate::{BackendError, BackendResult};
 
 use super::{AsVulkan, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop};
 
@@ -125,15 +125,6 @@ pub struct Image {
 }
 
 impl Image {
-    pub(crate) fn new(device: &Device, desc: ImageCreateDesc) -> BackendResult<Self> {
-        Device::create_image_impl(
-            &device.instance,
-            &device.raw,
-            &device.memory_allocator,
-            desc,
-        )
-    }
-
     pub fn get_or_create_view(
         &self,
         device: &ash::Device,
@@ -369,6 +360,18 @@ impl Device {
         let image =
             Self::create_image_impl(&self.instance, &self.raw, &self.memory_allocator, desc)?;
         Ok(self.image_storage.write().push(image.raw, image))
+    }
+
+    pub fn get_or_create_view(
+        &self,
+        handle: ImageHandle,
+        desc: ImageViewDesc,
+    ) -> BackendResult<vk::ImageView> {
+        self.image_storage
+            .read()
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .get_or_create_view(&self.raw, desc)
     }
 
     fn create_image_impl(

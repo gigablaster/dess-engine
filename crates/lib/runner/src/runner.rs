@@ -104,10 +104,11 @@ impl<T: Client> Runner<T> {
                             if let Some(current_swapchain) = &swapchain {
                                 if let FrameResult::NeedRecreate = device
                                     .frame(current_swapchain, |context| {
-                                        self.client.render(RenderContext {
-                                            frame: &context,
+                                        let context = RenderContext {
+                                            frame: context,
                                             pool: &pool,
-                                        })
+                                        };
+                                        self.client.render(context)
                                     })
                                     .unwrap()
                                 {}

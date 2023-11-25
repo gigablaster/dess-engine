@@ -30,7 +30,7 @@ use std::time::Duration;
 use std::{mem, slice, thread};
 
 use crate::vulkan::frame::MAX_TEMP_MEMORY;
-use crate::vulkan::{BufferDesc, ImageViewDesc};
+use crate::vulkan::{BufferDesc, ExecutionContext, ImageViewDesc};
 use crate::{BackendError, BackendResult};
 
 use super::pipeline_cache::{load_or_create_pipeline_cache, save_pipeline_cache};
@@ -334,7 +334,7 @@ impl Device {
         result
     }
 
-    pub fn frame<F: FnOnce(FrameContext) -> BackendResult<()>>(
+    pub fn frame<F: FnOnce(&FrameContext) -> BackendResult<()>>(
         &self,
         swapchain: &Swapchain,
         frame_fn: F,
@@ -396,6 +396,17 @@ impl Device {
                 memory: None,
             },
         );
+        let context = FrameContext {
+            frame: &frame,
+            render_area: swapchain.render_area(),
+            target_view: backbuffer
+                .image
+                .get_or_create_view(&self.raw, ImageViewDesc::default())?,
+            target_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            temp_buffer_handle,
+            passes: Mutex::default(),
+        };
+        frame_fn(&context)?;
 
         {
             puffin::profile_scope!("Record frame");
@@ -432,22 +443,16 @@ impl Device {
                     .cmd_pipeline_barrier2(frame.main_cb.raw, &dependency)
             };
 
-            let context = FrameContext {
-                render_area: swapchain.render_area(),
-                target_view: backbuffer
-                    .image
-                    .get_or_create_view(&self.raw, ImageViewDesc::default())?,
-                target_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            let execution_context = ExecutionContext {
                 universal_queue: self.queue_familt_index,
                 device: self,
                 frame: &frame,
                 images: &self.image_storage.read(),
                 buffers: &self.buffer_storage.read(),
+                pipelines: &self.pipelines.read(),
                 descriptors: &self.descriptor_storage.read(),
-                pipelins: &self.pipelines.read(),
-                temp_buffer_handle,
             };
-            frame_fn(context)?;
+            execution_context.execute(context.passes.into_inner().iter())?;
         }
         unsafe { self.raw.end_command_buffer(frame.main_cb.raw) }.unwrap();
 
