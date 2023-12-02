@@ -26,15 +26,15 @@ use dess_assets::{
 use log::{error, info};
 
 use crate::{
-    build_bundle, get_cached_asset_path, AssetDatabase, AssetProcessingContext, Content,
-    ContentImporter, ContentProcessor, ContentSource, Error, GltfContent, GltfContentProcessor,
-    GltfImporter, GltfSource, ImageContent, ImageContentProcessor, ImageImporter, ImageSource,
+    build_bundle, get_cached_asset_path, AssetDatabase, Content, ContentImporter, ContentProcessor,
+    ContentSource, Error, GltfContent, GltfContentProcessor, GltfImporter, GltfSource,
+    ImageContent, ImageContentProcessor, ImageImporter, ImageSource, OfflineAssetProcessingContext,
     ShaderContent, ShaderContentProcessor, ShaderImporter, ASSET_CACHE_PATH, ROOT_DATA_PATH,
 };
 
 #[derive(Debug)]
 pub struct AssetPipeline {
-    context: AssetProcessingContext,
+    context: OfflineAssetProcessingContext,
     name: String,
 }
 
@@ -42,12 +42,12 @@ impl AssetPipeline {
     pub fn new(name: &str) -> Self {
         if let Some(db) = AssetDatabase::try_load(name) {
             Self {
-                context: AssetProcessingContext::from_database(&db),
+                context: OfflineAssetProcessingContext::from_database(&db),
                 name: name.to_owned(),
             }
         } else {
             Self {
-                context: AssetProcessingContext::default(),
+                context: OfflineAssetProcessingContext::default(),
                 name: name.to_owned(),
             }
         }

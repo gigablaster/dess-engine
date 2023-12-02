@@ -23,7 +23,7 @@ use dess_assets::{LocalBundleDesc, ROOT_ASSET_PATH};
 use log::{error, info};
 use speedy::Writable;
 
-use crate::{get_cached_asset_path, read_to_end, AssetProcessingContext};
+use crate::{get_cached_asset_path, read_to_end, OfflineAssetProcessingContext};
 
 const LOCAL_BUNDLE_ALIGN: u64 = 4096;
 
@@ -31,7 +31,7 @@ const LOCAL_BUNDLE_ALIGN: u64 = 4096;
 ///
 /// Doesn't do processing work, just collect already processed files and put them
 /// in bundle in sorted way.
-pub fn build_bundle(context: AssetProcessingContext, name: &str) -> io::Result<()> {
+pub fn build_bundle(context: OfflineAssetProcessingContext, name: &str) -> io::Result<()> {
     let mut target = File::create(Path::new(ROOT_ASSET_PATH).join(format!("{name}.bin")))?;
     let mut desc = LocalBundleDesc::default();
     let all_assets = context.all_assets();

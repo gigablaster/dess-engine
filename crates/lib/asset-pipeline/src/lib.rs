@@ -257,13 +257,13 @@ impl AssetProcessingContextImpl {
 }
 
 #[derive(Debug, Default)]
-pub struct AssetProcessingContext {
+pub struct OfflineAssetProcessingContext {
     inner: Mutex<AssetProcessingContextImpl>,
 }
 
-unsafe impl Sync for AssetProcessingContext {}
+unsafe impl Sync for OfflineAssetProcessingContext {}
 
-impl AssetProcessingContext {
+impl OfflineAssetProcessingContext {
     pub fn from_database(asset_database: &AssetDatabase) -> Self {
         Self {
             inner: Mutex::new(AssetProcessingContextImpl::from_database(asset_database)),
@@ -343,7 +343,7 @@ pub trait ContentProcessor<T: Content, U: Asset>: Default {
     fn process(
         &self,
         asset: AssetRef,
-        context: &AssetProcessingContext,
+        context: &OfflineAssetProcessingContext,
         content: T,
     ) -> Result<U, Error>;
 }

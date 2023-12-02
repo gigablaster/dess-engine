@@ -133,7 +133,7 @@ impl ContentProcessor<ShaderContent, ShaderAsset> for ShaderContentProcessor {
     fn process(
         &self,
         _asset: dess_assets::AssetRef,
-        _context: &crate::AssetProcessingContext,
+        _context: &crate::OfflineAssetProcessingContext,
         content: ShaderContent,
     ) -> Result<ShaderAsset, Error> {
         let code = Self::compile_shader(content.stage, &content.code, &content.defines)?;
