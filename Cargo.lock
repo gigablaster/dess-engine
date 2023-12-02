@@ -172,6 +172,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "asset-manager"
+version = "0.1.0"
+dependencies = [
+ "dess-asset-pipeline",
+ "dess-assets",
+ "dess-backend",
+ "dess-common",
+ "parking_lot",
+]
+
+[[package]]
 name = "atomic-waker"
 version = "1.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

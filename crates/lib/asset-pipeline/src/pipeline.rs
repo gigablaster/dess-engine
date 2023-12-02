@@ -24,9 +24,10 @@ use dess_assets::{Asset, AssetRef, ImageAsset, ModelAsset, ShaderAsset};
 use log::{error, info};
 
 use crate::{
-    build_bundle, cached_asset_path, desc::ShaderSource, AssetDatabase, AssetProcessingContext,
-    CompileShader, Content, ContentImporter, ContentProcessor, CreateImageAsset, CreateModelAsset,
-    Error, GltfSource, ImagePurpose, ImageSource, LoadedGltf, RawImage, ShaderContent,
+    build_bundle, get_cached_asset_path, AssetDatabase, AssetProcessingContext, Content,
+    ContentImporter, ContentProcessor, ContentSource, Error, GltfContent, GltfContentProcessor,
+    GltfImporter, GltfSource, ImageContent, ImageContentProcessor, ImageImporter, ImagePurpose,
+    ImageSource, ShaderContent, ShaderContentProcessor, ShaderImporter, ShaderSource,
     ASSET_CACHE_PATH, ROOT_DATA_PATH,
 };
 
@@ -72,7 +73,8 @@ impl AssetPipeline {
         self.context.set_name(asset, name);
     }
 
-    fn need_update(&self, asset: AssetRef) -> bool {
+    fn need_update<T: ContentSource<U>, U: Content>(&self, source: &T) -> bool {
+        let asset = source.get_asset_ref();
         if let Some(path) = self.context.get_owner(asset) {
             let source_timestamp = Path::new(ROOT_DATA_PATH)
                 .join(path)
@@ -81,7 +83,7 @@ impl AssetPipeline {
                 .modified()
                 .unwrap();
 
-            let asset_path = cached_asset_path(asset);
+            let asset_path = get_cached_asset_path(asset);
             if asset_path.exists() {
                 asset_path.metadata().unwrap().created().unwrap() < source_timestamp
             } else {
@@ -100,17 +102,17 @@ impl AssetPipeline {
             need_work = false;
             let models_to_process = self.context.drain_models_to_process();
             need_work |= !models_to_process.is_empty();
-            self.process_assets::<ModelAsset, LoadedGltf, CreateModelAsset, GltfSource>(
+            self.process_assets::<ModelAsset, GltfContent, GltfSource, GltfContentProcessor, GltfImporter>(
                 models_to_process,
             );
             let images_to_process = self.context.drain_images_to_process();
             need_work |= !images_to_process.is_empty();
-            self.process_assets::<ImageAsset, RawImage, CreateImageAsset, ImageSource>(
+            self.process_assets::<ImageAsset, ImageContent, ImageSource, ImageContentProcessor, ImageImporter>(
                 images_to_process,
             );
             let shades_to_process = self.context.drain_effects_to_process();
             need_work |= !shades_to_process.is_empty();
-            self.process_assets::<ShaderAsset, ShaderContent, CompileShader, ShaderSource>(
+            self.process_assets::<ShaderAsset, ShaderContent, ShaderSource, ShaderContentProcessor, ShaderImporter>(
                 shades_to_process,
             );
         }
@@ -118,36 +120,39 @@ impl AssetPipeline {
         Ok(())
     }
 
-    fn process_single_asset<T, C, P>(
-        &self,
-        asset: AssetRef,
-        importer: impl ContentImporter<C> + Debug,
-    ) -> Result<(), Error>
+    fn process_single_asset<T, C, S, P, I>(&self, source: S, importer: I) -> Result<(), Error>
     where
         T: Asset,
         C: Content,
+        S: ContentSource<C> + Debug,
         P: ContentProcessor<C, T> + Default,
+        I: ContentImporter<C, S> + Send + Debug,
     {
-        info!("Processing content {:?} into asset {}", importer, asset);
-        let data = P::default().process(asset, &self.context, importer.import()?)?;
-        data.serialize(&mut File::create(cached_asset_path(asset))?)?;
+        let asset = source.get_asset_ref();
+        info!("Processing content {:?} into asset {}", source, asset);
+        let data = P::default().process(asset, &self.context, importer.import(source)?)?;
+        data.serialize(&mut File::create(get_cached_asset_path(asset))?)?;
 
         Ok(())
     }
 
-    fn process_assets<T, C, P, I>(&self, data: Vec<(AssetRef, I)>)
+    fn process_assets<T, C, S, P, I>(&self, data: Vec<S>)
     where
         T: Asset,
         C: Content,
+        S: ContentSource<C> + Debug + Clone,
         P: ContentProcessor<C, T> + Default,
-        I: ContentImporter<C> + Send + Debug,
+        I: ContentImporter<C, S> + Default + Send + Debug,
     {
         let mut data = data;
         rayon::scope(|s| {
-            data.drain(..).for_each(|(asset, importer)| {
-                if self.need_update(asset) {
+            data.drain(..).for_each(|source| {
+                if self.need_update(&source) {
+                    let source = source.clone();
                     s.spawn(move |_| {
-                        if let Err(err) = self.process_single_asset::<T, C, P>(asset, importer) {
+                        if let Err(err) =
+                            self.process_single_asset::<T, C, S, P, I>(source, I::default())
+                        {
                             error!("Asset processing failed: {:?}", err);
                         };
                     })

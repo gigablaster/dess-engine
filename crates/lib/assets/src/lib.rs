@@ -49,6 +49,10 @@ impl AssetRef {
         Self(uuid)
     }
 
+    pub fn from_u128(value: u128) -> Self {
+        Self(Uuid::from_u128(value))
+    }
+
     pub fn from_path(path: &Path) -> Self {
         Self::from_bytes(path.to_str().unwrap().as_bytes())
     }
@@ -104,7 +108,7 @@ pub trait Asset: Sized + Any {
     fn deserialize<R: Read>(r: &mut R) -> io::Result<Self>;
 }
 
-struct MappedFile {
+pub struct MappedFile {
     mmap: Mmap,
 }
 
@@ -116,7 +120,7 @@ impl MappedFile {
         })
     }
 
-    fn data(&self) -> &[u8] {
+    pub fn data(&self) -> &[u8] {
         &self.mmap
     }
 }

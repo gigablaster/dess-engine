@@ -23,7 +23,7 @@ use dess_assets::{LocalBundleDesc, ROOT_ASSET_PATH};
 use log::{error, info};
 use speedy::Writable;
 
-use crate::{cached_asset_path, read_to_end, AssetProcessingContext};
+use crate::{get_cached_asset_path, read_to_end, AssetProcessingContext};
 
 const LOCAL_BUNDLE_ALIGN: u64 = 4096;
 
@@ -36,7 +36,7 @@ pub fn build_bundle(context: AssetProcessingContext, name: &str) -> io::Result<(
     let mut desc = LocalBundleDesc::default();
     let all_assets = context.all_assets();
     for info in all_assets {
-        let src_path = cached_asset_path(info.asset);
+        let src_path = get_cached_asset_path(info.asset);
         if src_path.exists() {
             let data = read_to_end(src_path)?;
             let size = data.len() as u32;

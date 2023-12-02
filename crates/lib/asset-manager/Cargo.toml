@@ -1,0 +1,13 @@
+[package]
+name = "asset-manager"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dess-common = { path = "../common" }
+dess-backend = { path = "../backend" }
+dess-assets = { path = "../assets" }
+dess-asset-pipeline = { path = "../asset-pipeline" }
+parking_lot = "0.12.1"

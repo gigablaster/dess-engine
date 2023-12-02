@@ -15,7 +15,7 @@
 
 use std::path::PathBuf;
 
-use ash::vk;
+use ash::vk::{self};
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use dess_assets::{AssetRef, ImageAsset};
@@ -24,7 +24,7 @@ use intel_tex_2::{bc5, bc7};
 
 use crate::{
     get_absolute_asset_path, read_to_end, AssetProcessingContext, Content, ContentImporter,
-    ContentProcessor, Error,
+    ContentProcessor, ContentSource, Error,
 };
 
 #[derive(Debug)]
@@ -44,6 +44,16 @@ pub enum ImageDataSource {
 pub struct ImageSource {
     pub source: ImageDataSource,
     pub purpose: ImagePurpose,
+}
+
+impl ContentSource<ImageContent> for ImageSource {
+    fn get_asset_ref(&self) -> AssetRef {
+        match &self.source {
+            ImageDataSource::File(path) => AssetRef::from_path_with(&path, &self.purpose),
+            ImageDataSource::Bytes(bytes) => AssetRef::from_bytes_with(&bytes, &self.purpose),
+            ImageDataSource::Placeholder(pixel) => AssetRef::from_bytes_with(pixel, &self.purpose),
+        }
+    }
 }
 
 impl ImageSource {
@@ -84,16 +94,19 @@ pub enum RawImageData {
     Dds(Box<Dds>),
 }
 
-pub struct RawImage {
+pub struct ImageContent {
     data: RawImageData,
     purpose: ImagePurpose,
 }
 
-impl Content for RawImage {}
+impl Content for ImageContent {}
 
-impl ContentImporter<RawImage> for ImageSource {
-    fn import(&self) -> Result<RawImage, Error> {
-        let bytes = match &self.source {
+#[derive(Debug, Default)]
+pub struct ImageImporter;
+
+impl ContentImporter<ImageContent, ImageSource> for ImageImporter {
+    fn import(&self, source: ImageSource) -> Result<ImageContent, Error> {
+        let bytes = match &source.source {
             ImageDataSource::Bytes(bytes) => Bytes::clone(bytes),
             ImageDataSource::File(path) => {
                 Bytes::copy_from_slice(&read_to_end(get_absolute_asset_path(path)?)?)
@@ -103,16 +116,16 @@ impl ContentImporter<RawImage> for ImageSource {
                     data: Bytes::copy_from_slice(pixels),
                     dimensions: [1, 1],
                 };
-                return Ok(RawImage {
+                return Ok(ImageContent {
                     data: RawImageData::Rgba(data),
-                    purpose: self.purpose,
+                    purpose: source.purpose,
                 });
             }
         };
         if let Ok(dds) = Dds::read(bytes.as_ref()) {
-            Ok(RawImage {
+            Ok(ImageContent {
                 data: RawImageData::Dds(Box::new(dds)),
-                purpose: self.purpose,
+                purpose: source.purpose,
             })
         } else {
             let image = image::load_from_memory(&bytes)
@@ -120,37 +133,14 @@ impl ContentImporter<RawImage> for ImageSource {
             let dimensions = [image.dimensions().0, image.dimensions().1];
             let image = image.to_rgba8();
 
-            Ok(RawImage {
+            Ok(ImageContent {
                 data: RawImageData::Rgba(ImageRgba8Data {
                     data: image.into_raw().into(),
                     dimensions,
                 }),
-                purpose: self.purpose,
+                purpose: source.purpose,
             })
         }
-    }
-}
-
-pub struct CreatePlaceholderImage {
-    data: [u8; 4],
-    purpose: ImagePurpose,
-}
-
-impl CreatePlaceholderImage {
-    pub fn new(data: [u8; 4], purpose: ImagePurpose) -> Self {
-        Self { data, purpose }
-    }
-}
-
-impl ContentImporter<RawImage> for CreatePlaceholderImage {
-    fn import(&self) -> Result<RawImage, Error> {
-        Ok(RawImage {
-            data: RawImageData::Rgba(ImageRgba8Data {
-                data: Bytes::from(self.data.to_vec()),
-                dimensions: [1, 1],
-            }),
-            purpose: self.purpose,
-        })
     }
 }
 
@@ -168,7 +158,7 @@ pub enum ImagePurpose {
 }
 
 #[derive(Debug, Default)]
-pub struct CreateImageAsset {}
+pub struct ImageContentProcessor {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BcMode {
@@ -185,7 +175,7 @@ impl BcMode {
     }
 }
 
-impl CreateImageAsset {
+impl ImageContentProcessor {
     fn process_dds(image: &Dds) -> Result<ImageAsset, Error> {
         if let Some(format) = Self::get_vk_format(image) {
             let data = image
@@ -337,12 +327,12 @@ impl CreateImageAsset {
     }
 }
 
-impl ContentProcessor<RawImage, ImageAsset> for CreateImageAsset {
+impl ContentProcessor<ImageContent, ImageAsset> for ImageContentProcessor {
     fn process(
         &self,
         _asset: AssetRef,
         _context: &AssetProcessingContext,
-        content: RawImage,
+        content: ImageContent,
     ) -> Result<ImageAsset, Error> {
         match content.data {
             RawImageData::Dds(dds) => Self::process_dds(&dds),

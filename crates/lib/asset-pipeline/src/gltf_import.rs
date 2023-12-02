@@ -30,12 +30,18 @@ use numquant::linear::quantize;
 
 use crate::{
     get_absolute_asset_path, get_relative_asset_path, AssetProcessingContext, Content,
-    ContentImporter, ContentProcessor, Error, ImagePurpose, ImageSource,
+    ContentImporter, ContentProcessor, ContentSource, Error, ImagePurpose, ImageSource,
 };
 
 #[derive(Debug, Clone, Hash)]
 pub struct GltfSource {
     pub path: PathBuf,
+}
+
+impl ContentSource<GltfContent> for GltfSource {
+    fn get_asset_ref(&self) -> AssetRef {
+        AssetRef::from_path(&self.path)
+    }
 }
 
 impl GltfSource {
@@ -45,7 +51,7 @@ impl GltfSource {
 }
 
 #[derive(Debug)]
-pub struct LoadedGltf {
+pub struct GltfContent {
     path: PathBuf,
     base: PathBuf,
     document: gltf::Document,
@@ -53,18 +59,21 @@ pub struct LoadedGltf {
     _images: Vec<gltf::image::Data>,
 }
 
-impl Content for LoadedGltf {}
+impl Content for GltfContent {}
 
-impl ContentImporter<LoadedGltf> for GltfSource {
-    fn import(&self) -> Result<LoadedGltf, Error> {
-        let (document, buffers, images) = gltf::import(get_absolute_asset_path(&self.path)?)
+#[derive(Debug, Default)]
+pub struct GltfImporter;
+
+impl ContentImporter<GltfContent, GltfSource> for GltfImporter {
+    fn import(&self, source: GltfSource) -> Result<GltfContent, Error> {
+        let (document, buffers, images) = gltf::import(get_absolute_asset_path(&source.path)?)
             .map_err(|err| Error::ImportFailed(err.to_string()))?;
-        let base = get_relative_asset_path(&self.path)?
+        let base = get_relative_asset_path(&source.path)?
             .parent()
             .unwrap()
             .into();
-        Ok(LoadedGltf {
-            path: self.path.clone(),
+        Ok(GltfContent {
+            path: source.path.clone(),
             document,
             buffers,
             _images: images,
@@ -85,9 +94,9 @@ struct ModelImportContext {
 }
 
 #[derive(Debug, Default)]
-pub struct CreateModelAsset {}
+pub struct GltfContentProcessor {}
 
-impl CreateModelAsset {
+impl GltfContentProcessor {
     fn set_normal_texture(
         &self,
         context: &AssetProcessingContext,
@@ -533,12 +542,12 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
     }
 }
 
-impl ContentProcessor<LoadedGltf, ModelAsset> for CreateModelAsset {
+impl ContentProcessor<GltfContent, ModelAsset> for GltfContentProcessor {
     fn process(
         &self,
         asset: AssetRef,
         context: &AssetProcessingContext,
-        content: LoadedGltf,
+        content: GltfContent,
     ) -> Result<ModelAsset, Error> {
         let mut import_context = ModelImportContext {
             base: content.base,

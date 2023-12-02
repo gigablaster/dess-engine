@@ -14,20 +14,40 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     fs::{self},
+    hash::{self, Hash},
     path::{Path, PathBuf},
 };
 
 use crate::{
-    desc::ShaderSource, get_absolute_asset_path, Content, ContentImporter, ContentProcessor, Error,
+    get_absolute_asset_path, Content, ContentImporter, ContentProcessor, ContentSource, Error,
 };
-use dess_assets::{ShaderAsset, ShaderStage, SpecializationConstant};
+use dess_assets::{AssetRef, ShaderAsset, ShaderStage, SpecializationConstant};
 use normalize_path::NormalizePath;
+use serde::{Deserialize, Serialize};
+use siphasher::sip128::Hasher128;
 
-#[derive(Debug, Clone)]
-pub struct EffectSource {
-    pub path: PathBuf,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShaderSource {
+    pub source: String,
+    pub stage: ShaderStage,
+    pub defines: Option<Vec<String>>,
+    pub specializations: Option<HashMap<SpecializationConstant, usize>>,
+}
+
+impl ContentSource<ShaderContent> for ShaderSource {
+    fn get_asset_ref(&self) -> dess_assets::AssetRef {
+        let mut hasher = siphasher::sip128::SipHasher::default();
+        self.source.hash(&mut hasher);
+        self.stage.hash(&mut hasher);
+        self.defines.hash(&mut hasher);
+        self.specializations
+            .iter()
+            .for_each(|x| x.iter().for_each(|x| x.hash(&mut hasher)));
+
+        AssetRef::from_u128(hasher.finish128().as_u128())
+    }
 }
 
 #[derive(Debug)]
@@ -41,9 +61,12 @@ pub struct ShaderContent {
 
 impl Content for ShaderContent {}
 
-impl ContentImporter<ShaderContent> for ShaderSource {
-    fn import(&self) -> Result<ShaderContent, crate::Error> {
-        let path = Path::new(&self.source).to_owned();
+#[derive(Debug, Default)]
+pub struct ShaderImporter;
+
+impl ContentImporter<ShaderContent, ShaderSource> for ShaderImporter {
+    fn import(&self, source: ShaderSource) -> Result<ShaderContent, crate::Error> {
+        let path = Path::new(&source.source).to_owned();
         let chunks = shader_prepper::process_file(
             get_absolute_asset_path(&path)?
                 .to_str()
@@ -56,11 +79,11 @@ impl ContentImporter<ShaderContent> for ShaderSource {
         let mut code = String::new();
         chunks.iter().for_each(|chunk| code += &chunk.source);
         let shader = ShaderContent {
-            stage: self.stage,
+            stage: source.stage,
             code,
             sources: chunks.iter().map(|x| x.file.to_owned()).collect(),
-            defines: self.defines.clone().unwrap_or_default().to_vec(),
-            specializations: self
+            defines: source.defines.clone().unwrap_or_default().to_vec(),
+            specializations: source
                 .specializations
                 .clone()
                 .unwrap_or_default()
@@ -97,9 +120,9 @@ impl shader_prepper::IncludeProvider for FileIncludeProvider {
 }
 
 #[derive(Debug, Default)]
-pub struct CompileShader;
+pub struct ShaderContentProcessor;
 
-impl CompileShader {
+impl ShaderContentProcessor {
     fn compile_shader(stage: ShaderStage, code: &str, flags: &[String]) -> Result<Vec<u8>, Error> {
         let profile = match stage {
             ShaderStage::Vertex => "vs_6_4",
@@ -129,7 +152,7 @@ impl CompileShader {
     }
 }
 
-impl ContentProcessor<ShaderContent, ShaderAsset> for CompileShader {
+impl ContentProcessor<ShaderContent, ShaderAsset> for ShaderContentProcessor {
     fn process(
         &self,
         _asset: dess_assets::AssetRef,

@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use desc::ShaderSource;
 use dess_assets::{Asset, AssetRef, ImageAsset, ModelAsset, ShaderAsset};
 use log::info;
 use parking_lot::Mutex;
@@ -121,7 +120,7 @@ impl AssetProcessingContextImpl {
             *asset
         } else {
             info!("Requested model import {:?}", path);
-            let asset = AssetRef::from_path(&model.path);
+            let asset = model.get_asset_ref();
             self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model.clone());
             self.assets.insert(AssetInfo::new::<ModelAsset>(asset));
@@ -132,13 +131,13 @@ impl AssetProcessingContextImpl {
     }
 
     pub fn import_image(&mut self, image: &ImageSource, owner: Option<&Path>) -> AssetRef {
+        let asset = image.get_asset_ref();
         match &image.source {
             ImageDataSource::File(path) => {
                 let path = get_relative_asset_path(path).unwrap();
                 if let Some(asset) = self.images.get(&path) {
                     *asset
                 } else {
-                    let asset = AssetRef::from_path_with(&path, &image.purpose);
                     info!("Requested image import {:?} ref: {}", path, asset);
                     self.images.insert(path.clone(), asset);
                     self.images_to_process.insert(asset, image.clone());
@@ -150,7 +149,6 @@ impl AssetProcessingContextImpl {
                 }
             }
             ImageDataSource::Bytes(bytes) => {
-                let asset = AssetRef::from_bytes(bytes);
                 if self.assets.contains(&AssetInfo::new::<ImageAsset>(asset)) {
                     asset
                 } else {
@@ -166,7 +164,6 @@ impl AssetProcessingContextImpl {
                 }
             }
             ImageDataSource::Placeholder(value) => {
-                let asset = AssetRef::from_bytes_with(value, &image.purpose);
                 if self.assets.contains(&AssetInfo::new::<ImageAsset>(asset)) {
                     asset
                 } else {
@@ -185,11 +182,11 @@ impl AssetProcessingContextImpl {
     }
 
     pub fn import_shader(&mut self, shader: &ShaderSource) -> AssetRef {
+        let asset = shader.get_asset_ref();
         let path = get_relative_asset_path(Path::new(&shader.source)).unwrap();
         if let Some(asset) = self.shaders.get(&path) {
             *asset
         } else {
-            let asset = AssetRef::from_path(&path);
             info!("Requested shader import {:?} ref: {}", shader, asset);
             self.assets.insert(AssetInfo::new::<ShaderAsset>(asset));
             self.shaders_to_process.insert(asset, shader.clone());
@@ -211,16 +208,16 @@ impl AssetProcessingContextImpl {
         self.names.insert(name.replace('\\', "/"), asset);
     }
 
-    pub fn drain_models_to_process(&mut self) -> Vec<(AssetRef, GltfSource)> {
-        self.models_to_process.drain().collect()
+    pub fn drain_models_to_process(&mut self) -> Vec<GltfSource> {
+        self.models_to_process.drain().map(|x| x.1).collect()
     }
 
-    pub fn drain_images_to_process(&mut self) -> Vec<(AssetRef, ImageSource)> {
-        self.images_to_process.drain().collect()
+    pub fn drain_images_to_process(&mut self) -> Vec<ImageSource> {
+        self.images_to_process.drain().map(|x| x.1).collect()
     }
 
-    pub fn drain_shaders_to_process(&mut self) -> Vec<(AssetRef, ShaderSource)> {
-        self.shaders_to_process.drain().collect()
+    pub fn drain_shaders_to_process(&mut self) -> Vec<ShaderSource> {
+        self.shaders_to_process.drain().map(|x| x.1).collect()
     }
 
     pub fn all_assets(&self) -> Vec<AssetInfo> {
@@ -286,15 +283,15 @@ impl AssetProcessingContext {
         self.inner.lock().import_shader(effect)
     }
 
-    pub fn drain_models_to_process(&self) -> Vec<(AssetRef, GltfSource)> {
+    pub fn drain_models_to_process(&self) -> Vec<GltfSource> {
         self.inner.lock().drain_models_to_process()
     }
 
-    pub fn drain_images_to_process(&self) -> Vec<(AssetRef, ImageSource)> {
+    pub fn drain_images_to_process(&self) -> Vec<ImageSource> {
         self.inner.lock().drain_images_to_process()
     }
 
-    pub fn drain_effects_to_process(&self) -> Vec<(AssetRef, ShaderSource)> {
+    pub fn drain_effects_to_process(&self) -> Vec<ShaderSource> {
         self.inner.lock().drain_shaders_to_process()
     }
 
@@ -331,10 +328,14 @@ impl AssetProcessingContext {
     }
 }
 
+pub trait ContentSource<T: Content>: Send + Sync {
+    fn get_asset_ref(&self) -> AssetRef;
+}
+
 pub trait Content {}
 
-pub trait ContentImporter<T: Content> {
-    fn import(&self) -> Result<T, Error>;
+pub trait ContentImporter<T: Content, U: ContentSource<T>> {
+    fn import(&self, source: U) -> Result<T, Error>;
 }
 
 pub trait ContentProcessor<T: Content, U: Asset>: Default {
@@ -346,7 +347,7 @@ pub trait ContentProcessor<T: Content, U: Asset>: Default {
     ) -> Result<U, Error>;
 }
 
-pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
+pub fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
     let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
     // Is this path relative to data folder? Check this option.
     let path = if !path.exists() {
@@ -359,7 +360,7 @@ pub(crate) fn get_relative_asset_path(path: &Path) -> Result<PathBuf, Error> {
     Ok(path.strip_prefix(root).unwrap().into())
 }
 
-pub(crate) fn get_absolute_asset_path(path: &Path) -> Result<PathBuf, Error> {
+pub fn get_absolute_asset_path(path: &Path) -> Result<PathBuf, Error> {
     let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
     Ok(root.join(get_relative_asset_path(path)?))
 }
@@ -379,7 +380,7 @@ where
     Ok(data)
 }
 
-fn cached_asset_path(asset: AssetRef) -> PathBuf {
+pub fn get_cached_asset_path(asset: AssetRef) -> PathBuf {
     Path::new(ASSET_CACHE_PATH).join(Path::new(&format!("{}.bin", asset)))
 }
 
