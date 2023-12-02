@@ -13,10 +13,87 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::path::PathBuf;
+
 use ash::vk;
+use bytes::Bytes;
 use speedy::{Context, Readable, Writable};
 
-use crate::Asset;
+use crate::{Asset, AssetRef, AssetRefProvider};
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "purpose")]
+pub enum ImagePurpose {
+    #[serde(rename = "color")]
+    Color,
+    #[serde(rename = "data")]
+    NonColor,
+    #[serde(rename = "normals")]
+    Normals,
+    #[serde(rename = "sprite")]
+    Sprite,
+}
+
+#[derive(Debug)]
+pub struct ImageRgba8Data {
+    pub data: Bytes,
+    pub dimensions: [u32; 2],
+}
+
+#[derive(Debug, Clone)]
+pub enum ImageDataSource {
+    File(PathBuf),
+    Bytes(Bytes),
+    Placeholder([u8; 4]),
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageSource {
+    pub source: ImageDataSource,
+    pub purpose: ImagePurpose,
+}
+
+impl AssetRefProvider for ImageSource {
+    fn asset_ref(&self) -> AssetRef {
+        match &self.source {
+            ImageDataSource::File(path) => AssetRef::from_path_with(&path, &self.purpose),
+            ImageDataSource::Bytes(bytes) => AssetRef::from_bytes_with(&bytes, &self.purpose),
+            ImageDataSource::Placeholder(pixel) => AssetRef::from_bytes_with(pixel, &self.purpose),
+        }
+    }
+}
+
+impl ImageSource {
+    pub fn from_file(path: impl Into<PathBuf>, purpose: ImagePurpose) -> Self {
+        Self {
+            source: ImageDataSource::File(path.into()),
+            purpose,
+        }
+    }
+
+    pub fn from_bytes(bytes: &[u8], purpose: ImagePurpose) -> Self {
+        Self {
+            source: ImageDataSource::Bytes(Bytes::copy_from_slice(bytes)),
+            purpose,
+        }
+    }
+
+    pub fn from_color(color: [f32; 4], purpose: ImagePurpose) -> Self {
+        Self {
+            source: ImageDataSource::Placeholder(color_to_pixles(color)),
+            purpose,
+        }
+    }
+}
+
+fn color_to_pixles(color: [f32; 4]) -> [u8; 4] {
+    [
+        (color[0].clamp(0.0, 1.0) * 255.0) as u8,
+        (color[1].clamp(0.0, 1.0) * 255.0) as u8,
+        (color[2].clamp(0.0, 1.0) * 255.0) as u8,
+        (color[3].clamp(0.0, 1.0) * 255.0) as u8,
+    ]
+}
 
 #[derive(Debug)]
 pub struct ImageAsset {

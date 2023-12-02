@@ -124,3 +124,7 @@ impl MappedFile {
         &self.mmap
     }
 }
+
+pub trait AssetRefProvider {
+    fn asset_ref(&self) -> AssetRef;
+}

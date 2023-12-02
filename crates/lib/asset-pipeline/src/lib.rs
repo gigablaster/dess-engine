@@ -21,7 +21,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use dess_assets::{Asset, AssetRef, ImageAsset, ModelAsset, ShaderAsset};
+use dess_assets::{
+    Asset, AssetRef, AssetRefProvider, GltfSource, ImageAsset, ImageDataSource, ImageSource,
+    ModelAsset, ShaderAsset, ShaderSource,
+};
 use log::info;
 use parking_lot::Mutex;
 
@@ -120,7 +123,7 @@ impl AssetProcessingContextImpl {
             *asset
         } else {
             info!("Requested model import {:?}", path);
-            let asset = model.get_asset_ref();
+            let asset = model.asset_ref();
             self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model.clone());
             self.assets.insert(AssetInfo::new::<ModelAsset>(asset));
@@ -131,7 +134,7 @@ impl AssetProcessingContextImpl {
     }
 
     pub fn import_image(&mut self, image: &ImageSource, owner: Option<&Path>) -> AssetRef {
-        let asset = image.get_asset_ref();
+        let asset = image.asset_ref();
         match &image.source {
             ImageDataSource::File(path) => {
                 let path = get_relative_asset_path(path).unwrap();
@@ -182,7 +185,7 @@ impl AssetProcessingContextImpl {
     }
 
     pub fn import_shader(&mut self, shader: &ShaderSource) -> AssetRef {
-        let asset = shader.get_asset_ref();
+        let asset = shader.asset_ref();
         let path = get_relative_asset_path(Path::new(&shader.source)).unwrap();
         if let Some(asset) = self.shaders.get(&path) {
             *asset
@@ -328,9 +331,7 @@ impl AssetProcessingContext {
     }
 }
 
-pub trait ContentSource<T: Content>: Send + Sync {
-    fn get_asset_ref(&self) -> AssetRef;
-}
+pub trait ContentSource<T: Content>: AssetRefProvider + Send + Sync {}
 
 pub trait Content {}
 

@@ -20,7 +20,7 @@ use std::{
     path::Path,
 };
 
-use dess_asset_pipeline::{get_cached_asset_path, ImageSource};
+use dess_asset_pipeline::get_cached_asset_path;
 use dess_assets::{Asset, AssetRef, MappedFile};
 use dess_backend::vulkan::{Device, ImageHandle, ProgramHandle};
 use parking_lot::RwLock;

@@ -18,7 +18,9 @@ use std::path::PathBuf;
 use ash::vk::{self};
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
-use dess_assets::{AssetRef, ImageAsset};
+use dess_assets::{
+    AssetRef, ImageAsset, ImageDataSource, ImagePurpose, ImageRgba8Data, ImageSource,
+};
 use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
@@ -27,66 +29,7 @@ use crate::{
     ContentProcessor, ContentSource, Error,
 };
 
-#[derive(Debug)]
-pub struct ImageRgba8Data {
-    pub data: Bytes,
-    pub dimensions: [u32; 2],
-}
-
-#[derive(Debug, Clone)]
-pub enum ImageDataSource {
-    File(PathBuf),
-    Bytes(Bytes),
-    Placeholder([u8; 4]),
-}
-
-#[derive(Debug, Clone)]
-pub struct ImageSource {
-    pub source: ImageDataSource,
-    pub purpose: ImagePurpose,
-}
-
-impl ContentSource<ImageContent> for ImageSource {
-    fn get_asset_ref(&self) -> AssetRef {
-        match &self.source {
-            ImageDataSource::File(path) => AssetRef::from_path_with(&path, &self.purpose),
-            ImageDataSource::Bytes(bytes) => AssetRef::from_bytes_with(&bytes, &self.purpose),
-            ImageDataSource::Placeholder(pixel) => AssetRef::from_bytes_with(pixel, &self.purpose),
-        }
-    }
-}
-
-impl ImageSource {
-    pub fn from_file(path: impl Into<PathBuf>, purpose: ImagePurpose) -> Self {
-        Self {
-            source: ImageDataSource::File(path.into()),
-            purpose,
-        }
-    }
-
-    pub fn from_bytes(bytes: &[u8], purpose: ImagePurpose) -> Self {
-        Self {
-            source: ImageDataSource::Bytes(Bytes::copy_from_slice(bytes)),
-            purpose,
-        }
-    }
-
-    pub fn from_color(color: glam::Vec4, purpose: ImagePurpose) -> Self {
-        Self {
-            source: ImageDataSource::Placeholder(color_to_pixles(color)),
-            purpose,
-        }
-    }
-}
-
-fn color_to_pixles(color: glam::Vec4) -> [u8; 4] {
-    [
-        (color.x.clamp(0.0, 1.0) * 255.0) as u8,
-        (color.y.clamp(0.0, 1.0) * 255.0) as u8,
-        (color.z.clamp(0.0, 1.0) * 255.0) as u8,
-        (color.w.clamp(0.0, 1.0) * 255.0) as u8,
-    ]
-}
+impl ContentSource<ImageContent> for ImageSource {}
 
 #[derive(Debug)]
 pub enum RawImageData {
@@ -142,19 +85,6 @@ impl ContentImporter<ImageContent, ImageSource> for ImageImporter {
             })
         }
     }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(tag = "purpose")]
-pub enum ImagePurpose {
-    #[serde(rename = "color")]
-    Color,
-    #[serde(rename = "data")]
-    NonColor,
-    #[serde(rename = "normals")]
-    Normals,
-    #[serde(rename = "sprite")]
-    Sprite,
 }
 
 #[derive(Debug, Default)]

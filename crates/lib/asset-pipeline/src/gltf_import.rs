@@ -16,9 +16,9 @@
 use std::{collections::HashMap, path::PathBuf};
 
 use dess_assets::{
-    AssetRef, BlendMode, Bone, LightingAttributes, Material, MaterialBaseColor, MaterialBlend,
-    MaterialEmission, MaterialNormals, MaterialOcclusion, MaterialValues, MeshData, ModelAsset,
-    PbrMaterial, StaticMeshGeometry, Surface, UnlitMaterial,
+    AssetRef, BlendMode, Bone, GltfSource, ImagePurpose, ImageSource, LightingAttributes, Material,
+    MaterialBaseColor, MaterialBlend, MaterialEmission, MaterialNormals, MaterialOcclusion,
+    MaterialValues, MeshData, ModelAsset, PbrMaterial, StaticMeshGeometry, Surface, UnlitMaterial,
 };
 use gltf::{
     material::{AlphaMode, NormalTexture, OcclusionTexture, PbrMetallicRoughness},
@@ -30,25 +30,8 @@ use numquant::linear::quantize;
 
 use crate::{
     get_absolute_asset_path, get_relative_asset_path, AssetProcessingContext, Content,
-    ContentImporter, ContentProcessor, ContentSource, Error, ImagePurpose, ImageSource,
+    ContentImporter, ContentProcessor, ContentSource, Error,
 };
-
-#[derive(Debug, Clone, Hash)]
-pub struct GltfSource {
-    pub path: PathBuf,
-}
-
-impl ContentSource<GltfContent> for GltfSource {
-    fn get_asset_ref(&self) -> AssetRef {
-        AssetRef::from_path(&self.path)
-    }
-}
-
-impl GltfSource {
-    pub fn new(path: impl Into<PathBuf>) -> Self {
-        Self { path: path.into() }
-    }
-}
 
 #[derive(Debug)]
 pub struct GltfContent {
@@ -58,6 +41,8 @@ pub struct GltfContent {
     buffers: Vec<gltf::buffer::Data>,
     _images: Vec<gltf::image::Data>,
 }
+
+impl ContentSource<GltfContent> for GltfSource {}
 
 impl Content for GltfContent {}
 
@@ -215,7 +200,7 @@ impl GltfContentProcessor {
         purpose: ImagePurpose,
     ) -> AssetRef {
         context.import_image(
-            &ImageSource::from_color(color, purpose),
+            &ImageSource::from_color(color.to_array(), purpose),
             Some(&model_context.path),
         )
     }

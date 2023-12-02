@@ -20,15 +20,16 @@ use std::{
     path::Path,
 };
 
-use dess_assets::{Asset, AssetRef, ImageAsset, ModelAsset, ShaderAsset};
+use dess_assets::{
+    Asset, AssetRef, ImageAsset, ImagePurpose, ModelAsset, ShaderAsset, ShaderSource,
+};
 use log::{error, info};
 
 use crate::{
     build_bundle, get_cached_asset_path, AssetDatabase, AssetProcessingContext, Content,
     ContentImporter, ContentProcessor, ContentSource, Error, GltfContent, GltfContentProcessor,
-    GltfImporter, GltfSource, ImageContent, ImageContentProcessor, ImageImporter, ImagePurpose,
-    ImageSource, ShaderContent, ShaderContentProcessor, ShaderImporter, ShaderSource,
-    ASSET_CACHE_PATH, ROOT_DATA_PATH,
+    GltfImporter, GltfSource, ImageContent, ImageContentProcessor, ImageImporter, ImageSource,
+    ShaderContent, ShaderContentProcessor, ShaderImporter, ASSET_CACHE_PATH, ROOT_DATA_PATH,
 };
 
 #[derive(Debug)]
@@ -74,7 +75,7 @@ impl AssetPipeline {
     }
 
     fn need_update<T: ContentSource<U>, U: Content>(&self, source: &T) -> bool {
-        let asset = source.get_asset_ref();
+        let asset = source.asset_ref();
         if let Some(path) = self.context.get_owner(asset) {
             let source_timestamp = Path::new(ROOT_DATA_PATH)
                 .join(path)
@@ -128,7 +129,7 @@ impl AssetPipeline {
         P: ContentProcessor<C, T> + Default,
         I: ContentImporter<C, S> + Send + Debug,
     {
-        let asset = source.get_asset_ref();
+        let asset = source.asset_ref();
         info!("Processing content {:?} into asset {}", source, asset);
         let data = P::default().process(asset, &self.context, importer.import(source)?)?;
         data.serialize(&mut File::create(get_cached_asset_path(asset))?)?;

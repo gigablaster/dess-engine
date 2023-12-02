@@ -15,9 +15,8 @@
 
 use std::collections::HashMap;
 
+use dess_assets::{ImagePurpose, ShaderSource};
 use serde::{Deserialize, Serialize};
-
-use crate::{ImagePurpose, ShaderSource};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ImageDesc {

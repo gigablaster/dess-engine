@@ -13,10 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::{collections::HashMap, hash::Hash};
+
 use serde::{Deserialize, Serialize};
+use siphasher::sip128::Hasher128;
 use speedy::{Readable, Writable};
 
-use crate::Asset;
+use crate::{Asset, AssetRef, AssetRefProvider};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
 pub enum ShaderStage {
@@ -26,89 +29,26 @@ pub enum ShaderStage {
     Fragment,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
-pub enum BlendFactor {
-    #[serde(rename = "zero")]
-    Zero,
-    #[serde(rename = "one")]
-    One,
-    #[serde(rename = "src_color")]
-    SrcColor,
-    #[serde(rename = "one_minus_src_color")]
-    OneMinusSrcColor,
-    #[serde(rename = "dst_color")]
-    DstColor,
-    #[serde(rename = "one_minus_dst_color")]
-    OneMinusDstColor,
-    #[serde(rename = "src_alpha")]
-    SrcAlpha,
-    #[serde(rename = "one_minus_src_alpha")]
-    OneMinusSrcAlpha,
-    #[serde(rename = "dst_alpha")]
-    DstAlpha,
-    #[serde(rename = "one_minus_dst_alpha")]
-    OneMinusDstAlpha,
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ShaderSource {
+    pub source: String,
+    pub stage: ShaderStage,
+    pub defines: Option<Vec<String>>,
+    pub specializations: Option<HashMap<SpecializationConstant, usize>>,
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
-pub enum BlendOp {
-    #[serde(rename = "add")]
-    Add,
-    #[serde(rename = "subtract")]
-    Subtract,
-    #[serde(rename = "reverse_subtract")]
-    ReverseSubtract,
-    #[serde(rename = "min")]
-    Min,
-    #[serde(rename = "max")]
-    Max,
-}
+impl AssetRefProvider for ShaderSource {
+    fn asset_ref(&self) -> AssetRef {
+        let mut hasher = siphasher::sip128::SipHasher::default();
+        self.source.hash(&mut hasher);
+        self.stage.hash(&mut hasher);
+        self.defines.hash(&mut hasher);
+        self.specializations
+            .iter()
+            .for_each(|x| x.iter().for_each(|x| x.hash(&mut hasher)));
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
-pub enum CompareOp {
-    #[serde(rename = "never")]
-    Never,
-    #[serde(rename = "less")]
-    Less,
-    #[serde(rename = "equal")]
-    Equal,
-    #[serde(rename = "less_or_equal")]
-    LessOrEqual,
-    #[serde(rename = "greater")]
-    Greater,
-    #[serde(rename = "not_equal")]
-    NotEqual,
-    #[serde(rename = "greater_or_equal")]
-    GreatedOrEqual,
-    #[serde(rename = "always")]
-    Always,
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
-pub enum CullMode {
-    #[serde(rename = "none")]
-    None,
-    #[serde(rename = "front")]
-    Front,
-    #[serde(rename = "back")]
-    Back,
-    #[serde(rename = "both")]
-    FrontAndBack,
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
-pub enum FrontFace {
-    #[serde(rename = "cw")]
-    Clockwise,
-    #[serde(rename = "ccw")]
-    CounterClockwise,
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
-pub struct BlendDesc {
-    pub src: BlendFactor,
-    pub dst: BlendFactor,
-    pub op: BlendOp,
+        AssetRef::from_u128(hasher.finish128().as_u128())
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]

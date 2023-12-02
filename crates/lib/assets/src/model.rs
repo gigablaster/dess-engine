@@ -13,11 +13,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, path::PathBuf};
 
 use speedy::{Context, Readable, Writable};
 
-use crate::{Asset, Material};
+use crate::{Asset, AssetRef, AssetRefProvider, Material};
+
+#[derive(Debug, Clone, Hash)]
+pub struct GltfSource {
+    pub path: PathBuf,
+}
+
+impl AssetRefProvider for GltfSource {
+    fn asset_ref(&self) -> AssetRef {
+        AssetRef::from_path(&self.path)
+    }
+}
+
+impl GltfSource {
+    pub fn new(path: impl Into<PathBuf>) -> Self {
+        Self { path: path.into() }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]

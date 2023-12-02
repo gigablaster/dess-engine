@@ -14,41 +14,18 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fs::{self},
-    hash::{self, Hash},
     path::{Path, PathBuf},
 };
 
 use crate::{
     get_absolute_asset_path, Content, ContentImporter, ContentProcessor, ContentSource, Error,
 };
-use dess_assets::{AssetRef, ShaderAsset, ShaderStage, SpecializationConstant};
+use dess_assets::{ShaderAsset, ShaderSource, ShaderStage, SpecializationConstant};
 use normalize_path::NormalizePath;
-use serde::{Deserialize, Serialize};
-use siphasher::sip128::Hasher128;
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct ShaderSource {
-    pub source: String,
-    pub stage: ShaderStage,
-    pub defines: Option<Vec<String>>,
-    pub specializations: Option<HashMap<SpecializationConstant, usize>>,
-}
-
-impl ContentSource<ShaderContent> for ShaderSource {
-    fn get_asset_ref(&self) -> dess_assets::AssetRef {
-        let mut hasher = siphasher::sip128::SipHasher::default();
-        self.source.hash(&mut hasher);
-        self.stage.hash(&mut hasher);
-        self.defines.hash(&mut hasher);
-        self.specializations
-            .iter()
-            .for_each(|x| x.iter().for_each(|x| x.hash(&mut hasher)));
-
-        AssetRef::from_u128(hasher.finish128().as_u128())
-    }
-}
+impl ContentSource<ShaderContent> for ShaderSource {}
 
 #[derive(Debug)]
 pub struct ShaderContent {
