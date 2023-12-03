@@ -108,6 +108,9 @@ pub struct UniformStorage {
     free_buckets: ArrayVec<usize, BUCKET_COUNT>,
 }
 
+unsafe impl Send for UniformStorage {}
+unsafe impl Sync for UniformStorage {}
+
 impl UniformStorage {
     pub fn new(
         instance: &Instance,

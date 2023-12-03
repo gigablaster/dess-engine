@@ -158,6 +158,9 @@ pub struct Device {
     current_cpu_frame: AtomicUsize,
 }
 
+unsafe impl Send for Device {}
+unsafe impl Sync for Device {}
+
 impl Device {
     pub fn new(instance: Instance, pdevice: PhysicalDevice) -> BackendResult<Self> {
         if !pdevice.is_queue_flag_supported(
