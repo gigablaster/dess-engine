@@ -13,13 +13,14 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, hash::Hash};
+use std::{io, path::Path, process::Command};
 
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use siphasher::sip128::Hasher128;
 use speedy::{Readable, Writable};
+use turbosloth::{LazyWorker, RunContext};
 
-use crate::{Asset, AssetRef, AssetRefProvider};
+use crate::{get_absolute_asset_path, Asset, Error};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
 pub enum ShaderStage {
@@ -29,38 +30,15 @@ pub enum ShaderStage {
     Fragment,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Readable, Writable)]
 pub struct ShaderSource {
     pub source: String,
     pub stage: ShaderStage,
-    pub defines: Option<Vec<String>>,
-    pub specializations: Option<HashMap<SpecializationConstant, usize>>,
-}
-
-impl AssetRefProvider for ShaderSource {
-    fn asset_ref(&self) -> AssetRef {
-        let mut hasher = siphasher::sip128::SipHasher::default();
-        self.source.hash(&mut hasher);
-        self.stage.hash(&mut hasher);
-        self.defines.hash(&mut hasher);
-        self.specializations
-            .iter()
-            .for_each(|x| x.iter().for_each(|x| x.hash(&mut hasher)));
-
-        AssetRef::from_u128(hasher.finish128().as_u128())
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable, Serialize, Deserialize)]
-pub enum SpecializationConstant {
-    #[serde(rename = "local_light_count")]
-    LocalLightCount,
 }
 
 #[derive(Debug, Clone, Readable, Writable)]
 pub struct ShaderAsset {
     pub stage: ShaderStage,
-    pub specializations: Vec<(SpecializationConstant, u32)>,
     pub code: Vec<u8>,
 }
 
@@ -72,5 +50,36 @@ impl Asset for ShaderAsset {
 
     fn deserialize<R: std::io::prelude::Read>(r: &mut R) -> std::io::Result<Self> {
         Ok(Self::read_from_stream_unbuffered(r)?)
+    }
+}
+
+#[async_trait]
+impl LazyWorker for ShaderSource {
+    type Output = Result<ShaderAsset, Error>;
+
+    async fn run(self, _ctx: RunContext) -> Self::Output {
+        let stage = match self.stage {
+            ShaderStage::Vertex => "-fshader-stage=vert",
+            ShaderStage::Fragment => "-fshader-stage=frag",
+        };
+        let cmd = Command::new("glslc")
+            .arg(stage)
+            .arg("--target-env=vulkan1.3")
+            .arg(get_absolute_asset_path(Path::new(&self.source))?)
+            .arg("-o")
+            .arg("-")
+            .output()
+            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
+
+        if cmd.status.success() {
+            Ok(ShaderAsset {
+                stage: self.stage,
+                code: cmd.stdout,
+            })
+        } else {
+            Err(Error::ProcessingFailed(
+                String::from_utf8(cmd.stderr).unwrap(),
+            ))
+        }
     }
 }
