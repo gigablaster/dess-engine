@@ -33,13 +33,11 @@ use uuid::Uuid;
 
 mod bundle;
 mod image;
-mod material;
 mod model;
 mod shader;
 
 pub use bundle::*;
 pub use image::*;
-pub use material::*;
 pub use model::*;
 pub use shader::*;
 
@@ -50,6 +48,7 @@ pub const BUNDLE_DESC_PATH: &str = "bundles";
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
+    ImportFailed(String),
     ProcessingFailed(String),
     BadSourceData,
     EvalFailed,
@@ -170,20 +169,20 @@ where
     Ok(data)
 }
 
-pub fn get_relative_asset_path(path: &Path) -> io::Result<PathBuf> {
+pub fn get_relative_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
     // Is this path relative to data folder? Check this option.
-    let path = if !path.exists() {
+    let path = if !path.as_ref().exists() {
         root.join(path)
     } else {
-        path.into()
+        path.as_ref().into()
     };
     let path = path.canonicalize()?;
 
     Ok(path.strip_prefix(root).unwrap().into())
 }
 
-pub fn get_absolute_asset_path(path: &Path) -> io::Result<PathBuf> {
+pub fn get_absolute_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
-    Ok(root.join(get_relative_asset_path(path)?))
+    Ok(root.join(get_relative_asset_path(path.as_ref())?))
 }

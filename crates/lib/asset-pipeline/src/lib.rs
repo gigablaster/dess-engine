@@ -23,7 +23,7 @@ use std::{
 
 use dess_assets::{
     Asset, AssetRef, AssetRefProvider, GltfSource, ImageAsset, ImageDataSource, ImageSource,
-    ModelAsset, ShaderAsset, ShaderSource,
+    SceneAsset, ShaderAsset, ShaderSource,
 };
 use log::info;
 use parking_lot::Mutex;
@@ -126,7 +126,7 @@ impl AssetProcessingContextImpl {
             let asset = model.asset_ref();
             self.models.insert(path.clone(), asset);
             self.models_to_process.insert(asset, model.clone());
-            self.assets.insert(AssetInfo::new::<ModelAsset>(asset));
+            self.assets.insert(AssetInfo::new::<SceneAsset>(asset));
             self.add_source(asset, &path);
 
             asset

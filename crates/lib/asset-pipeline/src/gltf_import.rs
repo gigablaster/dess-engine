@@ -18,7 +18,7 @@ use std::{collections::HashMap, path::PathBuf};
 use dess_assets::{
     AssetRef, BlendMode, Bone, GltfSource, ImagePurpose, ImageSource, LightingAttributes, Material,
     MaterialBaseColor, MaterialBlend, MaterialEmission, MaterialNormals, MaterialOcclusion,
-    MaterialValues, MeshData, ModelAsset, PbrMaterial, StaticMeshGeometry, Surface, UnlitMaterial,
+    MaterialValues, MeshData, PbrMaterial, SceneAsset, StaticMeshGeometry, Surface, UnlitMaterial,
 };
 use gltf::{
     material::{AlphaMode, NormalTexture, OcclusionTexture, PbrMetallicRoughness},
@@ -68,7 +68,7 @@ impl ContentImporter<GltfContent, GltfSource> for GltfImporter {
 }
 
 struct ModelImportContext {
-    model: ModelAsset,
+    model: SceneAsset,
     base: PathBuf,
     asset: AssetRef,
     path: PathBuf,
@@ -527,18 +527,18 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
     }
 }
 
-impl ContentProcessor<GltfContent, ModelAsset> for GltfContentProcessor {
+impl ContentProcessor<GltfContent, SceneAsset> for GltfContentProcessor {
     fn process(
         &self,
         asset: AssetRef,
         context: &dyn AssetProcessingContext,
         content: GltfContent,
-    ) -> Result<ModelAsset, Error> {
+    ) -> Result<SceneAsset, Error> {
         let mut import_context = ModelImportContext {
             base: content.base,
             asset,
             path: content.path,
-            model: ModelAsset::default(),
+            model: SceneAsset::default(),
             processed_meshes: HashMap::new(),
             static_geometry: Vec::new(),
             attributes: Vec::new(),

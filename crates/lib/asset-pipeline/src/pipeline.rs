@@ -21,7 +21,7 @@ use std::{
 };
 
 use dess_assets::{
-    Asset, AssetRef, ImageAsset, ImagePurpose, ModelAsset, ShaderAsset, ShaderSource,
+    Asset, AssetRef, ImageAsset, ImagePurpose, SceneAsset, ShaderAsset, ShaderSource,
 };
 use log::{error, info};
 
@@ -104,7 +104,7 @@ impl AssetPipeline {
             need_work = false;
             let models_to_process = self.context.drain_models_to_process();
             need_work |= !models_to_process.is_empty();
-            self.process_assets::<ModelAsset, GltfContent, GltfSource, GltfContentProcessor, GltfImporter>(
+            self.process_assets::<SceneAsset, GltfContent, GltfSource, GltfContentProcessor, GltfImporter>(
                 models_to_process,
             );
             let images_to_process = self.context.drain_images_to_process();
