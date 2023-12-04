@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{io, path::Path, process::Command};
+use std::{path::Path, process::Command};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};

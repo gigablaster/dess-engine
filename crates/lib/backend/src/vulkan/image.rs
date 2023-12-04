@@ -15,15 +15,12 @@
 
 use std::collections::HashMap;
 
-use ash::vk::{self, ImageSubresource};
-use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use ash::vk::{self};
+use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 use crate::{BackendError, BackendResult};
 
-use super::{
-    AsVulkan, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, ImageSubresourceData,
-    Instance, Staging, ToDrop,
-};
+use super::{AsVulkan, Device, DropList, GpuMemory, ImageHandle, ImageSubresourceData, ToDrop};
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
@@ -398,7 +395,7 @@ impl Device {
     ) -> BackendResult<()> {
         let images = self.image_storage.read();
         let image = images.get_cold(handle).ok_or(BackendError::InvalidHandle)?;
-        self.staging.lock().upload_image(&self, image, data)
+        self.staging.lock().upload_image(self, image, data)
     }
 
     fn create_image_impl(&self, desc: ImageCreateDesc) -> BackendResult<Image> {

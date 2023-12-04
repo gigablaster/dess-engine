@@ -14,13 +14,11 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod chunky_list;
-mod executor;
 mod handle;
 mod memory;
 mod time;
 
 pub use chunky_list::*;
-pub use executor::*;
 pub use handle::*;
 pub use memory::*;
 pub use time::*;

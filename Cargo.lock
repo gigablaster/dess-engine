@@ -509,23 +509,18 @@ version = "0.1.0"
 dependencies = [
  "ash",
  "async-trait",
- "byteorder",
  "bytes",
  "ddsfile",
  "dess-common",
- "four-cc",
  "glam 0.24.2",
  "gltf",
  "image",
  "intel_tex_2",
- "lz4_flex",
- "memmap2",
  "meshopt",
  "mikktspace",
  "normalize-path",
  "numquant",
  "serde",
- "siphasher",
  "speedy",
  "turbosloth",
  "uuid",
@@ -731,12 +726,6 @@ name = "foreign-types-shared"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "aa9a19cbb55df58761df49b23516a86d432839add4af60fc256da840f66ed35b"
-
-[[package]]
-name = "four-cc"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "431a4c31778fde52b4400de34975f219eeca55cc829a9de157cd743a5b230ecb"
 
 [[package]]
 name = "fxhash"
@@ -1091,15 +1080,6 @@ name = "log"
 version = "0.4.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b5e6163cb8c49088c2c36f57875e58ccd8c87c7427f7fbd50ea6710b2f3f2e8f"
-
-[[package]]
-name = "lz4_flex"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3ea9b256699eda7b0387ffbc776dd625e28bde3918446381781245b7a50349d8"
-dependencies = [
- "twox-hash",
-]
 
 [[package]]
 name = "malloc_buf"

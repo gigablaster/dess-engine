@@ -20,15 +20,13 @@ use std::{
 };
 
 use async_trait::async_trait;
-use gltf::Gltf;
 use normalize_path::NormalizePath;
 use numquant::linear::quantize;
 use speedy::{Context, Readable, Writable};
 use turbosloth::{Lazy, LazyWorker, RunContext};
 
 use crate::{
-    get_absolute_asset_path, get_relative_asset_path, Asset, AssetRef, AssetRefProvider, Error,
-    ImagePurpose, ImageSource,
+    get_absolute_asset_path, get_relative_asset_path, Asset, Error, ImagePurpose, ImageSource,
 };
 
 #[derive(Debug, Clone, Hash)]
