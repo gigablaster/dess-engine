@@ -59,14 +59,14 @@ pub struct ImageRgba8Data {
     pub dimensions: [u32; 2],
 }
 
-#[derive(Debug, Clone, Readable, Writable, Hash)]
+#[derive(Debug, Clone, Readable, Writable, Hash, PartialEq, Eq)]
 pub enum ImageDataSource {
     File(String),
     Bytes(Vec<u8>),
     Placeholder([u8; 4]),
 }
 
-#[derive(Debug, Clone, Readable, Writable, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Readable, Writable, Hash)]
 pub struct ImageSource {
     pub source: ImageDataSource,
     pub purpose: ImagePurpose,
