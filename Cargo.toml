@@ -3,8 +3,7 @@ members = [
     "crates/lib/common",
     "crates/lib/backend",
     "crates/lib/assets",
-    "crates/lib/asset-pipeline",
-    "crates/lib/asset-manager",
+    # "crates/lib/asset-pipeline",
     "crates/lib/runner",
     "crates/bin/builder",
 ]

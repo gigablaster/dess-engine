@@ -25,8 +25,8 @@ use image::{imageops::FilterType, DynamicImage, GenericImageView, ImageBuffer, R
 use intel_tex_2::{bc5, bc7};
 
 use crate::{
-    get_absolute_asset_path, read_to_end, Content, ContentImporter, ContentProcessor,
-    ContentSource, Error, OfflineAssetProcessingContext,
+    get_absolute_asset_path, read_to_end, AssetProcessingContext, Content, ContentImporter,
+    ContentProcessor, ContentSource, Error, OfflineAssetProcessingContext,
 };
 
 impl ContentSource<ImageContent> for ImageSource {}
@@ -261,7 +261,7 @@ impl ContentProcessor<ImageContent, ImageAsset> for ImageContentProcessor {
     fn process(
         &self,
         _asset: AssetRef,
-        _context: &OfflineAssetProcessingContext,
+        _context: &dyn AssetProcessingContext,
         content: ImageContent,
     ) -> Result<ImageAsset, Error> {
         match content.data {

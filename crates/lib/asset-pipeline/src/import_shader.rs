@@ -20,7 +20,8 @@ use std::{
 };
 
 use crate::{
-    get_absolute_asset_path, Content, ContentImporter, ContentProcessor, ContentSource, Error,
+    get_absolute_asset_path, AssetProcessingContext, Content, ContentImporter, ContentProcessor,
+    ContentSource, Error,
 };
 use dess_assets::{ShaderAsset, ShaderSource, ShaderStage, SpecializationConstant};
 use normalize_path::NormalizePath;
@@ -133,7 +134,7 @@ impl ContentProcessor<ShaderContent, ShaderAsset> for ShaderContentProcessor {
     fn process(
         &self,
         _asset: dess_assets::AssetRef,
-        _context: &crate::OfflineAssetProcessingContext,
+        _context: &dyn AssetProcessingContext,
         content: ShaderContent,
     ) -> Result<ShaderAsset, Error> {
         let code = Self::compile_shader(content.stage, &content.code, &content.defines)?;

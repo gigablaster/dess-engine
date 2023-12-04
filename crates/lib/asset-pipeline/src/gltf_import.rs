@@ -29,8 +29,8 @@ use normalize_path::NormalizePath;
 use numquant::linear::quantize;
 
 use crate::{
-    get_absolute_asset_path, get_relative_asset_path, Content, ContentImporter, ContentProcessor,
-    ContentSource, Error, OfflineAssetProcessingContext,
+    get_absolute_asset_path, get_relative_asset_path, AssetProcessingContext, Content,
+    ContentImporter, ContentProcessor, ContentSource, Error,
 };
 
 #[derive(Debug)]
@@ -84,7 +84,7 @@ pub struct GltfContentProcessor {}
 impl GltfContentProcessor {
     fn set_normal_texture(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: &mut impl MaterialNormals,
         normal: &Option<NormalTexture>,
@@ -101,7 +101,7 @@ impl GltfContentProcessor {
 
     fn set_occlusion_texture(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: &mut impl MaterialOcclusion,
         occlusion: &Option<OcclusionTexture>,
@@ -118,7 +118,7 @@ impl GltfContentProcessor {
 
     fn set_base_color(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: &mut impl MaterialBaseColor,
         pbr: &PbrMetallicRoughness,
@@ -142,7 +142,7 @@ impl GltfContentProcessor {
 
     fn set_material_values(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: &mut impl MaterialValues,
         pbr: &PbrMetallicRoughness,
@@ -166,7 +166,7 @@ impl GltfContentProcessor {
 
     fn set_emission_color(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: &mut impl MaterialEmission,
         emission: &Option<Info>,
@@ -194,7 +194,7 @@ impl GltfContentProcessor {
 
     fn create_placeholder_texture(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         color: glam::Vec4,
         purpose: ImagePurpose,
@@ -206,7 +206,7 @@ impl GltfContentProcessor {
     }
     fn import_texture(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         texture: texture::Texture,
         purpose: ImagePurpose,
@@ -226,7 +226,7 @@ impl GltfContentProcessor {
 
     fn process_node(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &mut ModelImportContext,
         parent_index: u32,
         node: &gltf::Node,
@@ -265,7 +265,7 @@ impl GltfContentProcessor {
 
     fn create_material(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: gltf::Material,
     ) -> Material {
@@ -288,7 +288,7 @@ impl GltfContentProcessor {
 
     fn create_unlit_material(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: gltf::Material,
     ) -> UnlitMaterial {
@@ -306,7 +306,7 @@ impl GltfContentProcessor {
 
     fn create_pbr_material(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &ModelImportContext,
         material: gltf::Material,
     ) -> PbrMaterial {
@@ -378,7 +378,7 @@ impl GltfContentProcessor {
 
     fn process_mesh(
         &self,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         model_context: &mut ModelImportContext,
         mesh: Mesh,
         bone: u32,
@@ -531,7 +531,7 @@ impl ContentProcessor<GltfContent, ModelAsset> for GltfContentProcessor {
     fn process(
         &self,
         asset: AssetRef,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         content: GltfContent,
     ) -> Result<ModelAsset, Error> {
         let mut import_context = ModelImportContext {

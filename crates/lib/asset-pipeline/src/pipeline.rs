@@ -26,10 +26,11 @@ use dess_assets::{
 use log::{error, info};
 
 use crate::{
-    build_bundle, get_cached_asset_path, AssetDatabase, Content, ContentImporter, ContentProcessor,
-    ContentSource, Error, GltfContent, GltfContentProcessor, GltfImporter, GltfSource,
-    ImageContent, ImageContentProcessor, ImageImporter, ImageSource, OfflineAssetProcessingContext,
-    ShaderContent, ShaderContentProcessor, ShaderImporter, ASSET_CACHE_PATH, ROOT_DATA_PATH,
+    build_bundle, get_cached_asset_path, AssetDatabase, AssetProcessingContext, Content,
+    ContentImporter, ContentProcessor, ContentSource, Error, GltfContent, GltfContentProcessor,
+    GltfImporter, GltfSource, ImageContent, ImageContentProcessor, ImageImporter, ImageSource,
+    OfflineAssetProcessingContext, ShaderContent, ShaderContentProcessor, ShaderImporter,
+    ASSET_CACHE_PATH, ROOT_DATA_PATH,
 };
 
 #[derive(Debug)]
@@ -61,8 +62,8 @@ impl AssetPipeline {
         self.context.import_model(&GltfSource::new(path))
     }
 
-    pub fn import_effect(&self, shader: ShaderSource) -> AssetRef {
-        self.context.import_effect(&shader)
+    pub fn import_shader(&self, shader: ShaderSource) -> AssetRef {
+        self.context.import_shader(&shader)
     }
 
     pub fn import_image(&self, path: &Path, purpose: ImagePurpose) -> AssetRef {

@@ -15,12 +15,15 @@
 
 use std::collections::HashMap;
 
-use ash::vk;
+use ash::vk::{self, ImageSubresource};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{BackendError, BackendResult};
 
-use super::{AsVulkan, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance, ToDrop};
+use super::{
+    AsVulkan, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, ImageSubresourceData,
+    Instance, Staging, ToDrop,
+};
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
@@ -196,6 +199,7 @@ pub struct ImageCreateDesc<'a> {
     pub array_elements: usize,
     pub dedicated: bool,
     pub name: Option<&'a str>,
+    pub initial_data: Option<&'a [ImageSubresourceData<'a>]>,
 }
 
 impl<'a> ImageCreateDesc<'a> {
@@ -212,6 +216,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 0,
             dedicated: false,
             name: None,
+            initial_data: None,
         }
     }
 
@@ -228,6 +233,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
+            initial_data: None,
         }
     }
 
@@ -244,6 +250,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 6,
             dedicated: false,
             name: None,
+            initial_data: None,
         }
     }
 
@@ -260,6 +267,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
+            initial_data: None,
         }
     }
 
@@ -276,6 +284,7 @@ impl<'a> ImageCreateDesc<'a> {
             array_elements: 1,
             dedicated: false,
             name: None,
+            initial_data: None,
         }
     }
 
@@ -319,11 +328,20 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
+    pub fn initial_data(mut self, data: &'a [ImageSubresourceData]) -> Self {
+        self.initial_data = Some(data);
+        self
+    }
+
     fn build(&self) -> vk::ImageCreateInfo {
+        let mut usage = self.usage;
+        if self.initial_data.is_some() {
+            usage |= vk::ImageUsageFlags::TRANSFER_DST;
+        }
         vk::ImageCreateInfo::builder()
             .array_layers(self.array_elements as _)
             .mip_levels(self.mip_levels as _)
-            .usage(self.usage)
+            .usage(usage)
             .flags(self.flags)
             .format(self.format)
             .samples(self.samples)
@@ -357,8 +375,7 @@ impl<'a> ImageCreateDesc<'a> {
 
 impl Device {
     pub fn create_image(&self, desc: ImageCreateDesc) -> BackendResult<ImageHandle> {
-        let image =
-            Self::create_image_impl(&self.instance, &self.raw, &self.memory_allocator, desc)?;
+        let image = self.create_image_impl(desc)?;
         Ok(self.image_storage.write().push(image.raw, image))
     }
 
@@ -374,26 +391,34 @@ impl Device {
             .get_or_create_view(&self.raw, desc)
     }
 
-    fn create_image_impl(
-        instance: &Instance,
-        device: &ash::Device,
-        allocator: &Mutex<GpuAllocator>,
-        desc: ImageCreateDesc,
-    ) -> BackendResult<Image> {
-        let image = unsafe { device.create_image(&desc.build(), None) }?;
-        let requirements = unsafe { device.get_image_memory_requirements(image) };
+    pub fn upload_image(
+        &self,
+        handle: ImageHandle,
+        data: &[ImageSubresourceData],
+    ) -> BackendResult<()> {
+        let images = self.image_storage.read();
+        let image = images.get_cold(handle).ok_or(BackendError::InvalidHandle)?;
+        self.staging.lock().upload_image(&self, image, data)
+    }
+
+    fn create_image_impl(&self, desc: ImageCreateDesc) -> BackendResult<Image> {
+        let image = unsafe { self.raw.create_image(&desc.build(), None) }?;
+        let requirements = unsafe { self.raw.get_image_memory_requirements(image) };
         let memory = Self::allocate_impl(
-            device,
-            &mut allocator.lock(),
+            &self.raw,
+            &mut self.memory_allocator.lock(),
             requirements,
             gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             desc.dedicated,
         )?;
-        unsafe { device.bind_image_memory(image, *memory.memory(), memory.offset()) }?;
+        unsafe {
+            self.raw
+                .bind_image_memory(image, *memory.memory(), memory.offset())
+        }?;
         if let Some(name) = desc.name {
-            Self::set_object_name_impl(instance, device, image, name);
+            self.set_object_name(image, name);
         }
-        Ok(Image {
+        let image = Image {
             raw: image,
             desc: ImageDesc {
                 extent: desc.extent,
@@ -406,6 +431,12 @@ impl Device {
             },
             memory: Some(memory),
             views: RwLock::default(),
-        })
+        };
+
+        if let Some(data) = desc.initial_data {
+            self.staging.lock().upload_image(self, &image, data)?;
+        }
+
+        Ok(image)
     }
 }

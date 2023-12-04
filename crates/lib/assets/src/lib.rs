@@ -15,18 +15,20 @@
 
 use std::{
     any::Any,
+    env,
     fmt::Display,
-    fs::File,
+    fs::{self, File},
     hash::Hasher,
     io::{self, Read, Write},
     mem,
-    path::Path,
+    path::{Path, PathBuf},
     slice,
 };
 
 use memmap2::{Mmap, MmapOptions};
 use siphasher::sip128::Hasher128;
 use speedy::{Readable, Writable};
+use turbosloth::lazy::LazyEvalError;
 use uuid::Uuid;
 
 mod bundle;
@@ -40,6 +42,30 @@ pub use image::*;
 pub use material::*;
 pub use model::*;
 pub use shader::*;
+
+pub const ROOT_DATA_PATH: &str = "assets";
+pub const ASSET_CACHE_PATH: &str = ".cache";
+pub const BUNDLE_DESC_PATH: &str = "bundles";
+
+#[derive(Debug)]
+pub enum Error {
+    Io(io::Error),
+    ProcessingFailed(String),
+    BadSourceData,
+    EvalFailed,
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+impl From<LazyEvalError> for Error {
+    fn from(value: LazyEvalError) -> Self {
+        Self::EvalFailed
+    }
+}
 
 #[derive(Default, Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Readable, Writable)]
 pub struct AssetRef(Uuid);
@@ -127,4 +153,37 @@ impl MappedFile {
 
 pub trait AssetRefProvider {
     fn asset_ref(&self) -> AssetRef;
+}
+
+pub(crate) fn read_to_end<P>(path: P) -> io::Result<Vec<u8>>
+where
+    P: AsRef<Path>,
+{
+    let file = fs::File::open(path.as_ref())?;
+    // Allocate one extra byte so the buffer doesn't need to grow before the
+    // final `read` call at the end of the file.  Don't worry about `usize`
+    // overflow because reading will fail regardless in that case.
+    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
+    let mut reader = io::BufReader::new(file);
+    let mut data = Vec::with_capacity(length as usize);
+    reader.read_to_end(&mut data)?;
+    Ok(data)
+}
+
+pub fn get_relative_asset_path(path: &Path) -> io::Result<PathBuf> {
+    let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
+    // Is this path relative to data folder? Check this option.
+    let path = if !path.exists() {
+        root.join(path)
+    } else {
+        path.into()
+    };
+    let path = path.canonicalize()?;
+
+    Ok(path.strip_prefix(root).unwrap().into())
+}
+
+pub fn get_absolute_asset_path(path: &Path) -> io::Result<PathBuf> {
+    let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
+    Ok(root.join(get_relative_asset_path(path)?))
 }

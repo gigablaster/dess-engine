@@ -44,7 +44,7 @@ impl<T, U> Clone for Handle<T, U> {
     }
 }
 
-impl<T, U> Copy for Handle<T, U> where T: Copy {}
+impl<T, U> Copy for Handle<T, U> {}
 
 impl<T, U> PartialEq for Handle<T, U> {
     fn eq(&self, other: &Self) -> bool {
@@ -52,7 +52,7 @@ impl<T, U> PartialEq for Handle<T, U> {
     }
 }
 
-impl<T, U> Eq for Handle<T, U> where T: Copy {}
+impl<T, U> Eq for Handle<T, U> {}
 
 impl<T, U> Hash for Handle<T, U> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {

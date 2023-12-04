@@ -5,3 +5,5 @@ edition = "2021"
 
 [dependencies]
 arrayvec = "0.7.4"
+rayon = "1.8.0"
+async-task = "4.5.0"

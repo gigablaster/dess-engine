@@ -256,9 +256,39 @@ impl AssetProcessingContextImpl {
     }
 }
 
+pub trait AssetProcessingContext: Send + Sync {
+    fn import_model(&self, model: &GltfSource) -> AssetRef;
+    fn import_image(&self, image: &ImageSource, owner: Option<&Path>) -> AssetRef;
+    fn import_shader(&self, effect: &ShaderSource) -> AssetRef;
+    fn clear_dependencies(&self, asset: AssetRef);
+    fn add_dependency(&self, from: AssetRef, to: AssetRef);
+}
+
 #[derive(Debug, Default)]
 pub struct OfflineAssetProcessingContext {
     inner: Mutex<AssetProcessingContextImpl>,
+}
+
+impl AssetProcessingContext for OfflineAssetProcessingContext {
+    fn import_model(&self, model: &GltfSource) -> AssetRef {
+        self.inner.lock().import_model(model)
+    }
+
+    fn import_image(&self, image: &ImageSource, owner: Option<&Path>) -> AssetRef {
+        self.inner.lock().import_image(image, owner)
+    }
+
+    fn import_shader(&self, effect: &ShaderSource) -> AssetRef {
+        self.inner.lock().import_shader(effect)
+    }
+
+    fn clear_dependencies(&self, asset: AssetRef) {
+        self.inner.lock().clear_dependencies(asset);
+    }
+
+    fn add_dependency(&self, from: AssetRef, to: AssetRef) {
+        self.inner.lock().add_dependency(from, to);
+    }
 }
 
 unsafe impl Sync for OfflineAssetProcessingContext {}
@@ -272,18 +302,6 @@ impl OfflineAssetProcessingContext {
 
     pub fn to_database(&self) -> AssetDatabase {
         self.inner.lock().to_database()
-    }
-
-    pub fn import_model(&self, model: &GltfSource) -> AssetRef {
-        self.inner.lock().import_model(model)
-    }
-
-    pub fn import_image(&self, image: &ImageSource, owner: Option<&Path>) -> AssetRef {
-        self.inner.lock().import_image(image, owner)
-    }
-
-    pub fn import_effect(&self, effect: &ShaderSource) -> AssetRef {
-        self.inner.lock().import_shader(effect)
     }
 
     pub fn drain_models_to_process(&self) -> Vec<GltfSource> {
@@ -314,14 +332,6 @@ impl OfflineAssetProcessingContext {
         self.inner.lock().get_model_id(path)
     }
 
-    pub fn clear_dependencies(&self, asset: AssetRef) {
-        self.inner.lock().clear_dependencies(asset);
-    }
-
-    pub fn add_dependency(&self, from: AssetRef, to: AssetRef) {
-        self.inner.lock().add_dependency(from, to);
-    }
-
     pub fn get_dependencies(&self, asset: AssetRef) -> Option<Vec<AssetRef>> {
         self.inner.lock().get_dependencies(asset)
     }
@@ -343,7 +353,7 @@ pub trait ContentProcessor<T: Content, U: Asset>: Default {
     fn process(
         &self,
         asset: AssetRef,
-        context: &OfflineAssetProcessingContext,
+        context: &dyn AssetProcessingContext,
         content: T,
     ) -> Result<U, Error>;
 }

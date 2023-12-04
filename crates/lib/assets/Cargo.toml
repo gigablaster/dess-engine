@@ -17,3 +17,18 @@ lz4_flex = "0.11.1"
 byteorder = "1.5.0"
 serde = { version = "1.0.192", features = ["derive"] }
 speedy = { version = "0.8.6", features = ["speedy-derive", "uuid"] }
+turbosloth = "0.2.0"
+async-trait = "0.1.74"
+
+image = { version = "0.24.7", default-features = false, features = [
+    "jpeg",
+    "png",
+    "pnm",
+    "tga",
+    "tiff",
+    "webp",
+    "bmp",
+    "hdr",
+] }
+ddsfile = "0.5.2"
+intel_tex_2 = "0.2.0"
