@@ -578,6 +578,17 @@ impl Device {
         Ok(())
     }
 
+    pub(crate) fn destroy_resource<T, U: ToDrop>(
+        &self,
+        handle: Handle<T, U>,
+        storage: &RwLock<Pool<T, U>>,
+    ) {
+        let item: Option<(T, U)> = storage.write().remove(handle);
+        if let Some((_, mut item)) = item {
+            item.to_drop(&mut self.current_drop_list.lock());
+        }
+    }
+
     pub fn scoped_label(&self, cb: vk::CommandBuffer, label: &str) -> ScopedCommandBufferLabel {
         self.cmd_begin_label(cb, label);
         ScopedCommandBufferLabel { device: self, cb }

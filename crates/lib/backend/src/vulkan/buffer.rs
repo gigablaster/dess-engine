@@ -14,8 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use ash::vk;
-use dess_common::{Handle, Pool};
-use parking_lot::{Mutex, RwLock};
+use parking_lot::Mutex;
 
 use crate::{BackendError, BackendResult};
 
@@ -144,13 +143,6 @@ impl Device {
 
     pub fn destroy_image(&self, handle: ImageHandle) {
         self.destroy_resource(handle, &self.image_storage);
-    }
-
-    fn destroy_resource<T, U: ToDrop>(&self, handle: Handle<T, U>, storage: &RwLock<Pool<T, U>>) {
-        let item: Option<(T, U)> = storage.write().remove(handle);
-        if let Some((_, mut item)) = item {
-            item.to_drop(&mut self.current_drop_list.lock());
-        }
     }
 
     pub fn get_buffer_desc(&self, handle: BufferHandle) -> BackendResult<BufferDesc> {
