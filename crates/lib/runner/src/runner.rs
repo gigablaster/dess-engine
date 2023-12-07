@@ -5,7 +5,7 @@ use dess_backend::{
     vulkan::{
         Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
     },
-    ResourcePool,
+    BufferPool, ResourcePool,
 };
 use dess_common::TimeFilter;
 use log::info;
@@ -71,7 +71,8 @@ impl<T: Client> Runner<T> {
             )
             .unwrap();
         let device = Device::new(instance, pdevice).unwrap();
-        let pool = ResourcePool::new(&device).unwrap();
+        let resource_pool = ResourcePool::new(&device).unwrap();
+        let buffer_pool = BufferPool::new(&device);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
@@ -95,7 +96,7 @@ impl<T: Client> Runner<T> {
                                 return;
                             }
                             if swapchain.is_none() {
-                                pool.purge();
+                                resource_pool.purge();
                                 let resolution =
                                     [window.inner_size().width, window.inner_size().height];
                                 swapchain =
@@ -106,7 +107,8 @@ impl<T: Client> Runner<T> {
                                     .frame(current_swapchain, |context| {
                                         let context = RenderContext {
                                             frame: context,
-                                            pool: &pool,
+                                            resource_pool: &resource_pool,
+                                            buffer_pool: &buffer_pool,
                                         };
                                         self.client.render(context)
                                     })
@@ -158,7 +160,8 @@ impl<T: Client> Runner<T> {
             .unwrap();
         drop(swapchain);
         drop(surface);
-        drop(pool);
+        drop(buffer_pool);
+        drop(resource_pool);
         drop(device);
         info!("Main loop exit");
     }

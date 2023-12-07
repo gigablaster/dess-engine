@@ -1,4 +1,4 @@
-use dess_backend::{vulkan::FrameContext, BackendError, ResourcePool};
+use dess_backend::{vulkan::FrameContext, BackendError, BufferPool, ResourcePool};
 use dess_common::GameTime;
 
 mod runner;
@@ -13,7 +13,8 @@ pub enum ClientState {
 
 pub struct RenderContext<'a> {
     pub frame: &'a FrameContext<'a>,
-    pub pool: &'a ResourcePool<'a>,
+    pub resource_pool: &'a ResourcePool<'a>,
+    pub buffer_pool: &'a BufferPool<'a>,
 }
 
 pub trait Client {

@@ -17,7 +17,7 @@ impl Client for ClearBackbuffer {
     fn render(&self, context: RenderContext) -> Result<(), dess_backend::BackendError> {
         {
             let temp = context
-                .pool
+                .resource_pool
                 .temp_image(
                     [
                         context.frame.render_area.extent.width,

@@ -14,12 +14,15 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 pub mod barrier;
+mod buffer_pool;
 mod draw_stream;
 mod error;
 mod pool;
 pub mod vulkan;
 
+pub use buffer_pool::*;
 pub use draw_stream::*;
 pub use error::*;
 pub use pool::*;
+
 pub type BackendResult<T> = Result<T, BackendError>;
