@@ -29,16 +29,15 @@ use std::time::Duration;
 use std::{mem, slice, thread};
 
 use crate::vulkan::frame::MAX_TEMP_MEMORY;
-use crate::vulkan::{BufferDesc, ExecutionContext, ImageViewDesc};
+use crate::vulkan::{BufferDesc, ExecutionContext, ImageViewDesc, save_pipeline_cache};
 use crate::{BackendError, BackendResult};
 
-use super::pipeline_cache::{load_or_create_pipeline_cache, save_pipeline_cache};
 use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
     PhysicalDevice, ToDrop, UniformStorage,
 };
 use super::{
-    DescriptorHandle, DescriptorStorage, FrameContext, Index, Program, Staging, Swapchain,
+    DescriptorHandle, DescriptorStorage, FrameContext, Index, Program, Staging, Swapchain, load_or_create_pipeline_cache,
 };
 
 pub type ImageHandle = Handle<vk::Image, Image>;

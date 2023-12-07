@@ -23,7 +23,6 @@ mod image;
 mod instance;
 mod physical_device;
 mod pipeline;
-mod pipeline_cache;
 mod program;
 mod staging;
 mod swapchain;
