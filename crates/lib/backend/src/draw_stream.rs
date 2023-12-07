@@ -27,7 +27,6 @@ struct Draw {
     descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS as usize],
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS as usize],
     instance_count: u32,
-    first_index: u32,
     triangle_count: u32,
 }
 
@@ -49,7 +48,6 @@ impl Default for Draw {
             ],
             dynamic_offsets: [u32::MAX, u32::MAX],
             instance_count: u32::MAX,
-            first_index: u32::MAX,
             triangle_count: u32::MAX,
         }
     }
@@ -67,9 +65,8 @@ const DS3: u16 = 1 << 8;
 const DYNAMIC_OFFSET0: u16 = 1 << 9;
 const DYNAMIC_OFFSET1: u16 = 1 << 10;
 const INSTANCE_COUNT: u16 = 1 << 11;
-const FIRST_INDEX: u16 = 1 << 12;
-const TRIANGLE_COUNT: u16 = 1 << 13;
-const MAX_BIT: u16 = 13;
+const TRIANGLE_COUNT: u16 = 1 << 12;
+const MAX_BIT: u16 = 12;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DrawCommand {
@@ -81,10 +78,16 @@ pub enum DrawCommand {
     UnsetDynamicBufferOffset(u32),
     BindDescriptorSet(u32, DescriptorHandle),
     UnbindDescriptorSet(u32),
-    Draw(u32, u32),
-    DrawInstanced(u32, u32, u32),
+    Draw(u32),
+    DrawInstanced(u32, u32),
 }
 
+/// Collect draw calls
+///
+/// Optimize and pack draw calls, remove state changes and provides abstraction
+/// for command buffer. All commands are stored in some sort of delta-compressed
+/// storage and then decoded during render. Allows engine to store few draw calls per
+/// one CPU cache line.
 #[derive(Debug)]
 pub struct DrawStream {
     stream: Vec<u16>,
@@ -155,11 +158,7 @@ impl DrawStream {
         }
     }
 
-    pub fn set_mesh(&mut self, first_index: u32, triangle_count: u32) {
-        if self.current.first_index != first_index {
-            self.mask |= FIRST_INDEX;
-            self.current.first_index = first_index;
-        }
+    pub fn set_mesh(&mut self, triangle_count: u32) {
         if self.current.triangle_count != triangle_count {
             self.mask |= TRIANGLE_COUNT;
             self.current.triangle_count = triangle_count;
@@ -211,9 +210,6 @@ impl DrawStream {
         if self.mask & INSTANCE_COUNT != 0 {
             self.write_u32(self.current.instance_count);
         }
-        if self.mask & FIRST_INDEX != 0 {
-            self.write_u32(self.current.first_index);
-        }
         if self.mask & TRIANGLE_COUNT != 0 {
             self.write_u32(self.current.triangle_count);
         }
@@ -226,7 +222,6 @@ impl DrawStream {
             bit: 0,
             cursor: 0,
             mask: None,
-            start_index: 0,
             triangle_count: 0,
             instance_count: 0,
         }
@@ -253,7 +248,6 @@ pub struct Iter<'a> {
     bit: u16,
     cursor: usize,
     mask: Option<u16>,
-    start_index: u32,
     triangle_count: u32,
     instance_count: u32,
 }
@@ -392,15 +386,6 @@ impl<'a> Iter<'a> {
                             return None;
                         }
                     }
-                    FIRST_INDEX => {
-                        self.advance_next_bit();
-
-                        if let Ok(index) = self.read_u32() {
-                            self.start_index = index;
-                        } else {
-                            return None;
-                        }
-                    }
                     TRIANGLE_COUNT => {
                         self.advance_next_bit();
 
@@ -431,7 +416,7 @@ impl<'a> Iterator for Iter<'a> {
             (Some(command), _) => Some(command),
             (None, Some(_)) => {
                 self.mask = None;
-                Some(DrawCommand::Draw(self.start_index, self.triangle_count))
+                Some(DrawCommand::Draw(self.triangle_count))
             }
             _ => None,
         }
@@ -453,7 +438,7 @@ mod test {
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
         stream.bind_index_buffer(BufferSlice::new(Handle::new(2, 2), 0));
-        stream.set_mesh(10, 100);
+        stream.set_mesh(100);
         stream.set_dynamic_buffer_offset(0, Some(100));
         stream.draw();
 
@@ -469,7 +454,7 @@ mod test {
             DrawCommand::BindIndexBuffer(BufferSlice::new(Handle::new(2, 2), 0)),
             stream[2]
         );
-        assert_eq!(DrawCommand::Draw(10, 100), stream[4]);
+        assert_eq!(DrawCommand::Draw(100), stream[4]);
     }
 
     #[test]
@@ -485,7 +470,7 @@ mod test {
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
         stream.bind_index_buffer(BufferSlice::new(Handle::new(2, 2), 0));
-        stream.set_mesh(10, 100);
+        stream.set_mesh(100);
         stream.draw();
 
         let stream = stream.iter().collect::<Vec<_>>();
@@ -499,7 +484,7 @@ mod test {
             DrawCommand::BindIndexBuffer(BufferSlice::new(Handle::new(2, 2), 0)),
             stream[2]
         );
-        assert_eq!(DrawCommand::Draw(10, 100), stream[3]);
+        assert_eq!(DrawCommand::Draw(100), stream[3]);
     }
 
     #[test]
@@ -514,14 +499,13 @@ mod test {
         stream.bind_descriptor_set(1, Some(Handle::new(5, 5)));
         stream.bind_descriptor_set(2, Some(Handle::new(6, 6)));
         stream.set_dynamic_buffer_offset(0, Some(0));
-        stream.set_mesh(10, 100);
+        stream.set_mesh(100);
         stream.draw();
         stream.set_dynamic_buffer_offset(0, Some(64));
         stream.draw();
 
         let stream = stream.iter().collect::<Vec<_>>();
 
-        stream.iter().for_each(|x| println!(">> {:?}", x));
         assert_eq!(12, stream.len());
         assert_eq!(DrawCommand::BindPipeline(Index::new(0)), stream[0]);
         assert_eq!(
@@ -553,9 +537,9 @@ mod test {
             stream[7]
         );
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 0), stream[8]);
-        assert_eq!(DrawCommand::Draw(10, 100), stream[9]);
+        assert_eq!(DrawCommand::Draw(100), stream[9]);
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 64), stream[10]);
-        assert_eq!(DrawCommand::Draw(10, 100), stream[11]);
+        assert_eq!(DrawCommand::Draw(100), stream[11]);
     }
 
     #[test]
@@ -585,9 +569,9 @@ mod test {
 
         stream.set_dynamic_buffer_offset(0, Some(0));
 
-        stream.set_mesh(100, 1000);
+        stream.set_mesh(1000);
 
-        stream.set_mesh(10, 100);
+        stream.set_mesh(100);
         stream.draw();
 
         stream.set_dynamic_buffer_offset(0, Some(256));
@@ -627,8 +611,8 @@ mod test {
             stream[7]
         );
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 0), stream[8]);
-        assert_eq!(DrawCommand::Draw(10, 100), stream[9]);
+        assert_eq!(DrawCommand::Draw(100), stream[9]);
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 64), stream[10]);
-        assert_eq!(DrawCommand::Draw(10, 100), stream[11]);
+        assert_eq!(DrawCommand::Draw(100), stream[11]);
     }
 }

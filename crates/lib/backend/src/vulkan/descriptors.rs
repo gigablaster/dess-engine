@@ -19,7 +19,6 @@ use ash::vk;
 use dess_common::{Handle, Pool, TempList};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
-use log::debug;
 
 use crate::{BackendError, BackendResult};
 
@@ -85,7 +84,11 @@ pub struct UpdateDescriptorContext<'a> {
     retired_uniforms: Vec<u32>,
 }
 
+/// Allows client to manipulate descriptor set
 impl<'a> UpdateDescriptorContext<'a> {
+    /// Created descriptor set from descriptor set info
+    ///
+    /// Descriptor set info can be extracted from Program as an example.
     pub fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, BackendError> {
         let static_uniforms = set
             .types
@@ -150,13 +153,9 @@ impl<'a> UpdateDescriptorContext<'a> {
         Ok(handle)
     }
 
-    pub fn resolve(&self, handle: DescriptorHandle) -> Option<vk::DescriptorSet> {
-        self.storage
-            .get_hot(handle)
-            .copied()
-            .filter(|value| *value != vk::DescriptorSet::null())
-    }
-
+    /// Mark descriptor set as invalid.
+    ///
+    /// It will be destroyed when current frame finished rendering..
     pub fn remove(&mut self, handle: DescriptorHandle) {
         if let Some((_, value)) = self.storage.remove(handle) {
             value
@@ -168,6 +167,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         }
     }
 
+    /// Bind image to descriptor set
     pub fn bind_image(
         &mut self,
         handle: DescriptorHandle,
@@ -175,12 +175,11 @@ impl<'a> UpdateDescriptorContext<'a> {
         image: ImageHandle,
         layout: vk::ImageLayout,
     ) -> Result<(), BackendError> {
-        if let Some(image) = self.images.get_cold(image) {
-            self.bind_image_direct(handle, binding, image, layout)
-        } else {
-            debug!("Attemt to bind invalid image handle {}", image);
-            Ok(())
-        }
+        let image = self
+            .images
+            .get_cold(image)
+            .ok_or(BackendError::InvalidHandle)?;
+        self.bind_image_direct(handle, binding, image, layout)
     }
 
     fn bind_image_direct(
@@ -190,18 +189,20 @@ impl<'a> UpdateDescriptorContext<'a> {
         image: &Image,
         layout: vk::ImageLayout,
     ) -> Result<(), BackendError> {
-        if let Some(desc) = self.storage.get_cold_mut(handle) {
-            let image_bind = desc
-                .images
-                .iter_mut()
-                .find(|point| point.binding == binding as u32);
-            if let Some(point) = image_bind {
-                point.data = Some((
-                    image.get_or_create_view(&self.device.raw, ImageViewDesc::default())?,
-                    layout,
-                ));
-                self.dirty.insert(handle);
-            }
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+        let image_bind = desc
+            .images
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = image_bind {
+            point.data = Some((
+                image.get_or_create_view(&self.device.raw, ImageViewDesc::default())?,
+                layout,
+            ));
+            self.dirty.insert(handle);
         }
 
         Ok(())
@@ -213,20 +214,22 @@ impl<'a> UpdateDescriptorContext<'a> {
         binding: usize,
         data: &T,
     ) -> Result<(), BackendError> {
-        if let Some(desc) = self.storage.get_cold_mut(handle) {
-            let desc = desc
-                .static_uniforms
-                .iter_mut()
-                .find(|point| point.binding == binding as u32);
-            if let Some(point) = desc {
-                if let Some(old) = point
-                    .data
-                    .replace((self.uniforms.push(data)? as u32, mem::size_of::<T>() as u32))
-                {
-                    self.retired_uniforms.push(old.0);
-                }
-                self.dirty.insert(handle);
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+        let desc = desc
+            .static_uniforms
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = desc {
+            if let Some(old) = point
+                .data
+                .replace((self.uniforms.push(data)? as u32, mem::size_of::<T>() as u32))
+            {
+                self.retired_uniforms.push(old.0);
             }
+            self.dirty.insert(handle);
         }
         Ok(())
     }

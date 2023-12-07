@@ -30,6 +30,7 @@ pub enum BackendError {
     InvalidHandle,
     OutOfTempMemory,
     TooBig,
+    DescriptorIsntReady,
 }
 
 impl From<vk::Result> for BackendError {

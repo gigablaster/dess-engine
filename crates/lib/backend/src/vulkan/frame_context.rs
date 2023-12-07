@@ -23,7 +23,7 @@ use crate::{barrier, BackendError, BackendResult, DrawStream};
 
 use super::{
     frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
-    ImageStorage, PipelineStorage,
+    ImageStorage, PipelineStorage, PER_DRAW_BINDING_SLOT,
 };
 
 #[derive(Clone, Copy)]
@@ -190,11 +190,20 @@ impl Barrier {
 }
 
 impl<'a> FrameContext<'a> {
+    /// Allocate temporary memory on GPU and copy data there.
+    ///
+    /// Buffer slive is only valid during current frame, no need to free it in any way
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
         let offset = self.frame.temp_allocate(data)?;
         Ok(BufferSlice::new(self.temp_buffer_handle, offset))
     }
 
+    /// Record render pass
+    ///
+    /// Render pass is a set of draw streams and barriers that executed before
+    /// drawing start.
+    ///
+    /// Actual recording is done later, might be multithreaded.
     pub fn execute(
         &self,
         area: vk::Rect2D,
@@ -361,12 +370,17 @@ impl<'a> ExecutionContext<'a> {
                         .get_hot(handle)
                         .copied()
                         .ok_or(BackendError::InvalidHandle)?;
+                    if descriptor_set == vk::DescriptorSet::null() {
+                        return Err(BackendError::DescriptorIsntReady);
+                    }
                     let mut dynamic_offsets = ArrayVec::<_, 2>::new();
-                    for offset in dynamic_buffer_offsets
-                        .iter()
-                        .take(dynamic_buffer_offset_count)
-                    {
-                        dynamic_offsets.push(*offset);
+                    if index == PER_DRAW_BINDING_SLOT {
+                        for offset in dynamic_buffer_offsets
+                            .iter()
+                            .take(dynamic_buffer_offset_count)
+                        {
+                            dynamic_offsets.push(*offset);
+                        }
                     }
                     unsafe {
                         self.device.raw.cmd_bind_descriptor_sets(
@@ -389,16 +403,12 @@ impl<'a> ExecutionContext<'a> {
                         &[],
                     );
                 },
-                crate::DrawCommand::Draw(first_index, triangle_count) => unsafe {
-                    self.device.raw.cmd_draw(
-                        self.frame.main_cb.raw,
-                        triangle_count * 3,
-                        1,
-                        first_index,
-                        0,
-                    )
+                crate::DrawCommand::Draw(triangle_count) => unsafe {
+                    self.device
+                        .raw
+                        .cmd_draw(self.frame.main_cb.raw, triangle_count * 3, 1, 0, 0)
                 },
-                crate::DrawCommand::DrawInstanced(_, _, _) => unimplemented!(),
+                crate::DrawCommand::DrawInstanced(_, _) => unimplemented!(),
             }
         }
         Ok(())

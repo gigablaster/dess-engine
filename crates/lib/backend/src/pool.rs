@@ -83,6 +83,9 @@ pub struct ResourcePool<'a> {
     resources: Mutex<HashMap<SmolStr, Option<PoolImage>>>,
 }
 
+/// Temporary image
+///
+/// Only used in current scope. returned to pool after dropping.
 pub struct TemporaryImage<'a> {
     pool: &'a ResourcePool<'a>,
     image: PoolImage,

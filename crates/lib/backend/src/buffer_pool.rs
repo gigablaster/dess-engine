@@ -26,6 +26,10 @@ use crate::{
 
 const CHUNK_SIZE: usize = 256 * 1024 * 1024;
 
+/// Keeps all static geometry
+///
+/// All static geometry suballocated in one or few really big buffers. This way engine
+/// guarentee that buffers aren't changed that often.
 pub struct BufferPool<'a> {
     device: &'a Device,
     buffers: Mutex<HashMap<BufferHandle, DynamicAllocator>>,
@@ -39,7 +43,12 @@ impl<'a> BufferPool<'a> {
         }
     }
 
-    pub fn allocate<T: Sized>(&self, size: usize, data: &[T]) -> BackendResult<BufferSlice> {
+    /// Suballocate buffer and copy data there
+    ///
+    /// Allocate new chunk if there's not enough space in already allocated
+    /// memory.
+    pub fn allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
+        let size = std::mem::size_of_val(data);
         let mut buffers = self.buffers.lock();
         let slice = if let Some(slice) = buffers.iter_mut().find_map(|(handle, allocator)| {
             allocator
@@ -62,6 +71,10 @@ impl<'a> BufferPool<'a> {
         Ok(slice)
     }
 
+    /// Free previosly allocated buffer
+    ///
+    /// Panics if client attempt to deallocate buffer that wasn't allocated from
+    /// same buffer pool.
     pub fn deallocate(&self, buffer: BufferSlice) {
         let mut buffers = self.buffers.lock();
         let allocator = buffers
