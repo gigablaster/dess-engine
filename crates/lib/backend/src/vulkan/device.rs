@@ -15,7 +15,6 @@
 
 use arrayvec::ArrayVec;
 use ash::{extensions::khr, vk};
-use crossbeam::channel::{bounded, Receiver, Sender};
 use dess_common::{Handle, Pool};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
@@ -72,8 +71,6 @@ pub(crate) type ImageStorage = Pool<vk::Image, Image>;
 pub(crate) type BufferStorage = Pool<vk::Buffer, Buffer>;
 pub(crate) type ProgramStorage = Vec<Program>;
 pub(crate) type PipelineStorage = Vec<(vk::Pipeline, vk::PipelineLayout)>;
-
-const PIPELINES_IN_FLY: usize = 128;
 
 pub struct CommandBuffer {
     pub raw: vk::CommandBuffer,
@@ -150,10 +147,6 @@ pub struct Device {
     pub(crate) universal_queue: Mutex<vk::Queue>,
     pub(crate) pipelines: RwLock<PipelineStorage>,
     pub(crate) pipeline_cache: vk::PipelineCache,
-    pub(crate) pipeline_compiled_sender: Sender<(PipelineHandle, vk::Pipeline, vk::PipelineLayout)>,
-    pub(crate) pipeline_compiled_receiver:
-        Receiver<(PipelineHandle, vk::Pipeline, vk::PipelineLayout)>,
-    pub(crate) pipelines_in_fly: AtomicUsize,
     pub queue_familt_index: u32,
     current_cpu_frame: AtomicUsize,
     pub(crate) temp_buffer: vk::Buffer,
@@ -302,7 +295,6 @@ impl Device {
             },
         );
 
-        let (pipeline_compiled_sender, pipeline_compiled_receiver) = bounded(PIPELINES_IN_FLY);
         Ok(Self {
             staging: Mutex::new(Staging::new(
                 &instance,
@@ -327,9 +319,6 @@ impl Device {
             dirty_descriptors: Mutex::default(),
             program_storage: RwLock::default(),
             pipelines: RwLock::default(),
-            pipeline_compiled_receiver,
-            pipeline_compiled_sender,
-            pipelines_in_fly: AtomicUsize::new(0),
             raw: Arc::new(device),
             queue_familt_index: universal_queue_index,
             current_cpu_frame: AtomicUsize::new(0),
@@ -415,17 +404,6 @@ impl Device {
         frame
             .drop_list
             .replace(mem::take(&mut self.current_drop_list.lock()));
-
-        {
-            // Sync compiled pipelines
-            let mut pipelines = self.pipelines.write();
-            self.pipeline_compiled_receiver
-                .try_iter()
-                .for_each(|(index, pipeline, layout)| {
-                    pipelines[index.index()] = (pipeline, layout);
-                    self.pipelines_in_fly.fetch_sub(1, Ordering::SeqCst);
-                });
-        }
 
         // Upload staging and descriptor sets
         let staging_semaphore = self.staging.lock().upload(self)?;

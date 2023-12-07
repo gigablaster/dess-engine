@@ -1,12 +1,11 @@
-use std::{slice, sync::atomic::Ordering};
+use std::slice;
 
-use arrayvec::ArrayVec;
 use ash::vk;
-use log::{debug, error};
+use log::debug;
 
 use crate::{BackendError, BackendResult};
 
-use super::{Device, Index, PipelineHandle, ProgramHandle, Shader};
+use super::{Device, PipelineHandle, ProgramHandle};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BlendDesc {
@@ -81,15 +80,6 @@ impl PipelineCreateDesc {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct PipelineCreatePayload {
-    pub shaders: ArrayVec<Shader, 2>,
-    pub layout: vk::PipelineLayout,
-    pub desc: PipelineCreateDesc,
-    pub color_attachments: ArrayVec<vk::Format, 8>,
-    pub depth_attachment: Option<vk::Format>,
-}
-
 impl Device {
     pub fn create_pipeline(
         &self,
@@ -98,52 +88,12 @@ impl Device {
         color_attachments: &[vk::Format],
         depth_attachment: Option<vk::Format>,
     ) -> BackendResult<PipelineHandle> {
-        let index = {
-            let mut pipelines = self.pipelines.write();
-            let index = pipelines.len();
-            pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()));
-
-            Index::new(index)
-        };
-        {
-            let programs = self.program_storage.read();
-            let program = programs
-                .get(program.index())
-                .ok_or(BackendError::InvalidHandle)?;
-            let payload = PipelineCreatePayload {
-                shaders: program.shaders.clone(),
-                layout: program.pipeline_layout,
-                desc,
-                color_attachments: color_attachments.iter().copied().collect(),
-                depth_attachment,
-            };
-            let sender = self.pipeline_compiled_sender.clone();
-            let device = self.raw.clone();
-            let cache = self.pipeline_cache;
-            self.pipelines_in_fly.fetch_add(1, Ordering::SeqCst);
-            rayon::spawn(
-                move || match Self::build_pipeline(&device, cache, payload) {
-                    Ok(result) => sender.send((index, result.0, result.1)).unwrap(),
-                    Err(err) => {
-                        error!("Failed to compiled pipeline: {:?}", err);
-                        sender
-                            .send((index, vk::Pipeline::null(), vk::PipelineLayout::null()))
-                            .unwrap();
-                    }
-                },
-            );
-        }
-
-        Ok(index)
-    }
-
-    fn build_pipeline(
-        device: &ash::Device,
-        cache: vk::PipelineCache,
-        desc: PipelineCreatePayload,
-    ) -> Result<(vk::Pipeline, vk::PipelineLayout), BackendError> {
+        let programs = self.program_storage.read();
+        let program = programs
+            .get(program.index())
+            .ok_or(BackendError::InvalidHandle)?;
         debug!("Compile pipeline {:?}", desc);
-        let shader_create_info = desc
+        let shader_create_info = program
             .shaders
             .iter()
             .map(|shader| {
@@ -166,22 +116,21 @@ impl Device {
             .build();
 
         let vertex_binding_desc = desc
-            .desc
             .strides
             .iter()
             .enumerate()
             .map(|(index, _)| {
                 vk::VertexInputBindingDescription::builder()
-                    .stride(desc.desc.strides[index].0 as _)
-                    .binding(desc.desc.attributes[index].binding)
-                    .input_rate(desc.desc.strides[index].1)
+                    .stride(desc.strides[index].0 as _)
+                    .binding(desc.attributes[index].binding)
+                    .input_rate(desc.strides[index].1)
                     .build()
             })
             .collect::<Vec<_>>();
 
         let vertex_input = vk::PipelineVertexInputStateCreateInfo::builder()
             .vertex_binding_descriptions(&vertex_binding_desc)
-            .vertex_attribute_descriptions(desc.desc.attributes)
+            .vertex_attribute_descriptions(desc.attributes)
             .build();
 
         let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
@@ -197,7 +146,7 @@ impl Device {
             .depth_bias_clamp(0.0)
             .depth_bias_slope_factor(0.0);
 
-        let rasterizer_state = if let Some(desc) = desc.desc.cull {
+        let rasterizer_state = if let Some(desc) = desc.cull {
             rasterizer_state.cull_mode(desc.0).front_face(desc.1)
         } else {
             rasterizer_state.cull_mode(vk::CullModeFlags::NONE)
@@ -211,26 +160,26 @@ impl Device {
             .alpha_to_one_enable(false)
             .build();
 
-        let depthstencil_state = if let Some(op) = desc.desc.depth_test {
+        let depthstencil_state = if let Some(op) = desc.depth_test {
             vk::PipelineDepthStencilStateCreateInfo::builder()
                 .depth_compare_op(op)
                 .stencil_test_enable(false)
                 .depth_test_enable(true)
-                .depth_write_enable(desc.desc.depth_write)
+                .depth_write_enable(desc.depth_write)
                 .build()
         } else {
             vk::PipelineDepthStencilStateCreateInfo::builder()
                 .depth_compare_op(vk::CompareOp::NEVER)
                 .stencil_test_enable(false)
                 .depth_test_enable(false)
-                .depth_write_enable(desc.desc.depth_write)
+                .depth_write_enable(desc.depth_write)
                 .build()
         };
 
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
             .color_write_mask(vk::ColorComponentFlags::RGBA);
 
-        let color_blend_attachment = if let Some((color, alpha)) = desc.desc.blend {
+        let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
             color_blend_attachment
                 .blend_enable(true)
                 .src_color_blend_factor(color.src_blend)
@@ -248,16 +197,16 @@ impl Device {
             .logic_op_enable(false)
             .build();
 
-        let rendering_info = vk::PipelineRenderingCreateInfo::builder()
-            .color_attachment_formats(&desc.color_attachments);
-        let mut rendering_info = if let Some(depth) = desc.depth_attachment {
+        let rendering_info =
+            vk::PipelineRenderingCreateInfo::builder().color_attachment_formats(color_attachments);
+        let mut rendering_info = if let Some(depth) = depth_attachment {
             rendering_info.depth_attachment_format(depth)
         } else {
             rendering_info
         };
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .layout(desc.layout)
+            .layout(program.pipeline_layout)
             .stages(&shader_create_info)
             .dynamic_state(&dynamic_state_create_info)
             .viewport_state(&viewport_state)
@@ -271,14 +220,18 @@ impl Device {
             .build();
 
         let pipeline = unsafe {
-            device.create_graphics_pipelines(cache, slice::from_ref(&pipeline_create_info), None)
+            self.raw.create_graphics_pipelines(
+                self.pipeline_cache,
+                slice::from_ref(&pipeline_create_info),
+                None,
+            )
         }
         .map_err(|(_, error)| BackendError::from(error))?[0];
 
-        Ok((pipeline, desc.layout))
-    }
+        let mut pipelines = self.pipelines.write();
+        let index = pipelines.len();
+        pipelines.push((pipeline, program.pipeline_layout));
 
-    pub fn are_pipelines_compiling(&self) -> bool {
-        self.pipelines_in_fly.load(Ordering::Acquire) > 0
+        Ok(PipelineHandle::new(index))
     }
 }
