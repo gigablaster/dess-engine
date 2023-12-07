@@ -301,9 +301,6 @@ impl<'a> ExecutionContext<'a> {
                         .get(handle.index())
                         .copied()
                         .ok_or(BackendError::InvalidHandle)?;
-                    if pipeline == vk::Pipeline::null() || layout == vk::PipelineLayout::null() {
-                        return Err(BackendError::Fail);
-                    }
                     unsafe {
                         self.device.raw.cmd_bind_pipeline(
                             self.frame.main_cb.raw,
