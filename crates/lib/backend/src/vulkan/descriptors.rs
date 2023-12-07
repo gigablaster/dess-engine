@@ -15,9 +15,8 @@
 
 use std::{collections::HashSet, mem, slice};
 
-use arrayvec::ArrayVec;
 use ash::vk;
-use dess_common::{Handle, Pool};
+use dess_common::{Handle, Pool, TempList};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use log::debug;
@@ -25,8 +24,8 @@ use log::debug;
 use crate::{BackendError, BackendResult};
 
 use super::{
-    Buffer, BufferHandle, BufferStorage, DescriptorSet, DescriptorSetInfo, Device, Image,
-    ImageHandle, ImageStorage, ImageViewDesc, UniformStorage,
+    DescriptorSet, DescriptorSetInfo, Device, Image, ImageHandle, ImageStorage, ImageViewDesc,
+    UniformStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -35,17 +34,14 @@ pub struct BindingPoint<T> {
     pub data: Option<T>,
 }
 
-const MAX_UNIFORMS: usize = 8;
-const MAX_DYNAMIC_UNIFORMS: usize = 2;
-const MAX_IMAGES: usize = 8;
-const MAX_DESCRIPTORS_PER_UPDATE: usize = 512;
+const BASIC_DESCIPTOR_UPDATE_COUNT: usize = 512;
 
 #[derive(Debug)]
 pub struct DescriptorData {
     pub(crate) descriptor: Option<DescriptorSet>,
-    pub(crate) static_uniforms: ArrayVec<BindingPoint<(u32, u32)>, MAX_UNIFORMS>,
-    pub(crate) dynamic_uniforms: ArrayVec<BindingPoint<vk::Buffer>, MAX_DYNAMIC_UNIFORMS>,
-    pub(crate) images: ArrayVec<BindingPoint<(vk::ImageView, vk::ImageLayout)>, MAX_IMAGES>,
+    pub(crate) static_uniforms: Vec<BindingPoint<(u32, u32)>>,
+    pub(crate) dynamic_uniforms: Vec<BindingPoint<vk::Buffer>>,
+    pub(crate) images: Vec<BindingPoint<(vk::ImageView, vk::ImageLayout)>>,
     pub(crate) count: DescriptorTotalCount,
     pub(crate) layout: vk::DescriptorSetLayout,
 }
@@ -54,11 +50,11 @@ pub type DescriptorHandle = Handle<vk::DescriptorSet, Box<DescriptorData>>;
 pub(crate) type DescriptorStorage = Pool<vk::DescriptorSet, Box<DescriptorData>>;
 
 pub trait PushAndGetRef<T> {
-    fn add(&mut self, data: T) -> &T;
+    fn push_get_ref(&mut self, data: T) -> &T;
 }
 
-impl<T, const CAP: usize> PushAndGetRef<T> for ArrayVec<T, CAP> {
-    fn add(&mut self, data: T) -> &T {
+impl<T> PushAndGetRef<T> for Vec<T> {
+    fn push_get_ref(&mut self, data: T) -> &T {
         let index = self.len();
         self.push(data);
         &self[index]
@@ -85,7 +81,6 @@ pub struct UpdateDescriptorContext<'a> {
     storage: &'a mut DescriptorStorage,
     dirty: &'a mut HashSet<DescriptorHandle>,
     images: &'a ImageStorage,
-    buffers: &'a BufferStorage,
     retired_descriptors: Vec<DescriptorData>,
     retired_uniforms: Vec<u32>,
 }
@@ -105,7 +100,7 @@ impl<'a> UpdateDescriptorContext<'a> {
                     None
                 }
             })
-            .collect::<ArrayVec<_, MAX_UNIFORMS>>();
+            .collect::<Vec<_>>();
         let images = set
             .types
             .iter()
@@ -119,7 +114,7 @@ impl<'a> UpdateDescriptorContext<'a> {
                     None
                 }
             })
-            .collect::<ArrayVec<_, MAX_IMAGES>>();
+            .collect::<Vec<_>>();
         let dynamic_uniforms = set
             .types
             .iter()
@@ -127,13 +122,13 @@ impl<'a> UpdateDescriptorContext<'a> {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
                     Some(BindingPoint::<vk::Buffer> {
                         binding: *index,
-                        data: None,
+                        data: Some(self.device.temp_buffer),
                     })
                 } else {
                     None
                 }
             })
-            .collect::<ArrayVec<_, MAX_DYNAMIC_UNIFORMS>>();
+            .collect::<Vec<_>>();
         let count = DescriptorTotalCount {
             combined_image_sampler: images.len() as _,
             uniform_buffer: static_uniforms.len() as _,
@@ -188,21 +183,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         }
     }
 
-    pub fn bind_dynamic_uniform(
-        &mut self,
-        handle: DescriptorHandle,
-        binding: usize,
-        buffer: BufferHandle,
-    ) -> Result<(), BackendError> {
-        if let Some(buffer) = self.buffers.get_cold(buffer) {
-            self.bind_dynamic_uniform_direct(handle, binding, buffer)
-        } else {
-            debug!("Attemt to bind invalid buffer handle {}", buffer);
-            Ok(())
-        }
-    }
-
-    pub fn bind_image_direct(
+    fn bind_image_direct(
         &mut self,
         handle: DescriptorHandle,
         binding: usize,
@@ -244,25 +225,6 @@ impl<'a> UpdateDescriptorContext<'a> {
                 {
                     self.retired_uniforms.push(old.0);
                 }
-                self.dirty.insert(handle);
-            }
-        }
-        Ok(())
-    }
-
-    pub fn bind_dynamic_uniform_direct(
-        &mut self,
-        handle: DescriptorHandle,
-        binding: usize,
-        buffer: &Buffer,
-    ) -> Result<(), BackendError> {
-        if let Some(desc) = self.storage.get_cold_mut(handle) {
-            let desc = desc
-                .dynamic_uniforms
-                .iter_mut()
-                .find(|point| point.binding == binding as u32);
-            if let Some(point) = desc {
-                point.data = Some(buffer.raw);
                 self.dirty.insert(handle);
             }
         }
@@ -310,17 +272,11 @@ impl Device {
                 );
             }
         }
-        let mut writes = ArrayVec::<_, MAX_DESCRIPTORS_PER_UPDATE>::new();
-        let mut buffers = ArrayVec::<_, MAX_DESCRIPTORS_PER_UPDATE>::new();
-        let mut images = ArrayVec::<_, MAX_DESCRIPTORS_PER_UPDATE>::new();
+        let mut writes = Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT);
+        let mut buffers = TempList::new();
+        let mut images = TempList::new();
         let mut uniforms = self.uniform_storage.lock();
         dirty.iter().for_each(|x| {
-            if writes.is_full() || buffers.is_full() || images.is_full() {
-                unsafe { self.raw.update_descriptor_sets(&writes, &[]) };
-                writes.clear();
-                buffers.clear();
-                images.clear();
-            }
             Self::prepare_descriptor(
                 *x,
                 &mut uniforms,
@@ -355,9 +311,9 @@ impl Device {
         handle: DescriptorHandle,
         uniforms: &mut UniformStorage,
         storage: &mut DescriptorStorage,
-        writes: &mut ArrayVec<vk::WriteDescriptorSet, MAX_DESCRIPTORS_PER_UPDATE>,
-        images: &mut ArrayVec<vk::DescriptorImageInfo, MAX_DESCRIPTORS_PER_UPDATE>,
-        buffers: &mut ArrayVec<vk::DescriptorBufferInfo, MAX_DESCRIPTORS_PER_UPDATE>,
+        writes: &mut Vec<vk::WriteDescriptorSet>,
+        images: &mut TempList<vk::DescriptorImageInfo>,
+        buffers: &mut TempList<vk::DescriptorBufferInfo>,
     ) {
         if let Some(desc) = storage.get_cold(handle) {
             if !desc.is_valid() {
@@ -432,9 +388,8 @@ impl Device {
             storage: &mut self.descriptor_storage.write(),
             dirty: &mut self.dirty_descriptors.lock(),
             images: &self.image_storage.read(),
-            buffers: &self.buffer_storage.read(),
-            retired_descriptors: Vec::with_capacity(MAX_DESCRIPTORS_PER_UPDATE),
-            retired_uniforms: Vec::with_capacity(MAX_DESCRIPTORS_PER_UPDATE),
+            retired_descriptors: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),
+            retired_uniforms: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),
         };
         cb(context)
     }

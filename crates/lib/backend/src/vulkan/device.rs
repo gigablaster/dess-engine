@@ -156,7 +156,7 @@ pub struct Device {
     pub(crate) pipelines_in_fly: AtomicUsize,
     pub queue_familt_index: u32,
     current_cpu_frame: AtomicUsize,
-    temp_buffer: vk::Buffer,
+    pub(crate) temp_buffer: vk::Buffer,
     temp_buffer_memory: Option<GpuMemory>,
     temp_buffer_handle: BufferHandle,
 }
