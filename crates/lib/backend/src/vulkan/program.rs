@@ -31,9 +31,10 @@ use super::{Device, Index, ProgramHandle, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
-pub const PASS_BINDING_SLOT: u32 = 0;
-pub const MATERIAL_BINDING_SLOT: u32 = 1;
-pub const DYNAMIC_BINDING_SLOT: u32 = 3;
+pub const PER_PASS_BINDING_SLOT: u32 = 0;
+pub const PER_MATERIAL_BINDING_SLOT: u32 = 1;
+pub const PER_OBJECT_BINDING_SLOT: u32 = 2;
+pub const PER_DRAW_BINDING_SLOT: u32 = 3;
 
 // Slots are
 // 0 - per pass
@@ -56,7 +57,6 @@ pub struct DescriptorSetInfo {
 impl DescriptorSetInfo {
     pub fn new(
         device: &ash::Device,
-        set_index: u32,
         stage: vk::ShaderStageFlags,
         set: &BTreeMap<u32, DescriptorInfo>,
         expected_count: u32,
@@ -75,12 +75,7 @@ impl DescriptorSetInfo {
                 | rspirv_reflect::DescriptorType::STORAGE_IMAGE
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    let binding = Self::create_uniform_binding(
-                        *index,
-                        stage,
-                        binding,
-                        set_index == DYNAMIC_BINDING_SLOT, // Force last slot to have dynamic bindings
-                    );
+                    let binding = Self::create_uniform_binding(*index, stage, binding);
 
                     bindings.insert(*index, binding);
                     if binding.descriptor_type == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
@@ -166,15 +161,13 @@ impl DescriptorSetInfo {
         index: u32,
         stage: vk::ShaderStageFlags,
         binding: &DescriptorInfo,
-        force_dynamic: bool,
     ) -> vk::DescriptorSetLayoutBinding {
         let descriptor_type = match binding.ty {
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if !force_dynamic => {
-                vk::DescriptorType::UNIFORM_BUFFER
-            }
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if force_dynamic => {
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if binding.name.ends_with("_dyn") => {
                 vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
+
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER => vk::DescriptorType::UNIFORM_BUFFER,
             rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
                 vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
@@ -380,7 +373,6 @@ impl Program {
                 Some(set) => {
                     layouts.push(DescriptorSetInfo::new(
                         device,
-                        set_index,
                         stages,
                         set,
                         DESCRIPTORS_PER_SLOT[set_index as usize],
