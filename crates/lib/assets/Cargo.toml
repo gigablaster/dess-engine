@@ -12,8 +12,6 @@ ash = "0.37.3"
 bytes = "1.5.0"
 serde = { version = "1.0.192", features = ["derive"] }
 speedy = { version = "0.8.6", features = ["speedy-derive", "uuid"] }
-turbosloth = "0.2.0"
-async-trait = "0.1.74"
 normalize-path = "0.2.1"
 numquant = "0.2.0"
 

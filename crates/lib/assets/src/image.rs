@@ -19,13 +19,11 @@ use std::{
 };
 
 use ash::vk;
-use async_trait::async_trait;
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use image::{imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 use speedy::{Context, Readable, Writable};
-use turbosloth::{Lazy, LazyWorker, RunContext};
 
 use crate::{get_absolute_asset_path, read_to_end, Asset, Error};
 
@@ -164,11 +162,8 @@ pub struct ImageContent {
     purpose: ImagePurpose,
 }
 
-#[async_trait]
-impl LazyWorker for ImageSource {
-    type Output = io::Result<ImageContent>;
-
-    async fn run(self, _ctx: RunContext) -> Self::Output {
+impl ImageSource {
+    pub fn import(self) -> Result<ImageContent, Error> {
         let bytes = match &self.source {
             ImageDataSource::Bytes(bytes) => bytes.clone(),
             ImageDataSource::File(path) => read_to_end(get_absolute_asset_path(Path::new(path))?)?,
@@ -205,9 +200,7 @@ impl LazyWorker for ImageSource {
     }
 }
 
-pub struct ProcessImageAsset {
-    image: Lazy<ImageContent>,
-}
+pub struct ProcessImageAsset {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BcMode {
@@ -374,13 +367,8 @@ impl ProcessImageAsset {
 
         None
     }
-}
-#[async_trait]
-impl LazyWorker for ProcessImageAsset {
-    type Output = Result<ImageAsset, Error>;
 
-    async fn run(self, ctx: RunContext) -> Self::Output {
-        let content = self.image.eval(&ctx).await?;
+    pub fn import(content: ImageContent) -> Result<ImageAsset, Error> {
         match &content.data {
             RawImageData::Dds(dds) => Self::process_dds(dds),
             RawImageData::Rgba(image) => Self::process_rgba(image, content.purpose),

@@ -21,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use turbosloth::lazy::LazyEvalError;
 use uuid::Uuid;
 
 mod image;
@@ -48,12 +47,6 @@ pub enum Error {
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl From<LazyEvalError> for Error {
-    fn from(_value: LazyEvalError) -> Self {
-        Self::EvalFailed
     }
 }
 

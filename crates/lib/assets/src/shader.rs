@@ -15,10 +15,8 @@
 
 use std::{path::Path, process::Command};
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use speedy::{Readable, Writable};
-use turbosloth::{LazyWorker, RunContext};
 
 use crate::{get_absolute_asset_path, Asset, Error};
 
@@ -53,11 +51,8 @@ impl Asset for ShaderAsset {
     }
 }
 
-#[async_trait]
-impl LazyWorker for ShaderSource {
-    type Output = Result<ShaderAsset, Error>;
-
-    async fn run(self, _ctx: RunContext) -> Self::Output {
+impl ShaderSource {
+    pub fn compile(&self) -> Result<ShaderAsset, Error> {
         let stage = match self.stage {
             ShaderStage::Vertex => "-fshader-stage=vert",
             ShaderStage::Fragment => "-fshader-stage=frag",

@@ -19,11 +19,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use async_trait::async_trait;
 use normalize_path::NormalizePath;
 use numquant::linear::quantize;
 use speedy::{Context, Readable, Writable};
-use turbosloth::{Lazy, LazyWorker, RunContext};
 
 use crate::{
     get_absolute_asset_path, get_relative_asset_path, Asset, Error, ImagePurpose, ImageSource,
@@ -247,11 +245,8 @@ pub struct GltfContent {
     _images: Vec<gltf::image::Data>,
 }
 
-#[async_trait]
-impl LazyWorker for GltfSource {
-    type Output = Result<GltfContent, Error>;
-
-    async fn run(self, _ctx: RunContext) -> Self::Output {
+impl GltfSource {
+    pub fn import(&self) -> Result<GltfContent, Error> {
         let path = Path::new(&self.path).to_owned();
         let (document, buffers, images) = gltf::import(get_absolute_asset_path(&path)?)
             .map_err(|err| Error::ImportFailed(err.to_string()))?;
@@ -299,9 +294,7 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
     }
 }
 
-pub struct ProcessGltfAsset {
-    gltf: Lazy<GltfContent>,
-}
+pub struct ProcessGltfAsset {}
 
 struct SceneProcessingContext<'a> {
     model: &'a mut ModelAsset,
@@ -689,13 +682,8 @@ impl ProcessGltfAsset {
     }
 }
 
-#[async_trait]
-impl LazyWorker for ProcessGltfAsset {
-    type Output = Result<SceneAsset, Error>;
-
-    async fn run(self, ctx: RunContext) -> Self::Output {
-        let gltf = self.gltf.eval(&ctx).await?;
-
+impl ProcessGltfAsset {
+    pub fn process(&self, gltf: GltfContent) -> ModelAsset {
         let mut model = ModelAsset::default();
 
         for (index, scene) in gltf.document.scenes().enumerate() {
@@ -714,6 +702,6 @@ impl LazyWorker for ProcessGltfAsset {
             model.scenes.insert(name, result);
         }
 
-        todo!()
+        model
     }
 }
