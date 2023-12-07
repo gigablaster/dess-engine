@@ -156,6 +156,9 @@ pub struct Device {
     pub(crate) pipelines_in_fly: AtomicUsize,
     pub queue_familt_index: u32,
     current_cpu_frame: AtomicUsize,
+    temp_buffer: vk::Buffer,
+    temp_buffer_memory: Option<GpuMemory>,
+    temp_buffer_handle: BufferHandle,
 }
 
 unsafe impl Send for Device {}
@@ -241,20 +244,63 @@ impl Device {
         let mut memory_allocator = GpuAllocator::new(allocator_config, allocator_props);
         let descriptor_allocator = DescriptorAllocator::new(0);
 
+        let temp_buffer_desc = vk::BufferCreateInfo::builder()
+            .size((MAX_TEMP_MEMORY * 2) as u64)
+            .usage(
+                vk::BufferUsageFlags::VERTEX_BUFFER
+                    | vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::UNIFORM_BUFFER,
+            )
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .queue_family_indices(&[universal_queue_index])
+            .build();
+        let temp_buffer = unsafe { device.create_buffer(&temp_buffer_desc, None) }?;
+        Self::set_object_name_impl(&instance, &device, temp_buffer, "Temp buffer");
+        let requirements = unsafe { device.get_buffer_memory_requirements(temp_buffer) };
+        let mut temp_buffer_memory = Self::allocate_impl(
+            &device,
+            &mut memory_allocator,
+            requirements,
+            gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS | gpu_alloc::UsageFlags::HOST_ACCESS,
+            true,
+        )?;
+        unsafe {
+            device.bind_buffer_memory(
+                temp_buffer,
+                *temp_buffer_memory.memory(),
+                temp_buffer_memory.offset(),
+            )
+        }?;
+        let temp_mapping = unsafe {
+            temp_buffer_memory.map(
+                AshMemoryDevice::wrap(&device),
+                0,
+                temp_buffer_desc.size as _,
+            )
+        }?;
         let frames = [
+            Mutex::new(Frame::new(&device, 0, temp_mapping, universal_queue_index)?),
             Mutex::new(Frame::new(
                 &device,
-                &mut memory_allocator,
-                universal_queue_index,
-            )?),
-            Mutex::new(Frame::new(
-                &device,
-                &mut memory_allocator,
+                MAX_TEMP_MEMORY,
+                temp_mapping,
                 universal_queue_index,
             )?),
         ];
 
         let uniform_storage = UniformStorage::new(&instance, &device, &mut memory_allocator)?;
+        let mut buffer_storage = BufferStorage::default();
+        let temp_buffer_handle = buffer_storage.push(
+            temp_buffer,
+            Buffer {
+                raw: temp_buffer,
+                desc: BufferDesc {
+                    size: temp_buffer_desc.size as usize,
+                    usage: temp_buffer_desc.usage,
+                },
+                memory: None,
+            },
+        );
 
         let (pipeline_compiled_sender, pipeline_compiled_receiver) = bounded(PIPELINES_IN_FLY);
         Ok(Self {
@@ -275,7 +321,7 @@ impl Device {
             universal_queue: Mutex::new(universal_queue),
             frames,
             image_storage: RwLock::default(),
-            buffer_storage: RwLock::default(),
+            buffer_storage: RwLock::new(buffer_storage),
             current_drop_list: Mutex::default(),
             descriptor_storage: RwLock::default(),
             dirty_descriptors: Mutex::default(),
@@ -287,6 +333,9 @@ impl Device {
             raw: Arc::new(device),
             queue_familt_index: universal_queue_index,
             current_cpu_frame: AtomicUsize::new(0),
+            temp_buffer,
+            temp_buffer_memory: Some(temp_buffer_memory),
+            temp_buffer_handle,
         })
     }
 
@@ -386,19 +435,6 @@ impl Device {
             crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
             crate::vulkan::AcquiredSurface::Image(image) => image,
         };
-        let temp_buffer_handle = self.buffer_storage.write().push(
-            frame.temp_buffer,
-            Buffer {
-                raw: frame.temp_buffer,
-                desc: BufferDesc {
-                    size: MAX_TEMP_MEMORY,
-                    usage: vk::BufferUsageFlags::VERTEX_BUFFER
-                        | vk::BufferUsageFlags::INDEX_BUFFER
-                        | vk::BufferUsageFlags::UNIFORM_BUFFER,
-                },
-                memory: None,
-            },
-        );
         let context = FrameContext {
             frame: &frame,
             render_area: swapchain.render_area(),
@@ -406,7 +442,7 @@ impl Device {
                 .image
                 .get_or_create_view(&self.raw, ImageViewDesc::default())?,
             target_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-            temp_buffer_handle,
+            temp_buffer_handle: self.temp_buffer_handle,
             passes: Mutex::default(),
         };
         frame_fn(&context)?;
@@ -459,7 +495,6 @@ impl Device {
         }
         unsafe { self.raw.end_command_buffer(frame.main_cb.raw) }.unwrap();
 
-        self.buffer_storage.write().remove(temp_buffer_handle);
         self.submit(
             &frame.main_cb,
             &[
@@ -717,6 +752,12 @@ impl Drop for Device {
         uniform_storage.free(&self.raw, &mut memory_allocator);
         self.staging.lock().free(&self.raw, &mut memory_allocator);
 
+        if let Some(memory) = self.temp_buffer_memory.take() {
+            unsafe {
+                memory_allocator.dealloc(AshMemoryDevice::wrap(&self.raw), memory);
+                self.raw.destroy_buffer(self.temp_buffer, None);
+            }
+        }
         if let Err(err) = save_pipeline_cache(&self.raw, &self.pdevice, self.pipeline_cache) {
             warn!("Failed to save pipeline cache: {:?}", err);
         }
