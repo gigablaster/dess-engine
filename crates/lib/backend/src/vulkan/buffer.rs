@@ -19,8 +19,8 @@ use parking_lot::Mutex;
 use crate::{BackendError, BackendResult};
 
 use super::{
-    AsVulkan, BufferHandle, Device, DropList, GpuAllocator, GpuMemory, ImageHandle, Instance,
-    ToDrop,
+    AsVulkan, BufferHandle, BufferSlice, Device, DropList, GpuAllocator, GpuMemory, ImageHandle,
+    Instance, ToDrop,
 };
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -143,6 +143,16 @@ impl Device {
 
     pub fn destroy_image(&self, handle: ImageHandle) {
         self.destroy_resource(handle, &self.image_storage);
+    }
+
+    pub fn upload_buffer<T: Sized>(&self, target: BufferSlice, data: &[T]) -> BackendResult<()> {
+        let buffers = self.buffer_storage.read();
+        let buffer = buffers
+            .get_cold(target.buffer)
+            .ok_or(BackendError::InvalidHandle)?;
+        self.staging
+            .lock()
+            .upload_buffer(self, buffer, target.offset as _, data)
     }
 
     pub fn get_buffer_desc(&self, handle: BufferHandle) -> BackendResult<BufferDesc> {
