@@ -9,6 +9,7 @@ edition = "2021"
 simple_logger = "4.2.0"
 dess-backend = { path = "../backend" }
 dess-common = { path = "../common" }
+dess-engine = { path = "../engine" }
 winit = { version = "0.29.3", features = ["rwh_05"] }
 raw-window-handle = "0.5.2"
 log = "0.4.20"

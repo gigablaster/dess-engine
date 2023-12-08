@@ -536,7 +536,6 @@ dependencies = [
  "arrayvec",
  "ash",
  "ash-window",
- "bevy_tasks",
  "byte-slice-cast",
  "dess-common",
  "directories",
@@ -550,7 +549,6 @@ dependencies = [
  "raw-window-handle 0.5.2",
  "rspirv-reflect",
  "siphasher",
- "smol_str",
  "speedy",
  "uuid",
 ]
@@ -565,12 +563,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "dess-engine"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bevy_tasks",
+ "dess-assets",
+ "dess-backend",
+ "dess-common",
+ "parking_lot",
+ "puffin",
+ "smol_str",
+]
+
+[[package]]
 name = "dess-runner"
 version = "0.1.0"
 dependencies = [
  "ash",
  "dess-backend",
  "dess-common",
+ "dess-engine",
  "log",
  "raw-window-handle 0.5.2",
  "simple_logger",

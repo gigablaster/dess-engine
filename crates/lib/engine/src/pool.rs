@@ -16,13 +16,12 @@
 use std::collections::HashMap;
 
 use ash::vk;
-use parking_lot::Mutex;
-use smol_str::SmolStr;
-
-use crate::{
+use dess_backend::{
     vulkan::{Device, ImageCreateDesc, ImageHandle, ImageViewDesc},
     BackendError, BackendResult,
 };
+use parking_lot::Mutex;
+use smol_str::SmolStr;
 
 /// Resource size
 ///

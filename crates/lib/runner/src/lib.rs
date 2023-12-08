@@ -1,8 +1,9 @@
-use dess_backend::{vulkan::FrameContext, BackendError, BufferPool, ResourcePool};
+use dess_backend::{vulkan::FrameContext, BackendError};
 use dess_common::GameTime;
 
 mod runner;
 
+use dess_engine::{BufferPool, ResourcePool};
 pub use runner::*;
 
 #[derive(Debug, PartialEq, Eq)]

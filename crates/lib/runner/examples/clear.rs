@@ -1,9 +1,10 @@
 use ash::vk::{self};
 use dess_backend::{
     vulkan::{Barrier, DescriptorHandle, RenderAttachment},
-    DrawStream, PoolImageDesc, RelativeImageSize,
+    DrawStream,
 };
 use dess_common::GameTime;
+use dess_engine::{PoolImageDesc, RelativeImageSize};
 use dess_runner::{Client, RenderContext, Runner};
 
 #[derive(Default)]

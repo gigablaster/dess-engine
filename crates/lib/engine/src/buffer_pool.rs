@@ -16,13 +16,12 @@
 use std::collections::HashMap;
 
 use ash::vk;
-use dess_common::DynamicAllocator;
-use parking_lot::Mutex;
-
-use crate::{
+use dess_backend::{
     vulkan::{BufferCreateDesc, BufferHandle, BufferSlice, Device},
     BackendError, BackendResult,
 };
+use dess_common::DynamicAllocator;
+use parking_lot::Mutex;
 
 const CHUNK_SIZE: usize = 256 * 1024 * 1024;
 
