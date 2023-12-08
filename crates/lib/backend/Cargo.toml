@@ -23,3 +23,4 @@ siphasher = "1.0.0"
 parking_lot = "0.12.1"
 speedy = { version = "0.8.6", features = ["speedy-derive", "uuid"] }
 smol_str = "0.2.0"
+bevy_tasks = { version = "0.12.1", features = ["multi-threaded"] }

@@ -16,7 +16,7 @@
 use crate::vulkan::{BufferSlice, DescriptorHandle, PipelineHandle};
 
 pub(crate) const MAX_VERTEX_STREAMS: u32 = 3;
-pub(crate) const MAX_DESCRIPTOR_SETS: u32 = 4;
+pub(crate) const MAX_DESCRIPTOR_SETS: u32 = 3;
 pub(crate) const MAX_DYNAMIC_OFFSETS: u32 = 2;
 
 #[derive(Debug, Clone, Copy)]
@@ -26,6 +26,7 @@ struct Draw {
     index_buffer: BufferSlice,
     descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS as usize],
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS as usize],
+    first_index: u32,
     instance_count: u32,
     triangle_count: u32,
 }
@@ -44,10 +45,10 @@ impl Default for Draw {
                 DescriptorHandle::default(),
                 DescriptorHandle::default(),
                 DescriptorHandle::default(),
-                DescriptorHandle::default(),
             ],
             dynamic_offsets: [u32::MAX, u32::MAX],
             instance_count: u32::MAX,
+            first_index: u32::MAX,
             triangle_count: u32::MAX,
         }
     }
@@ -58,15 +59,15 @@ const VERTEX_BUFFER0: u16 = 1 << 1;
 const VERTEX_BUFFER1: u16 = 1 << 2;
 const VERTEX_BUFFER2: u16 = 1 << 3;
 const INDEX_BUFFER: u16 = 1 << 4;
-const DS0: u16 = 1 << 5;
-const DS1: u16 = 1 << 6;
-const DS2: u16 = 1 << 7;
-const DS3: u16 = 1 << 8;
-const DYNAMIC_OFFSET0: u16 = 1 << 9;
-const DYNAMIC_OFFSET1: u16 = 1 << 10;
-const INSTANCE_COUNT: u16 = 1 << 11;
-const TRIANGLE_COUNT: u16 = 1 << 12;
-const MAX_BIT: u16 = 12;
+const DS1: u16 = 1 << 5;
+const DS2: u16 = 1 << 6;
+const DS3: u16 = 1 << 7;
+const DYNAMIC_OFFSET0: u16 = 1 << 8;
+const DYNAMIC_OFFSET1: u16 = 1 << 9;
+const INSTANCE_COUNT: u16 = 1 << 10;
+const TRIANGLE_COUNT: u16 = 1 << 11;
+const FIRST_INDEX: u16 = 1 << 12;
+const MAX_BIT: u16 = 13;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DrawCommand {
@@ -78,8 +79,7 @@ pub enum DrawCommand {
     UnsetDynamicBufferOffset(u32),
     BindDescriptorSet(u32, DescriptorHandle),
     UnbindDescriptorSet(u32),
-    Draw(u32),
-    DrawInstanced(u32, u32),
+    Draw(u32, u32),
 }
 
 /// Collect draw calls
@@ -90,22 +90,26 @@ pub enum DrawCommand {
 /// one CPU cache line.
 #[derive(Debug)]
 pub struct DrawStream {
+    pass_descriptor_set: DescriptorHandle,
     stream: Vec<u16>,
     current: Draw,
     mask: u16,
 }
 
-impl Default for DrawStream {
-    fn default() -> Self {
+impl DrawStream {
+    pub fn new(pass_descriptor_set: DescriptorHandle) -> Self {
         Self {
+            pass_descriptor_set,
             stream: Vec::with_capacity(1024),
             current: Draw::default(),
             mask: 0,
         }
     }
-}
 
-impl DrawStream {
+    pub fn pass_descriptor_set(&self) -> DescriptorHandle {
+        self.pass_descriptor_set
+    }
+
     pub fn bind_pipeline(&mut self, handle: PipelineHandle) {
         if self.current.pipeline != handle {
             self.mask |= PIPELINE;
@@ -131,11 +135,11 @@ impl DrawStream {
     }
 
     pub fn bind_descriptor_set(&mut self, slot: u32, ds: Option<DescriptorHandle>) {
-        debug_assert!(slot < MAX_DESCRIPTOR_SETS);
-        let slot = slot as usize;
+        debug_assert!((1..=MAX_DESCRIPTOR_SETS).contains(&slot));
+        let slot = (slot - 1) as usize;
         let ds = ds.unwrap_or_default();
         if self.current.descriptors[slot] != ds {
-            self.mask |= DS0 << slot;
+            self.mask |= DS1 << slot;
             self.current.descriptors[slot] = ds;
         }
     }
@@ -158,7 +162,11 @@ impl DrawStream {
         }
     }
 
-    pub fn set_mesh(&mut self, triangle_count: u32) {
+    pub fn set_mesh(&mut self, first_idnex: u32, triangle_count: u32) {
+        if self.current.first_index != first_idnex {
+            self.mask |= FIRST_INDEX;
+            self.current.first_index = first_idnex;
+        }
         if self.current.triangle_count != triangle_count {
             self.mask |= TRIANGLE_COUNT;
             self.current.triangle_count = triangle_count;
@@ -196,7 +204,7 @@ impl DrawStream {
             self.encode_buffer_slice(self.current.index_buffer);
         }
         for slot in 0..MAX_DESCRIPTOR_SETS {
-            if self.mask & (DS0 << slot) != 0 {
+            if self.mask & (DS1 << slot) != 0 {
                 let slot = slot as usize;
                 self.write_u32(self.current.descriptors[slot].into());
             }
@@ -213,6 +221,9 @@ impl DrawStream {
         if self.mask & TRIANGLE_COUNT != 0 {
             self.write_u32(self.current.triangle_count);
         }
+        if self.mask & FIRST_INDEX != 0 {
+            self.write_u32(self.current.first_index);
+        }
         self.mask = 0;
     }
 
@@ -224,6 +235,7 @@ impl DrawStream {
             mask: None,
             triangle_count: 0,
             instance_count: 0,
+            first_index: 0,
         }
     }
 
@@ -249,6 +261,7 @@ pub struct Iter<'a> {
     cursor: usize,
     mask: Option<u16>,
     triangle_count: u32,
+    first_index: u32,
     instance_count: u32,
 }
 
@@ -350,10 +363,6 @@ impl<'a> Iter<'a> {
                         self.advance_next_bit();
                         return self.read_index_buffer_command().ok();
                     }
-                    DS0 => {
-                        self.advance_next_bit();
-                        return self.read_bind_group_command(0).ok();
-                    }
 
                     DS1 => {
                         self.advance_next_bit();
@@ -395,6 +404,14 @@ impl<'a> Iter<'a> {
                             return None;
                         }
                     }
+                    FIRST_INDEX => {
+                        self.advance_next_bit();
+                        if let Ok(index) = self.read_u32() {
+                            self.first_index = index;
+                        } else {
+                            return None;
+                        }
+                    }
 
                     _ => {
                         return None;
@@ -416,7 +433,7 @@ impl<'a> Iterator for Iter<'a> {
             (Some(command), _) => Some(command),
             (None, Some(_)) => {
                 self.mask = None;
-                Some(DrawCommand::Draw(self.triangle_count))
+                Some(DrawCommand::Draw(self.first_index, self.triangle_count))
             }
             _ => None,
         }
@@ -428,17 +445,17 @@ mod test {
     use dess_common::Handle;
 
     use crate::{
-        vulkan::{BufferSlice, Index},
+        vulkan::{BufferSlice, DescriptorHandle, Index},
         DrawCommand, DrawStream,
     };
 
     #[test]
     fn dynamic_offsets() {
-        let mut stream = DrawStream::default();
+        let mut stream = DrawStream::new(DescriptorHandle::invalid());
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
         stream.bind_index_buffer(BufferSlice::new(Handle::new(2, 2), 0));
-        stream.set_mesh(100);
+        stream.set_mesh(10, 100);
         stream.set_dynamic_buffer_offset(0, Some(100));
         stream.draw();
 
@@ -454,23 +471,23 @@ mod test {
             DrawCommand::BindIndexBuffer(BufferSlice::new(Handle::new(2, 2), 0)),
             stream[2]
         );
-        assert_eq!(DrawCommand::Draw(100), stream[4]);
+        assert_eq!(DrawCommand::Draw(10, 100), stream[4]);
     }
 
     #[test]
     #[should_panic]
     fn fail_default_state() {
-        let mut stream = DrawStream::default();
+        let mut stream = DrawStream::new(DescriptorHandle::invalid());
         stream.draw();
     }
 
     #[test]
     fn basic_usage() {
-        let mut stream = DrawStream::default();
+        let mut stream = DrawStream::new(DescriptorHandle::invalid());
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
         stream.bind_index_buffer(BufferSlice::new(Handle::new(2, 2), 0));
-        stream.set_mesh(100);
+        stream.set_mesh(10, 100);
         stream.draw();
 
         let stream = stream.iter().collect::<Vec<_>>();
@@ -484,22 +501,22 @@ mod test {
             DrawCommand::BindIndexBuffer(BufferSlice::new(Handle::new(2, 2), 0)),
             stream[2]
         );
-        assert_eq!(DrawCommand::Draw(100), stream[3]);
+        assert_eq!(DrawCommand::Draw(10, 100), stream[3]);
     }
 
     #[test]
     fn full_usage() {
-        let mut stream = DrawStream::default();
+        let mut stream = DrawStream::new(DescriptorHandle::invalid());
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(1, 1), 0)));
         stream.bind_vertex_buffer(1, Some(BufferSlice::new(Handle::new(2, 2), 0)));
         stream.bind_vertex_buffer(2, Some(BufferSlice::new(Handle::new(99, 99), 100)));
         stream.bind_index_buffer(BufferSlice::new(Handle::new(3, 3), 0));
-        stream.bind_descriptor_set(0, Some(Handle::new(4, 4)));
-        stream.bind_descriptor_set(1, Some(Handle::new(5, 5)));
-        stream.bind_descriptor_set(2, Some(Handle::new(6, 6)));
+        stream.bind_descriptor_set(1, Some(Handle::new(4, 4)));
+        stream.bind_descriptor_set(2, Some(Handle::new(5, 5)));
+        stream.bind_descriptor_set(3, Some(Handle::new(6, 6)));
         stream.set_dynamic_buffer_offset(0, Some(0));
-        stream.set_mesh(100);
+        stream.set_mesh(10, 100);
         stream.draw();
         stream.set_dynamic_buffer_offset(0, Some(64));
         stream.draw();
@@ -525,26 +542,26 @@ mod test {
             stream[4]
         );
         assert_eq!(
-            DrawCommand::BindDescriptorSet(0, Handle::new(4, 4)),
+            DrawCommand::BindDescriptorSet(1, Handle::new(4, 4)),
             stream[5]
         );
         assert_eq!(
-            DrawCommand::BindDescriptorSet(1, Handle::new(5, 5)),
+            DrawCommand::BindDescriptorSet(2, Handle::new(5, 5)),
             stream[6]
         );
         assert_eq!(
-            DrawCommand::BindDescriptorSet(2, Handle::new(6, 6)),
+            DrawCommand::BindDescriptorSet(3, Handle::new(6, 6)),
             stream[7]
         );
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 0), stream[8]);
-        assert_eq!(DrawCommand::Draw(100), stream[9]);
+        assert_eq!(DrawCommand::Draw(10, 100), stream[9]);
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 64), stream[10]);
-        assert_eq!(DrawCommand::Draw(100), stream[11]);
+        assert_eq!(DrawCommand::Draw(10, 100), stream[11]);
     }
 
     #[test]
     fn reduce_state_changes() {
-        let mut stream = DrawStream::default();
+        let mut stream = DrawStream::new(DescriptorHandle::invalid());
         stream.bind_pipeline(Index::new(0));
         stream.bind_vertex_buffer(0, Some(BufferSlice::new(Handle::new(100, 100), 100)));
         stream.bind_vertex_buffer(1, Some(BufferSlice::new(Handle::new(200, 200), 999)));
@@ -557,21 +574,21 @@ mod test {
         stream.bind_index_buffer(BufferSlice::new(Handle::new(500, 600), 200));
         stream.bind_index_buffer(BufferSlice::new(Handle::new(3, 3), 0));
 
-        stream.bind_descriptor_set(0, Some(Handle::new(400, 400)));
-        stream.bind_descriptor_set(1, Some(Handle::new(500, 500)));
-        stream.bind_descriptor_set(2, Some(Handle::new(600, 600)));
+        stream.bind_descriptor_set(3, Some(Handle::new(400, 400)));
+        stream.bind_descriptor_set(2, Some(Handle::new(500, 500)));
+        stream.bind_descriptor_set(1, Some(Handle::new(600, 600)));
 
-        stream.bind_descriptor_set(0, Some(Handle::new(4, 4)));
-        stream.bind_descriptor_set(1, Some(Handle::new(5, 5)));
-        stream.bind_descriptor_set(2, Some(Handle::new(6, 6)));
+        stream.bind_descriptor_set(1, Some(Handle::new(4, 4)));
+        stream.bind_descriptor_set(2, Some(Handle::new(5, 5)));
+        stream.bind_descriptor_set(3, Some(Handle::new(6, 6)));
 
         stream.set_dynamic_buffer_offset(0, Some(200));
 
         stream.set_dynamic_buffer_offset(0, Some(0));
 
-        stream.set_mesh(1000);
+        stream.set_mesh(100, 1000);
 
-        stream.set_mesh(100);
+        stream.set_mesh(10, 100);
         stream.draw();
 
         stream.set_dynamic_buffer_offset(0, Some(256));
@@ -599,20 +616,20 @@ mod test {
             stream[4]
         );
         assert_eq!(
-            DrawCommand::BindDescriptorSet(0, Handle::new(4, 4)),
+            DrawCommand::BindDescriptorSet(1, Handle::new(4, 4)),
             stream[5]
         );
         assert_eq!(
-            DrawCommand::BindDescriptorSet(1, Handle::new(5, 5)),
+            DrawCommand::BindDescriptorSet(2, Handle::new(5, 5)),
             stream[6]
         );
         assert_eq!(
-            DrawCommand::BindDescriptorSet(2, Handle::new(6, 6)),
+            DrawCommand::BindDescriptorSet(3, Handle::new(6, 6)),
             stream[7]
         );
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 0), stream[8]);
-        assert_eq!(DrawCommand::Draw(100), stream[9]);
+        assert_eq!(DrawCommand::Draw(10, 100), stream[9]);
         assert_eq!(DrawCommand::SetDynamicBufferOffset(0, 64), stream[10]);
-        assert_eq!(DrawCommand::Draw(100), stream[11]);
+        assert_eq!(DrawCommand::Draw(10, 100), stream[11]);
     }
 }

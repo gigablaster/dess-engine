@@ -1,6 +1,6 @@
 use ash::vk::{self};
 use dess_backend::{
-    vulkan::{Barrier, RenderAttachment},
+    vulkan::{Barrier, DescriptorHandle, RenderAttachment},
     DrawStream, PoolImageDesc, RelativeImageSize,
 };
 use dess_common::GameTime;
@@ -43,7 +43,7 @@ impl Client for ClearBackbuffer {
                 context.frame.render_area,
                 &[color_attachment],
                 None,
-                [DrawStream::default()].into_iter(),
+                [DrawStream::new(DescriptorHandle::invalid())].into_iter(),
                 &[Barrier::color_to_attachment(temp.image())],
             );
         }
@@ -60,7 +60,7 @@ impl Client for ClearBackbuffer {
             context.frame.render_area,
             &[color_attachment],
             None,
-            [DrawStream::default()].into_iter(),
+            [DrawStream::new(DescriptorHandle::invalid())].into_iter(),
             &[],
         );
 

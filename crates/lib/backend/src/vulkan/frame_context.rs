@@ -23,7 +23,7 @@ use crate::{barrier, BackendError, BackendResult, DrawStream};
 
 use super::{
     frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
-    ImageStorage, PipelineStorage, PER_DRAW_BINDING_SLOT,
+    ImageStorage, PipelineStorage,
 };
 
 #[derive(Clone, Copy)]
@@ -252,6 +252,7 @@ impl<'a> ExecutionContext<'a> {
     }
 
     fn execute_pass(&self, pass: &Pass) -> BackendResult<()> {
+        puffin::profile_function!();
         let color_attachments = pass
             .color_attachments
             .iter()
@@ -299,9 +300,22 @@ impl<'a> ExecutionContext<'a> {
     }
 
     fn execute_stream(&self, stream: &DrawStream) -> BackendResult<()> {
+        puffin::profile_function!();
         let mut pipeline_layout = vk::PipelineLayout::null();
         let mut dynamic_buffer_offsets = [u32::MAX; 2];
         let mut dynamic_buffer_offset_count = 0usize;
+        let mut current_descriptor_sets = [vk::DescriptorSet::null(); 4];
+        let mut need_descriptors_rebind = false;
+        let mut current_vertex_buffers = [(vk::Buffer::null(), u64::MAX); 3];
+        let mut need_vertex_buffers_rebind = false;
+        current_descriptor_sets[0] = self
+            .descriptors
+            .get_hot(stream.pass_descriptor_set())
+            .copied()
+            .ok_or(BackendError::InvalidHandle)?;
+        if current_descriptor_sets[0] == vk::DescriptorSet::null() {
+            return Err(BackendError::DescriptorIsntReady);
+        }
         for command in stream.iter() {
             match command {
                 crate::DrawCommand::BindPipeline(handle) => {
@@ -315,8 +329,11 @@ impl<'a> ExecutionContext<'a> {
                             self.frame.main_cb.raw,
                             vk::PipelineBindPoint::GRAPHICS,
                             pipeline,
-                        )
+                        );
                     };
+                    if pipeline_layout != layout {
+                        need_descriptors_rebind = true;
+                    }
                     pipeline_layout = layout;
                 }
                 crate::DrawCommand::BindVertexBuffer(index, slice) => {
@@ -325,23 +342,13 @@ impl<'a> ExecutionContext<'a> {
                         .get_hot(slice.buffer)
                         .copied()
                         .ok_or(BackendError::InvalidHandle)?;
-                    unsafe {
-                        self.device.raw.cmd_bind_vertex_buffers(
-                            self.frame.main_cb.raw,
-                            index,
-                            &[buffer],
-                            &[slice.offset as u64],
-                        )
-                    };
+                    current_vertex_buffers[index as usize] = (buffer, slice.offset as u64);
+                    need_vertex_buffers_rebind = true;
                 }
-                crate::DrawCommand::UnbindVertexBuffer(index) => unsafe {
-                    self.device.raw.cmd_bind_vertex_buffers(
-                        self.frame.main_cb.raw,
-                        index,
-                        &[vk::Buffer::null()],
-                        &[0],
-                    )
-                },
+                crate::DrawCommand::UnbindVertexBuffer(index) => {
+                    current_vertex_buffers[index as usize] = (vk::Buffer::null(), u64::MAX);
+                    need_vertex_buffers_rebind = true;
+                }
                 crate::DrawCommand::BindIndexBuffer(slice) => {
                     let buffer = self
                         .buffers
@@ -373,42 +380,64 @@ impl<'a> ExecutionContext<'a> {
                     if descriptor_set == vk::DescriptorSet::null() {
                         return Err(BackendError::DescriptorIsntReady);
                     }
-                    let mut dynamic_offsets = ArrayVec::<_, 2>::new();
-                    if index == PER_DRAW_BINDING_SLOT {
+                    current_descriptor_sets[index as usize] = descriptor_set;
+                    need_descriptors_rebind = true;
+                }
+                crate::DrawCommand::UnbindDescriptorSet(index) => {
+                    current_descriptor_sets[index as usize] = vk::DescriptorSet::null();
+                    need_descriptors_rebind = true;
+                }
+                crate::DrawCommand::Draw(first_index, triangle_count) => {
+                    if need_descriptors_rebind {
+                        let mut dynamic_offsets = ArrayVec::<_, 2>::new();
                         for offset in dynamic_buffer_offsets
                             .iter()
                             .take(dynamic_buffer_offset_count)
                         {
                             dynamic_offsets.push(*offset);
                         }
+                        unsafe {
+                            self.device.raw.cmd_bind_descriptor_sets(
+                                self.frame.main_cb.raw,
+                                vk::PipelineBindPoint::GRAPHICS,
+                                pipeline_layout,
+                                0,
+                                &current_descriptor_sets,
+                                &dynamic_offsets,
+                            )
+                        };
+                        need_descriptors_rebind = false;
+                    }
+                    if need_vertex_buffers_rebind {
+                        let buffers = current_vertex_buffers
+                            .iter()
+                            .map(|x| x.0)
+                            .collect::<ArrayVec<_, 3>>();
+                        let offsets = current_vertex_buffers
+                            .iter()
+                            .map(|x| x.1)
+                            .collect::<ArrayVec<_, 3>>();
+                        unsafe {
+                            self.device.raw.cmd_bind_vertex_buffers(
+                                self.frame.main_cb.raw,
+                                0,
+                                &buffers,
+                                &offsets,
+                            )
+                        }
+                        need_vertex_buffers_rebind = false;
                     }
                     unsafe {
-                        self.device.raw.cmd_bind_descriptor_sets(
+                        self.device.raw.cmd_draw_indexed(
                             self.frame.main_cb.raw,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            pipeline_layout,
-                            index,
-                            &[descriptor_set],
-                            &dynamic_offsets,
+                            triangle_count * 3,
+                            1,
+                            first_index,
+                            0,
+                            0,
                         )
-                    };
+                    }
                 }
-                crate::DrawCommand::UnbindDescriptorSet(index) => unsafe {
-                    self.device.raw.cmd_bind_descriptor_sets(
-                        self.frame.main_cb.raw,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline_layout,
-                        index,
-                        &[vk::DescriptorSet::null()],
-                        &[],
-                    );
-                },
-                crate::DrawCommand::Draw(triangle_count) => unsafe {
-                    self.device
-                        .raw
-                        .cmd_draw(self.frame.main_cb.raw, triangle_count * 3, 1, 0, 0)
-                },
-                crate::DrawCommand::DrawInstanced(_, _) => unimplemented!(),
             }
         }
         Ok(())
