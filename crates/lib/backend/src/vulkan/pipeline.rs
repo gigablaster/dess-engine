@@ -1,14 +1,17 @@
-use std::{slice, io, fs::{File, self}};
+use std::{
+    fs::{self, File},
+    io, slice,
+};
 
 use ash::vk;
 use directories::ProjectDirs;
 use log::{debug, info};
-use speedy::{Readable, Writable, Context};
+use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
 use crate::{BackendError, BackendResult};
 
-use super::{Device, PipelineHandle, ProgramHandle, PhysicalDevice};
+use super::{Device, PhysicalDevice, PipelineHandle, ProgramHandle};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BlendDesc {
