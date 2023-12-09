@@ -5,7 +5,7 @@ use dess_backend::vulkan::{
     Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
 };
 use dess_common::TimeFilter;
-use dess_engine::{BufferPool, ResourcePool};
+use dess_engine::{AssetCache, BufferPool, ResourcePool};
 use log::info;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
@@ -71,6 +71,7 @@ impl<T: Client> Runner<T> {
         let device = Device::new(instance, pdevice).unwrap();
         let resource_pool = ResourcePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
+        let asset_cache = AssetCache::new(&device);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
@@ -146,6 +147,7 @@ impl<T: Client> Runner<T> {
                         let dt =
                             time_filter.sample((current_timestamp - last_timestamp).as_secs_f64());
                         last_timestamp = current_timestamp;
+                        asset_cache.maintain();
                         if self.client.tick(dt) == ClientState::Exit {
                             elwt.exit();
                         }
@@ -156,11 +158,12 @@ impl<T: Client> Runner<T> {
                 }
             })
             .unwrap();
+        info!("Main loop exit");
         drop(swapchain);
         drop(surface);
         drop(buffer_pool);
         drop(resource_pool);
         drop(device);
-        info!("Main loop exit");
+        info!("Done.");
     }
 }

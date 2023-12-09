@@ -270,6 +270,16 @@ impl<T, U> Pool<T, U> {
             current: 0,
         }
     }
+
+    pub fn for_each_mut<OP: Fn(&mut T, &mut U)>(&mut self, op: OP) {
+        for index in 0..self.hot.len() {
+            if let Some(hot) = &mut self.hot[index] {
+                if let Some(cold) = &mut self.cold[index] {
+                    op(hot, cold);
+                }
+            }
+        }
+    }
 }
 
 impl<T, U> Default for Pool<T, U> {

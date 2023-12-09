@@ -131,7 +131,7 @@ impl<'a> Drop for ScopedCommandBufferLabel<'a> {
 pub struct Device {
     frames: [Mutex<Frame>; 2],
     pub(crate) instance: Instance,
-    pub(crate) raw: Arc<ash::Device>,
+    pub(crate) raw: ash::Device,
     pub(crate) pdevice: PhysicalDevice,
     pub(crate) memory_allocator: Mutex<GpuAllocator>,
     pub(crate) descriptor_allocator: Mutex<DescriptorAllocator>,
@@ -158,7 +158,7 @@ unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
 impl Device {
-    pub fn new(instance: Instance, pdevice: PhysicalDevice) -> BackendResult<Self> {
+    pub fn new(instance: Instance, pdevice: PhysicalDevice) -> BackendResult<Arc<Self>> {
         if !pdevice.is_queue_flag_supported(
             vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
         ) {
@@ -295,7 +295,7 @@ impl Device {
             },
         );
 
-        Ok(Self {
+        Ok(Arc::new(Self {
             staging: Mutex::new(Staging::new(
                 &instance,
                 &device,
@@ -319,13 +319,13 @@ impl Device {
             dirty_descriptors: Mutex::default(),
             program_storage: RwLock::default(),
             pipelines: RwLock::default(),
-            raw: Arc::new(device),
+            raw: device,
             queue_familt_index: universal_queue_index,
             current_cpu_frame: AtomicUsize::new(0),
             temp_buffer,
             temp_buffer_memory: Some(temp_buffer_memory),
             temp_buffer_handle,
-        })
+        }))
     }
 
     fn generate_samplers(device: &ash::Device) -> HashMap<SamplerDesc, vk::Sampler> {
@@ -673,13 +673,8 @@ impl Device {
 
 impl Drop for Device {
     fn drop(&mut self) {
-        unsafe { self.raw.device_wait_idle() }.unwrap();
-        info!("Waiting for pipeine compilation to finish...");
-        while Arc::get_mut(&mut self.raw).is_none() {
-            thread::sleep(Duration::from_millis(20));
-        }
         info!("Cleanup...");
-
+        unsafe { self.raw.device_wait_idle() }.unwrap();
         let mut memory_allocator = self.memory_allocator.lock();
         let mut descriptor_allocator = self.descriptor_allocator.lock();
         let mut uniform_storage = self.uniform_storage.lock();

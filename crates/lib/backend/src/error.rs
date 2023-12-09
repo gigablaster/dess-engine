@@ -15,7 +15,7 @@
 
 use ash::vk;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum BackendError {
     OutOfMemory,
     TooManyObjects,

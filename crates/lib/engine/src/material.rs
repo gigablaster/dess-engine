@@ -13,35 +13,27 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod asset_cache;
-mod buffer_pool;
-mod material;
-mod mesh;
-mod pool;
+use std::collections::HashMap;
 
-pub use asset_cache::*;
-pub use buffer_pool::*;
-use dess_backend::BackendError;
-pub use material::*;
-pub use mesh::*;
-pub use pool::*;
+use dess_assets::{ImageSource, MeshMaterial};
+use dess_backend::vulkan::{DescriptorHandle, PipelineHandle};
+use dess_common::{Handle, Pool};
 
-#[derive(Debug, Clone)]
-pub enum Error {
-    BackendError(BackendError),
-    InvalidHandle,
-    ImportFailed(dess_assets::Error),
-    LoadingFailed,
+#[derive(Debug, Default)]
+pub enum MeshRenderPass {
+    #[default]
+    Main,
+    Shadow,
 }
 
-impl From<BackendError> for Error {
-    fn from(value: BackendError) -> Self {
-        Self::BackendError(value)
-    }
+#[derive(Debug, Default)]
+pub enum MeshBlending {
+    #[default]
+    Opaque,
+    AlphaBlend,
 }
 
-impl From<dess_assets::Error> for Error {
-    fn from(value: dess_assets::Error) -> Self {
-        Self::ImportFailed(value)
-    }
-}
+const ALPHA_TEST_MASK: usize = 1 << 0;
+const BLEND_MASK: usize = 1 << 1;
+const PASS_MASK: usize = 1 << 2;
+const MAX_PIPELINES: usize = 1 << 3;

@@ -18,7 +18,7 @@ use std::{
     path::Path,
 };
 
-use ash::vk;
+use ash::{extensions::khr::Display, vk};
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use image::{imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
@@ -70,6 +70,21 @@ pub struct ImageSource {
     pub purpose: ImagePurpose,
 }
 
+impl core::fmt::Display for ImageSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match &self.source {
+            ImageDataSource::File(path) => write!(f, "Image::File({}, {:?})", path, self.purpose),
+            ImageDataSource::Bytes(bytes) => {
+                write!(f, "Image::Bytes({}, {:?})", bytes.len(), self.purpose)
+            }
+            ImageDataSource::Placeholder(pixel) => write!(
+                f,
+                "Image::Placeholder({}, {}, {}, {}, {:?})",
+                pixel[0], pixel[1], pixel[2], pixel[3], self.purpose
+            ),
+        }
+    }
+}
 impl ImageSource {
     pub fn from_file<P: AsRef<Path>>(path: P, purpose: ImagePurpose) -> Self {
         Self {

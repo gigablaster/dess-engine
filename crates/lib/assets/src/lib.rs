@@ -35,9 +35,9 @@ pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";
 pub const BUNDLE_DESC_PATH: &str = "bundles";
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Error {
-    Io(io::Error),
+    Io(String),
     ImportFailed(String),
     ProcessingFailed(String),
     BadSourceData,
@@ -46,7 +46,7 @@ pub enum Error {
 
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
-        Self::Io(value)
+        Self::Io(value.to_string())
     }
 }
 

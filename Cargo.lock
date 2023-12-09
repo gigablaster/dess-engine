@@ -571,8 +571,11 @@ dependencies = [
  "dess-assets",
  "dess-backend",
  "dess-common",
+ "glam 0.24.2",
+ "log",
  "parking_lot",
  "puffin",
+ "siphasher",
  "smol_str",
 ]
 
