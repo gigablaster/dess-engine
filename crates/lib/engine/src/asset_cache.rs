@@ -37,12 +37,12 @@ use dess_common::{Handle, Pool};
 use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::Error;
+use crate::{EffectSource, Error, RenderEffect};
 
 /// Trait to check asset dependencies
 pub trait EngineAsset: Send + Sync + 'static {
-    fn is_ready(&self, asset_cache: &AssetCache) -> bool;
-    fn resolve(&mut self, asset_cache: &AssetCache) -> Result<(), Error>;
+    fn is_ready<T: AssetCacheFns>(&self, asset_cache: &T) -> bool;
+    fn resolve<T: AssetCacheFns>(&mut self, asset_cache: &T) -> Result<(), Error>;
 }
 
 pub type AssetHandle<T> = Handle<AssetState<T>, ()>;
@@ -56,7 +56,7 @@ pub enum AssetState<T: EngineAsset> {
 }
 
 impl<T: EngineAsset> AssetState<T> {
-    fn maintain(&mut self, asset_cache: &AssetCache) {
+    fn maintain<U: AssetCacheFns>(&mut self, asset_cache: &U) {
         match self {
             AssetState::Pending(task) => {
                 if task.is_finished() {
@@ -87,7 +87,7 @@ impl<T: EngineAsset> AssetState<T> {
         }
     }
 
-    fn resolve(&mut self, asset_cache: &AssetCache) -> Result<Arc<T>, Error> {
+    fn resolve<U: AssetCacheFns>(&mut self, asset_cache: &U) -> Result<Arc<T>, Error> {
         match self {
             AssetState::Pending(task) => match block_on(task) {
                 Ok(mut result) => match result.resolve(asset_cache) {
@@ -124,7 +124,7 @@ impl<T: EngineAsset> AssetState<T> {
         }
     }
 
-    fn is_finished(&self, asset_cache: &AssetCache) -> bool {
+    fn is_finished<U: AssetCacheFns>(&self, asset_cache: &U) -> bool {
         match self {
             AssetState::Pending(_) => false,
             AssetState::Preparing(asset) => asset.is_ready(asset_cache),
@@ -135,11 +135,11 @@ impl<T: EngineAsset> AssetState<T> {
 }
 
 impl EngineAsset for ImageHandle {
-    fn is_ready(&self, _asset_cache: &AssetCache) -> bool {
+    fn is_ready<T: AssetCacheFns>(&self, _asset_cache: &T) -> bool {
         true
     }
 
-    fn resolve(&mut self, _asset_cache: &AssetCache) -> Result<(), Error> {
+    fn resolve<T: AssetCacheFns>(&mut self, _asset_cache: &T) -> Result<(), Error> {
         Ok(())
     }
 }
@@ -178,7 +178,11 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
         }
     }
 
-    fn resolve(&self, handle: AssetHandle<T>, asset_cache: &AssetCache) -> Result<Arc<T>, Error> {
+    fn resolve<U: AssetCacheFns>(
+        &self,
+        handle: AssetHandle<T>,
+        asset_cache: &U,
+    ) -> Result<Arc<T>, Error> {
         self.assets
             .lock()
             .get_hot_mut(handle)
@@ -186,14 +190,14 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
             .resolve(asset_cache)
     }
 
-    fn is_finished(&self, handle: AssetHandle<T>, asset_cache: &AssetCache) -> bool {
+    fn is_finished<U: AssetCacheFns>(&self, handle: AssetHandle<T>, asset_cache: &U) -> bool {
         match self.assets.lock().get_hot(handle) {
             Some(asset) => asset.is_finished(asset_cache),
             None => false,
         }
     }
 
-    fn are_finished(&self, handles: &[AssetHandle<T>], asset_cache: &AssetCache) -> bool {
+    fn are_finished<U: AssetCacheFns>(&self, handles: &[AssetHandle<T>], asset_cache: &U) -> bool {
         let assets = self.assets.lock();
         handles.iter().all(|handle| match assets.get_hot(*handle) {
             Some(asset) => asset.is_finished(asset_cache),
@@ -201,7 +205,7 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
         })
     }
 
-    pub(crate) fn maintain(&self, asset_cache: &AssetCache) {
+    pub(crate) fn maintain<U: AssetCacheFns>(&self, asset_cache: &U) {
         let mut assets = self.assets.lock();
         assets.for_each_mut(|asset, _| asset.maintain(asset_cache));
     }
@@ -211,6 +215,7 @@ pub struct AssetCache {
     device: Arc<Device>,
     images: SingleTypeAssetCache<ImageHandle>,
     programs: SingleTypeAssetCache<ProgramHandle>,
+    effects: SingleTypeAssetCache<RenderEffect>,
 }
 
 impl EngineAssetKey for ImageSource {
@@ -227,7 +232,7 @@ impl EngineAssetKey for ImageSource {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub struct ProgramSource {
     shaders: ArrayVec<ShaderSource, 2>,
 }
@@ -261,66 +266,39 @@ impl EngineAssetKey for ShaderSource {
 }
 
 impl EngineAsset for ProgramHandle {
-    fn is_ready(&self, _asset_cache: &AssetCache) -> bool {
+    fn is_ready<T: AssetCacheFns>(&self, _asset_cache: &T) -> bool {
         true
     }
 
-    fn resolve(&mut self, _asset_cache: &AssetCache) -> Result<(), Error> {
+    fn resolve<T: AssetCacheFns>(&mut self, _asset_cache: &T) -> Result<(), Error> {
         Ok(())
     }
 }
 
+pub trait AssetCacheFns {
+    fn request_image(&self, source: &ImageSource) -> AssetHandle<ImageHandle>;
+    fn resolve_image(&self, handle: AssetHandle<ImageHandle>) -> Result<Arc<ImageHandle>, Error>;
+    fn is_image_loaded(&self, handle: AssetHandle<ImageHandle>) -> bool;
+    fn are_images_loaded(&self, handles: &[AssetHandle<ImageHandle>]) -> bool;
+    fn request_program(&self, source: &ProgramSource) -> AssetHandle<ProgramHandle>;
+    fn resolve_program(
+        &self,
+        handle: AssetHandle<ProgramHandle>,
+    ) -> Result<Arc<ProgramHandle>, Error>;
+    fn is_program_loaded(&self, handle: AssetHandle<ProgramHandle>) -> bool;
+    fn request_effect(&self, source: EffectSource) -> AssetHandle<RenderEffect>;
+    fn maintain(&self);
+    fn render_device(&self) -> &Device;
+}
+
 impl AssetCache {
-    pub fn new(device: &Arc<Device>) -> Self {
-        Self {
+    pub fn new(device: &Arc<Device>) -> Arc<Self> {
+        Arc::new(Self {
             device: device.clone(),
             images: SingleTypeAssetCache::default(),
             programs: SingleTypeAssetCache::default(),
-        }
-    }
-
-    pub fn request_image(&self, source: &ImageSource) -> AssetHandle<ImageHandle> {
-        self.images.request(
-            source,
-            Self::load_image(self.device.clone(), source.clone()),
-        )
-    }
-
-    pub fn resolve_image(
-        &self,
-        handle: AssetHandle<ImageHandle>,
-    ) -> Result<Arc<ImageHandle>, Error> {
-        self.images.resolve(handle, self)
-    }
-
-    pub fn is_image_loaded(&self, handle: AssetHandle<ImageHandle>) -> bool {
-        self.images.is_finished(handle, self)
-    }
-
-    pub fn are_images_loaded(&self, handles: &[AssetHandle<ImageHandle>]) -> bool {
-        self.images.are_finished(handles, self)
-    }
-
-    pub fn request_program(&self, source: &ProgramSource) -> AssetHandle<ProgramHandle> {
-        self.programs.request(
-            source,
-            Self::load_program(self.device.clone(), source.clone()),
-        )
-    }
-
-    pub fn resolve_program(
-        &self,
-        handle: AssetHandle<ProgramHandle>,
-    ) -> Result<Arc<ProgramHandle>, Error> {
-        self.programs.resolve(handle, self)
-    }
-
-    pub fn is_program_loaded(&self, handle: AssetHandle<ProgramHandle>) -> bool {
-        self.programs.is_finished(handle, self)
-    }
-
-    pub(crate) fn device(&self) -> &Device {
-        &self.device
+            effects: SingleTypeAssetCache::default(),
+        })
     }
 
     async fn load_from_cache_or_import<
@@ -348,10 +326,6 @@ impl AssetCache {
         }
 
         Ok(asset)
-    }
-
-    pub fn maintain(&self) {
-        self.images.maintain(self);
     }
 
     async fn load_image(device: Arc<Device>, source: ImageSource) -> Result<ImageHandle, Error> {
@@ -412,6 +386,69 @@ impl AssetCache {
 
     async fn import_shader(source: ShaderSource) -> Result<ShaderAsset, Error> {
         Ok(source.compile()?)
+    }
+
+    async fn create_effect(
+        asset_cache: Arc<AssetCache>,
+        source: EffectSource,
+    ) -> Result<RenderEffect, Error> {
+        Ok(RenderEffect::new(&asset_cache, source))
+    }
+}
+
+impl AssetCacheFns for Arc<AssetCache> {
+    fn request_image(&self, source: &ImageSource) -> AssetHandle<ImageHandle> {
+        self.images.request(
+            source,
+            AssetCache::load_image(self.device.clone(), source.clone()),
+        )
+    }
+
+    fn resolve_image(&self, handle: AssetHandle<ImageHandle>) -> Result<Arc<ImageHandle>, Error> {
+        self.images.resolve(handle, self)
+    }
+
+    fn is_image_loaded(&self, handle: AssetHandle<ImageHandle>) -> bool {
+        self.images.is_finished(handle, self)
+    }
+
+    fn are_images_loaded(&self, handles: &[AssetHandle<ImageHandle>]) -> bool {
+        self.images.are_finished(handles, self)
+    }
+
+    fn request_program(&self, source: &ProgramSource) -> AssetHandle<ProgramHandle> {
+        self.programs.request(
+            source,
+            AssetCache::load_program(self.device.clone(), source.clone()),
+        )
+    }
+
+    fn resolve_program(
+        &self,
+        handle: AssetHandle<ProgramHandle>,
+    ) -> Result<Arc<ProgramHandle>, Error> {
+        self.programs.resolve(handle, self)
+    }
+
+    fn is_program_loaded(&self, handle: AssetHandle<ProgramHandle>) -> bool {
+        self.programs.is_finished(handle, self)
+    }
+
+    fn request_effect(&self, source: EffectSource) -> AssetHandle<RenderEffect> {
+        self.effects.request(
+            &source,
+            AssetCache::create_effect(self.clone(), source.clone()),
+        )
+    }
+
+    fn maintain(&self) {
+        self.images.maintain(self);
+        self.programs.maintain(self);
+        self.effects.maintain(self);
+    }
+
+    fn render_device(&self) -> &Device {
+        &self.device
     }
 }
 

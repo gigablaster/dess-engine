@@ -1,5 +1,6 @@
 use std::{
     fs::{self, File},
+    hash::Hash,
     io, slice,
 };
 
@@ -13,7 +14,7 @@ use crate::{BackendError, BackendResult};
 
 use super::{Device, PhysicalDevice, PipelineHandle, ProgramHandle};
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Hash)]
 pub struct BlendDesc {
     pub src_blend: vk::BlendFactor,
     pub dst_blend: vk::BlendFactor,
@@ -42,6 +43,22 @@ pub struct PipelineCreateDesc {
     /// Vertex layout
     pub attributes: &'static [vk::VertexInputAttributeDescription],
     pub strides: &'static [(usize, vk::VertexInputRate)],
+}
+
+impl Hash for PipelineCreateDesc {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.blend.hash(state);
+        self.depth_test.hash(state);
+        self.depth_write.hash(state);
+        self.cull.hash(state);
+        self.attributes.iter().for_each(|x| {
+            x.binding.hash(state);
+            x.format.hash(state);
+            x.location.hash(state);
+            x.offset.hash(state);
+        });
+        self.strides.hash(state);
+    }
 }
 
 pub trait PipelineVertex: Sized {
@@ -90,7 +107,7 @@ impl Device {
     pub fn create_pipeline(
         &self,
         program: ProgramHandle,
-        desc: PipelineCreateDesc,
+        desc: &PipelineCreateDesc,
         color_attachments: &[vk::Format],
         depth_attachment: Option<vk::Format>,
     ) -> BackendResult<PipelineHandle> {

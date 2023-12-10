@@ -5,7 +5,7 @@ use dess_backend::vulkan::{
     Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
 };
 use dess_common::TimeFilter;
-use dess_engine::{AssetCache, BufferPool, ResourcePool};
+use dess_engine::{AssetCache, AssetCacheFns, BufferPool, ResourcePool};
 use log::info;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{

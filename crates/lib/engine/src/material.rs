@@ -30,7 +30,7 @@ use dess_backend::vulkan::{
 };
 use smol_str::SmolStr;
 
-use crate::{AssetHandle, EngineAsset, EngineAssetKey, Error};
+use crate::{AssetCacheFns, AssetHandle, EngineAsset, EngineAssetKey, Error};
 
 #[derive(Debug, Default, Clone)]
 pub struct MaterialSource {
@@ -84,7 +84,7 @@ pub struct MeshRenderMaterial {
 const MAX_TEXTURES: usize = 16;
 
 impl EngineAsset for MeshRenderMaterial {
-    fn is_ready(&self, asset_cache: &crate::AssetCache) -> bool {
+    fn is_ready<T: AssetCacheFns>(&self, asset_cache: &T) -> bool {
         let mut images = ArrayVec::<AssetHandle<ImageHandle>, MAX_TEXTURES>::new();
         for (_, handle) in self.images.iter() {
             images.push(*handle);
@@ -92,13 +92,13 @@ impl EngineAsset for MeshRenderMaterial {
         asset_cache.are_images_loaded(&images) && asset_cache.is_program_loaded(self.program)
     }
 
-    fn resolve(&mut self, asset_cache: &crate::AssetCache) -> Result<(), Error> {
+    fn resolve<T: AssetCacheFns>(&mut self, asset_cache: &T) -> Result<(), Error> {
         let mut images = ArrayVec::<_, MAX_TEXTURES>::new();
         for (name, handle) in &self.images {
             images.push((name.clone(), asset_cache.resolve_image(*handle)?))
         }
         let program = asset_cache.resolve_program(self.program)?;
-        asset_cache.device().with_descriptors(|mut ctx| {
+        asset_cache.render_device().with_descriptors(|mut ctx| {
             let ds = ctx.create(program.as_ref().clone(), PER_MATERIAL_BINDING_SLOT)?;
             for (name, image) in images.iter() {
                 ctx.bind_image_by_name(
