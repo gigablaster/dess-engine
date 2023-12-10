@@ -55,8 +55,18 @@ pub trait ToDrop {
     fn to_drop(&mut self, drop_list: &mut DropList);
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct Index<T>(u32, PhantomData<T>);
+
+impl<T> Copy for Index<T> {}
+
+impl<T> Clone for Index<T> {
+    fn clone(&self) -> Self {
+        Self(self.0, PhantomData)
+    }
+}
+unsafe impl<T> Send for Index<T> {}
+unsafe impl<T> Sync for Index<T> {}
 
 impl<T> Index<T> {
     pub(crate) fn new(value: usize) -> Self {

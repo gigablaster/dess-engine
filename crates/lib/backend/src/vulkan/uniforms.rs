@@ -154,6 +154,10 @@ impl UniformStorage {
 
     pub fn push<T: Sized>(&mut self, data: &T) -> BackendResult<usize> {
         let size = size_of::<T>();
+        self.push_raw(slice::from_ref(data).as_ptr() as *const u8, size)
+    }
+
+    pub fn push_raw(&mut self, data: *const u8, size: usize) -> BackendResult<usize> {
         let mut index = self.find_bucket_index(size);
         if index.is_none() {
             index = self.allocate_bucket(size);
@@ -164,13 +168,7 @@ impl UniformStorage {
             .alloc()
             .ok_or(BackendError::OutOfAllocatedSpace)?;
         let offset = base_offset + offset;
-        unsafe {
-            copy_nonoverlapping(
-                slice::from_ref(data).as_ptr() as *const u8,
-                self.mapping.as_ptr().add(offset),
-                size,
-            )
-        }
+        unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(offset), size) }
 
         Ok(offset)
     }

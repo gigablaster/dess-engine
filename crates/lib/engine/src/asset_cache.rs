@@ -24,9 +24,15 @@ use std::{
     sync::Arc,
 };
 
-use bevy_tasks::{block_on, IoTaskPool, Task};
-use dess_assets::{Asset, ImageAsset, ImageSource, ProcessImageAsset, ASSET_CACHE_PATH};
-use dess_backend::vulkan::{Device, ImageCreateDesc, ImageHandle, ImageSubresourceData};
+use arrayvec::ArrayVec;
+use bevy_tasks::{block_on, AsyncComputeTaskPool, IoTaskPool, Task};
+use dess_assets::{
+    Asset, ImageAsset, ImageSource, ProcessImageAsset, ShaderAsset, ShaderSource, ASSET_CACHE_PATH,
+};
+use dess_backend::vulkan::{
+    Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, PipelineHandle, ProgramHandle,
+    ShaderDesc,
+};
 use dess_common::{Handle, Pool};
 use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
@@ -34,12 +40,12 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use crate::Error;
 
 /// Trait to check asset dependencies
-pub trait EngineAsset: Default + Send + Sync + 'static {
+pub trait EngineAsset: Send + Sync + 'static {
     fn is_ready(&self, asset_cache: &AssetCache) -> bool;
     fn resolve(&mut self, asset_cache: &AssetCache) -> Result<(), Error>;
 }
 
-type AssetHandle<T> = Handle<AssetState<T>, ()>;
+pub type AssetHandle<T> = Handle<AssetState<T>, ()>;
 
 #[derive(Debug)]
 pub enum AssetState<T: EngineAsset> {
@@ -72,7 +78,7 @@ impl<T: EngineAsset> AssetState<T> {
             AssetState::Preparing(result) => {
                 if result.is_ready(asset_cache) {
                     match Arc::get_mut(result).unwrap().resolve(asset_cache) {
-                        Ok(()) => *self = AssetState::Loaded(std::mem::take(result)),
+                        Ok(()) => *self = AssetState::Loaded(result.clone()),
                         Err(err) => *self = AssetState::Failed(err),
                     }
                 }
@@ -187,6 +193,14 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
         }
     }
 
+    fn are_finished(&self, handles: &[AssetHandle<T>], asset_cache: &AssetCache) -> bool {
+        let assets = self.assets.lock();
+        handles.iter().all(|handle| match assets.get_hot(*handle) {
+            Some(asset) => asset.is_finished(asset_cache),
+            None => false,
+        })
+    }
+
     pub(crate) fn maintain(&self, asset_cache: &AssetCache) {
         let mut assets = self.assets.lock();
         assets.for_each_mut(|asset, _| asset.maintain(asset_cache));
@@ -196,6 +210,7 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
 pub struct AssetCache {
     device: Arc<Device>,
     images: SingleTypeAssetCache<ImageHandle>,
+    programs: SingleTypeAssetCache<ProgramHandle>,
 }
 
 impl EngineAssetKey for ImageSource {
@@ -212,13 +227,58 @@ impl EngineAssetKey for ImageSource {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ProgramSource {
+    shaders: ArrayVec<ShaderSource, 2>,
+}
+
+impl Display for ProgramSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Shader(")?;
+        self.shaders
+            .iter()
+            .for_each(|x| write!(f, "{:?},", x).unwrap());
+        write!(f, ")")?;
+
+        Ok(())
+    }
+}
+
+impl EngineAssetKey for ProgramSource {
+    fn key(&self) -> u64 {
+        let mut hasher = siphasher::sip::SipHasher::default();
+        self.shaders.iter().for_each(|x| x.hash(&mut hasher));
+        hasher.finish()
+    }
+}
+
+impl EngineAssetKey for ShaderSource {
+    fn key(&self) -> u64 {
+        let mut hasher = siphasher::sip::SipHasher::default();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+}
+
+impl EngineAsset for ProgramHandle {
+    fn is_ready(&self, _asset_cache: &AssetCache) -> bool {
+        true
+    }
+
+    fn resolve(&mut self, _asset_cache: &AssetCache) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
 impl AssetCache {
     pub fn new(device: &Arc<Device>) -> Self {
         Self {
             device: device.clone(),
             images: SingleTypeAssetCache::default(),
+            programs: SingleTypeAssetCache::default(),
         }
     }
+
     pub fn request_image(&self, source: &ImageSource) -> AssetHandle<ImageHandle> {
         self.images.request(
             source,
@@ -235,6 +295,32 @@ impl AssetCache {
 
     pub fn is_image_loaded(&self, handle: AssetHandle<ImageHandle>) -> bool {
         self.images.is_finished(handle, self)
+    }
+
+    pub fn are_images_loaded(&self, handles: &[AssetHandle<ImageHandle>]) -> bool {
+        self.images.are_finished(handles, self)
+    }
+
+    pub fn request_program(&self, source: &ProgramSource) -> AssetHandle<ProgramHandle> {
+        self.programs.request(
+            source,
+            Self::load_program(self.device.clone(), source.clone()),
+        )
+    }
+
+    pub fn resolve_program(
+        &self,
+        handle: AssetHandle<ProgramHandle>,
+    ) -> Result<Arc<ProgramHandle>, Error> {
+        self.programs.resolve(handle, self)
+    }
+
+    pub fn is_program_loaded(&self, handle: AssetHandle<ProgramHandle>) -> bool {
+        self.programs.is_finished(handle, self)
+    }
+
+    pub(crate) fn device(&self) -> &Device {
+        &self.device
     }
 
     async fn load_from_cache_or_import<
@@ -290,6 +376,42 @@ impl AssetCache {
 
     async fn import_image(source: ImageSource) -> Result<ImageAsset, Error> {
         Ok(ProcessImageAsset::import(source.import()?)?)
+    }
+
+    async fn load_program(
+        device: Arc<Device>,
+        source: ProgramSource,
+    ) -> Result<ProgramHandle, Error> {
+        let shaders = Self::import_program(source).await?;
+        let desc = shaders
+            .iter()
+            .map(|x| ShaderDesc::new(x.stage.into(), &x.code))
+            .collect::<Vec<_>>();
+        Ok(device.create_program(&desc)?)
+    }
+
+    async fn import_program(source: ProgramSource) -> Result<Vec<ShaderAsset>, Error> {
+        let shaders = AsyncComputeTaskPool::get().scope(|s| {
+            source.shaders.iter().for_each(|x| {
+                s.spawn(Self::load_from_cache_or_import(
+                    Self::import_shader(x.clone()),
+                    x.clone(),
+                    "shader",
+                ))
+            });
+        });
+        let mut results = Vec::with_capacity(shaders.len());
+        for shader in shaders {
+            match shader {
+                Ok(shader) => results.push(shader),
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(results)
+    }
+
+    async fn import_shader(source: ShaderSource) -> Result<ShaderAsset, Error> {
+        Ok(source.compile()?)
     }
 }
 

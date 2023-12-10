@@ -18,7 +18,7 @@ use std::{
     path::Path,
 };
 
-use ash::{extensions::khr::Display, vk};
+use ash::vk;
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use image::{imageops::FilterType, DynamicImage, ImageBuffer, Rgba};

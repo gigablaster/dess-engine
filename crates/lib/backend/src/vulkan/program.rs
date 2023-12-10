@@ -31,10 +31,10 @@ use super::{Device, Index, ProgramHandle, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
-pub const PER_PASS_BINDING_SLOT: u32 = 0;
-pub const PER_MATERIAL_BINDING_SLOT: u32 = 1;
-pub const PER_OBJECT_BINDING_SLOT: u32 = 2;
-pub const PER_DRAW_BINDING_SLOT: u32 = 3;
+pub const PER_PASS_BINDING_SLOT: usize = 0;
+pub const PER_MATERIAL_BINDING_SLOT: usize = 1;
+pub const PER_OBJECT_BINDING_SLOT: usize = 2;
+pub const PER_DRAW_BINDING_SLOT: usize = 3;
 
 // Slots are
 // 0 - per pass
@@ -246,6 +246,14 @@ pub struct ShaderDesc<'a> {
 }
 
 impl<'a> ShaderDesc<'a> {
+    pub fn new(stage: vk::ShaderStageFlags, code: &'a [u8]) -> Self {
+        Self {
+            stage,
+            entry: "main",
+            code,
+        }
+    }
+
     pub fn vertex(code: &'a [u8]) -> Self {
         Self {
             stage: vk::ShaderStageFlags::VERTEX,

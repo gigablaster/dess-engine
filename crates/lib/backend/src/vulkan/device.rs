@@ -25,8 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
-use std::{mem, slice, thread};
+use std::{mem, slice};
 
 use crate::vulkan::frame::MAX_TEMP_MEMORY;
 use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};

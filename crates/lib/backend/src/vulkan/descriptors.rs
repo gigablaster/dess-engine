@@ -13,18 +13,22 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashSet, mem, slice};
+use std::{
+    collections::{HashMap, HashSet},
+    mem, slice,
+};
 
 use ash::vk;
 use dess_common::{Handle, Pool, TempList};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
+use smol_str::SmolStr;
 
 use crate::{BackendError, BackendResult};
 
 use super::{
-    DescriptorSet, DescriptorSetInfo, Device, Image, ImageHandle, ImageStorage, ImageViewDesc,
-    UniformStorage,
+    DescriptorSet, Device, Image, ImageHandle, ImageStorage, ImageViewDesc, ProgramHandle,
+    ProgramStorage, UniformStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -43,6 +47,7 @@ pub struct DescriptorData {
     pub(crate) images: Vec<BindingPoint<(vk::ImageView, vk::ImageLayout)>>,
     pub(crate) count: DescriptorTotalCount,
     pub(crate) layout: vk::DescriptorSetLayout,
+    pub(crate) names: HashMap<SmolStr, usize>,
 }
 
 pub type DescriptorHandle = Handle<vk::DescriptorSet, Box<DescriptorData>>;
@@ -79,6 +84,7 @@ pub struct UpdateDescriptorContext<'a> {
     uniforms: &'a mut UniformStorage,
     storage: &'a mut DescriptorStorage,
     dirty: &'a mut HashSet<DescriptorHandle>,
+    programs: &'a ProgramStorage,
     images: &'a ImageStorage,
     retired_descriptors: Vec<DescriptorData>,
     retired_uniforms: Vec<u32>,
@@ -89,7 +95,16 @@ impl<'a> UpdateDescriptorContext<'a> {
     /// Created descriptor set from descriptor set info
     ///
     /// Descriptor set info can be extracted from Program as an example.
-    pub fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, BackendError> {
+    pub fn create(
+        &mut self,
+        program: ProgramHandle,
+        index: usize,
+    ) -> Result<DescriptorHandle, BackendError> {
+        let set = &self
+            .programs
+            .get(program.index())
+            .ok_or(BackendError::InvalidHandle)?
+            .sets[index];
         let static_uniforms = set
             .types
             .iter()
@@ -137,6 +152,11 @@ impl<'a> UpdateDescriptorContext<'a> {
             uniform_buffer: static_uniforms.len() as _,
             ..Default::default()
         };
+        let names = set
+            .names
+            .iter()
+            .map(|(name, slot)| (name.into(), *slot as usize))
+            .collect::<HashMap<SmolStr, _>>();
         let handle = self.storage.push(
             vk::DescriptorSet::null(),
             Box::new(DescriptorData {
@@ -146,6 +166,7 @@ impl<'a> UpdateDescriptorContext<'a> {
                 images,
                 count,
                 layout: set.layout,
+                names,
             }),
         );
 
@@ -182,6 +203,29 @@ impl<'a> UpdateDescriptorContext<'a> {
         self.bind_image_direct(handle, binding, image, layout)
     }
 
+    /// Bind image to descriptor set by name
+    pub fn bind_image_by_name(
+        &mut self,
+        handle: DescriptorHandle,
+        name: &str,
+        image: ImageHandle,
+        layout: vk::ImageLayout,
+    ) -> Result<(), BackendError> {
+        let binding = self
+            .storage
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .names
+            .get(name)
+            .copied()
+            .ok_or(BackendError::NotFound)?;
+        let image = self
+            .images
+            .get_cold(image)
+            .ok_or(BackendError::InvalidHandle)?;
+        self.bind_image_direct(handle, binding, image, layout)
+    }
+
     fn bind_image_direct(
         &mut self,
         handle: DescriptorHandle,
@@ -208,6 +252,24 @@ impl<'a> UpdateDescriptorContext<'a> {
         Ok(())
     }
 
+    /// Bind uniform to descriptor set by name
+    pub fn bind_uniform_by_name<T: Sized>(
+        &mut self,
+        handle: DescriptorHandle,
+        name: &str,
+        data: &T,
+    ) -> Result<(), BackendError> {
+        let binding = self
+            .storage
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .names
+            .get(name)
+            .copied()
+            .ok_or(BackendError::NotFound)?;
+        self.bind_uniform(handle, binding, data)
+    }
+
     pub fn bind_uniform<T: Sized>(
         &mut self,
         handle: DescriptorHandle,
@@ -227,6 +289,49 @@ impl<'a> UpdateDescriptorContext<'a> {
                 .data
                 .replace((self.uniforms.push(data)? as u32, mem::size_of::<T>() as u32))
             {
+                self.retired_uniforms.push(old.0);
+            }
+            self.dirty.insert(handle);
+        }
+        Ok(())
+    }
+
+    pub fn bind_uniform_raw_by_name(
+        &mut self,
+        handle: DescriptorHandle,
+        name: &str,
+        data: &[u8],
+    ) -> Result<(), BackendError> {
+        let binding = self
+            .storage
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .names
+            .get(name)
+            .copied()
+            .ok_or(BackendError::NotFound)?;
+        self.bind_uniform_raw(handle, binding, data)
+    }
+
+    pub fn bind_uniform_raw(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: usize,
+        data: &[u8],
+    ) -> Result<(), BackendError> {
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+        let desc = desc
+            .static_uniforms
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = desc {
+            if let Some(old) = point.data.replace((
+                self.uniforms.push_raw(data.as_ptr(), data.len())? as u32,
+                data.len() as u32,
+            )) {
                 self.retired_uniforms.push(old.0);
             }
             self.dirty.insert(handle);
@@ -381,16 +486,17 @@ impl Device {
         }
     }
 
-    pub fn with_descriptors<F: FnOnce(UpdateDescriptorContext) -> BackendResult<()>>(
-        &self,
-        cb: F,
-    ) -> BackendResult<()> {
+    pub fn with_descriptors<F>(&self, cb: F) -> BackendResult<()>
+    where
+        F: FnOnce(UpdateDescriptorContext) -> BackendResult<()>,
+    {
         let context = UpdateDescriptorContext {
             device: self,
             uniforms: &mut self.uniform_storage.lock(),
             storage: &mut self.descriptor_storage.write(),
             dirty: &mut self.dirty_descriptors.lock(),
             images: &self.image_storage.read(),
+            programs: &self.program_storage.read(),
             retired_descriptors: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),
             retired_uniforms: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),
         };

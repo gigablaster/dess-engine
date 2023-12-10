@@ -13,8 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{path::Path, process::Command};
+use std::{fmt::Display, path::Path, process::Command};
 
+use ash::vk;
 use serde::{Deserialize, Serialize};
 use speedy::{Readable, Writable};
 
@@ -26,12 +27,30 @@ pub enum ShaderStage {
     Vertex,
     #[serde(rename = "fragment")]
     Fragment,
+    #[serde(rename = "compute")]
+    Compute,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, Readable, Writable)]
+impl From<ShaderStage> for vk::ShaderStageFlags {
+    fn from(value: ShaderStage) -> Self {
+        match value {
+            ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
+            ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
+            ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Hash, Readable, Writable)]
 pub struct ShaderSource {
     pub source: String,
     pub stage: ShaderStage,
+}
+
+impl Display for ShaderSource {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Shader({:?}, {})", self.stage, self.source)
+    }
 }
 
 #[derive(Debug, Clone, Readable, Writable)]
@@ -56,6 +75,7 @@ impl ShaderSource {
         let stage = match self.stage {
             ShaderStage::Vertex => "-fshader-stage=vert",
             ShaderStage::Fragment => "-fshader-stage=frag",
+            ShaderStage::Compute => "-fshader-stage=comp",
         };
         let cmd = Command::new("glslc")
             .arg(stage)

@@ -31,6 +31,7 @@ pub enum BackendError {
     OutOfTempMemory,
     TooBig,
     DescriptorIsntReady,
+    BindingNotFound,
 }
 
 impl From<vk::Result> for BackendError {
