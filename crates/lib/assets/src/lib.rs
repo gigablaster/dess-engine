@@ -23,13 +23,13 @@ use std::{
 
 use uuid::Uuid;
 
+mod effect;
 mod image;
 mod model;
-mod shader;
 
+pub use effect::*;
 pub use image::*;
 pub use model::*;
-pub use shader::*;
 
 pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";

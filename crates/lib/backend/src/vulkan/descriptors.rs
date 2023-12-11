@@ -329,7 +329,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .find(|point| point.binding == binding as u32);
         if let Some(point) = desc {
             if let Some(old) = point.data.replace((
-                self.uniforms.push_raw(data.as_ptr(), data.len())? as u32,
+                unsafe { self.uniforms.push_raw(data.as_ptr(), data.len()) }? as u32,
                 data.len() as u32,
             )) {
                 self.retired_uniforms.push(old.0);

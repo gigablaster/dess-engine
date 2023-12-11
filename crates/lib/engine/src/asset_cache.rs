@@ -15,7 +15,7 @@
 
 use std::{
     collections::HashMap,
-    fmt::Display,
+    fmt::Debug,
     fs::File,
     future::Future,
     hash::{Hash, Hasher},
@@ -24,20 +24,19 @@ use std::{
     sync::Arc,
 };
 
-use arrayvec::ArrayVec;
-use bevy_tasks::{block_on, AsyncComputeTaskPool, IoTaskPool, Task};
+use bevy_tasks::{block_on, IoTaskPool, Task};
 use dess_assets::{
-    Asset, ImageAsset, ImageSource, ProcessImageAsset, ShaderAsset, ShaderSource, ASSET_CACHE_PATH,
+    import_effect, Asset, EffectAsset, EffectSource, ImageAsset, ImageSource, ProcessImageAsset,
+    ASSET_CACHE_PATH,
 };
 use dess_backend::vulkan::{
-    Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, PipelineHandle, ProgramHandle,
-    ShaderDesc,
+    Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle, ShaderDesc,
 };
 use dess_common::{Handle, Pool};
 use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::{EffectSource, Error, RenderEffect};
+use crate::{Error, RenderEffect, RenderEffectTechinque};
 
 /// Trait to check asset dependencies
 pub trait EngineAsset: Send + Sync + 'static {
@@ -53,6 +52,14 @@ pub enum AssetState<T: EngineAsset> {
     Preparing(Arc<T>),
     Loaded(Arc<T>),
     Failed(Error),
+}
+
+impl EngineAssetKey for String {
+    fn key(&self) -> u64 {
+        let mut hasher = siphasher::sip::SipHasher::default();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
 }
 
 impl<T: EngineAsset> AssetState<T> {
@@ -144,7 +151,7 @@ impl EngineAsset for ImageHandle {
     }
 }
 
-pub trait EngineAssetKey: Display {
+pub trait EngineAssetKey: Debug {
     fn key(&self) -> u64;
 }
 
@@ -211,10 +218,18 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
     }
 }
 
+impl<'a> EngineAssetKey for &[ShaderDesc<'a>] {
+    fn key(&self) -> u64 {
+        let mut hasher = siphasher::sip::SipHasher::default();
+        self.iter().for_each(|x| x.hash(&mut hasher));
+        hasher.finish()
+    }
+}
+
 pub struct AssetCache {
     device: Arc<Device>,
+    programs: RwLock<HashMap<u64, ProgramHandle>>,
     images: SingleTypeAssetCache<ImageHandle>,
-    programs: SingleTypeAssetCache<ProgramHandle>,
     effects: SingleTypeAssetCache<RenderEffect>,
 }
 
@@ -232,63 +247,18 @@ impl EngineAssetKey for ImageSource {
     }
 }
 
-#[derive(Debug, Clone, Hash)]
-pub struct ProgramSource {
-    shaders: ArrayVec<ShaderSource, 2>,
-}
-
-impl Display for ProgramSource {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Shader(")?;
-        self.shaders
-            .iter()
-            .for_each(|x| write!(f, "{:?},", x).unwrap());
-        write!(f, ")")?;
-
-        Ok(())
-    }
-}
-
-impl EngineAssetKey for ProgramSource {
-    fn key(&self) -> u64 {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.shaders.iter().for_each(|x| x.hash(&mut hasher));
-        hasher.finish()
-    }
-}
-
-impl EngineAssetKey for ShaderSource {
-    fn key(&self) -> u64 {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish()
-    }
-}
-
-impl EngineAsset for ProgramHandle {
-    fn is_ready<T: AssetCacheFns>(&self, _asset_cache: &T) -> bool {
-        true
-    }
-
-    fn resolve<T: AssetCacheFns>(&mut self, _asset_cache: &T) -> Result<(), Error> {
-        Ok(())
-    }
-}
-
 pub trait AssetCacheFns {
     fn request_image(&self, source: &ImageSource) -> AssetHandle<ImageHandle>;
     fn resolve_image(&self, handle: AssetHandle<ImageHandle>) -> Result<Arc<ImageHandle>, Error>;
     fn is_image_loaded(&self, handle: AssetHandle<ImageHandle>) -> bool;
     fn are_images_loaded(&self, handles: &[AssetHandle<ImageHandle>]) -> bool;
-    fn request_program(&self, source: &ProgramSource) -> AssetHandle<ProgramHandle>;
-    fn resolve_program(
-        &self,
-        handle: AssetHandle<ProgramHandle>,
-    ) -> Result<Arc<ProgramHandle>, Error>;
-    fn is_program_loaded(&self, handle: AssetHandle<ProgramHandle>) -> bool;
-    fn request_effect(&self, source: EffectSource) -> AssetHandle<RenderEffect>;
+    fn request_effect(&self, name: &str) -> AssetHandle<RenderEffect>;
+    fn resolve_effect(&self, handle: AssetHandle<RenderEffect>)
+        -> Result<Arc<RenderEffect>, Error>;
+    fn is_effect_loaded(&self, handle: AssetHandle<RenderEffect>) -> bool;
     fn maintain(&self);
     fn render_device(&self) -> &Device;
+    fn get_or_create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error>;
 }
 
 impl AssetCache {
@@ -296,8 +266,8 @@ impl AssetCache {
         Arc::new(Self {
             device: device.clone(),
             images: SingleTypeAssetCache::default(),
-            programs: SingleTypeAssetCache::default(),
             effects: SingleTypeAssetCache::default(),
+            programs: RwLock::default(),
         })
     }
 
@@ -313,15 +283,15 @@ impl AssetCache {
         let path = get_cached_asset_path(&source, ext);
         if let Ok(mut file) = File::open(&path) {
             if let Ok(asset) = T::deserialize(&mut file) {
-                debug!("Loaded cached {}", source);
+                debug!("Loaded cached {:?}", source);
                 return Ok(asset);
             }
         }
-        debug!("Import asset {}", source);
+        debug!("Import asset {:?}", source);
         let asset = import.await?;
         if let Ok(mut file) = File::create(path) {
             if asset.serialize(&mut file).is_ok() {
-                debug!("Written to cache {}", source);
+                debug!("Written to cache {:?}", source);
             }
         }
 
@@ -352,47 +322,35 @@ impl AssetCache {
         Ok(ProcessImageAsset::import(source.import()?)?)
     }
 
-    async fn load_program(
-        device: Arc<Device>,
-        source: ProgramSource,
-    ) -> Result<ProgramHandle, Error> {
-        let shaders = Self::import_program(source).await?;
-        let desc = shaders
-            .iter()
-            .map(|x| ShaderDesc::new(x.stage.into(), &x.code))
-            .collect::<Vec<_>>();
-        Ok(device.create_program(&desc)?)
-    }
-
-    async fn import_program(source: ProgramSource) -> Result<Vec<ShaderAsset>, Error> {
-        let shaders = AsyncComputeTaskPool::get().scope(|s| {
-            source.shaders.iter().for_each(|x| {
-                s.spawn(Self::load_from_cache_or_import(
-                    Self::import_shader(x.clone()),
-                    x.clone(),
-                    "shader",
-                ))
-            });
-        });
-        let mut results = Vec::with_capacity(shaders.len());
-        for shader in shaders {
-            match shader {
-                Ok(shader) => results.push(shader),
-                Err(err) => return Err(err),
-            }
-        }
-        Ok(results)
-    }
-
-    async fn import_shader(source: ShaderSource) -> Result<ShaderAsset, Error> {
-        Ok(source.compile()?)
-    }
-
-    async fn create_effect(
-        asset_cache: Arc<AssetCache>,
-        source: EffectSource,
+    async fn load_effect<T: AssetCacheFns>(
+        asset_cache: T,
+        source: String,
     ) -> Result<RenderEffect, Error> {
-        Ok(RenderEffect::new(&asset_cache, source))
+        let asset =
+            Self::load_from_cache_or_import(Self::import_effect(source.clone()), source, "effect")
+                .await?;
+        let mut techinques = HashMap::new();
+        for (name, tech) in asset.techniques {
+            let shaders = tech
+                .shaders
+                .iter()
+                .map(|x| ShaderDesc::new(x.stage.into(), &x.code))
+                .collect::<Vec<_>>();
+            let program = asset_cache.get_or_create_program(&shaders)?;
+            techinques.insert(
+                name.into(),
+                RenderEffectTechinque {
+                    program,
+                    pipeline_desc: tech.pipeline_desc.into(),
+                },
+            );
+        }
+        Ok(RenderEffect { techinques })
+    }
+
+    async fn import_effect(source: String) -> Result<EffectAsset, Error> {
+        let effect: EffectSource = serde_json::from_reader(File::open(source)?)?;
+        Ok(import_effect(effect)?)
     }
 }
 
@@ -416,39 +374,47 @@ impl AssetCacheFns for Arc<AssetCache> {
         self.images.are_finished(handles, self)
     }
 
-    fn request_program(&self, source: &ProgramSource) -> AssetHandle<ProgramHandle> {
-        self.programs.request(
-            source,
-            AssetCache::load_program(self.device.clone(), source.clone()),
-        )
-    }
-
-    fn resolve_program(
-        &self,
-        handle: AssetHandle<ProgramHandle>,
-    ) -> Result<Arc<ProgramHandle>, Error> {
-        self.programs.resolve(handle, self)
-    }
-
-    fn is_program_loaded(&self, handle: AssetHandle<ProgramHandle>) -> bool {
-        self.programs.is_finished(handle, self)
-    }
-
-    fn request_effect(&self, source: EffectSource) -> AssetHandle<RenderEffect> {
-        self.effects.request(
-            &source,
-            AssetCache::create_effect(self.clone(), source.clone()),
-        )
+    fn request_effect(&self, name: &str) -> AssetHandle<RenderEffect> {
+        let name = name.to_owned();
+        self.effects
+            .request(&name.clone(), AssetCache::load_effect(self.clone(), name))
     }
 
     fn maintain(&self) {
         self.images.maintain(self);
-        self.programs.maintain(self);
         self.effects.maintain(self);
     }
 
     fn render_device(&self) -> &Device {
         &self.device
+    }
+
+    fn resolve_effect(
+        &self,
+        handle: AssetHandle<RenderEffect>,
+    ) -> Result<Arc<RenderEffect>, Error> {
+        self.effects.resolve(handle, self)
+    }
+
+    fn is_effect_loaded(&self, handle: AssetHandle<RenderEffect>) -> bool {
+        self.effects.is_finished(handle, self)
+    }
+
+    fn get_or_create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
+        let key = shaders.key();
+        let programs = self.programs.upgradable_read();
+        if let Some(program) = programs.get(&key) {
+            Ok(*program)
+        } else {
+            let mut programs = RwLockUpgradableReadGuard::upgrade(programs);
+            if let Some(program) = programs.get(&key) {
+                Ok(*program)
+            } else {
+                let program = self.device.create_program(shaders)?;
+                programs.insert(key, program);
+                Ok(program)
+            }
+        }
     }
 }
 

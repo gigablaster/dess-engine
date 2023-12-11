@@ -16,24 +16,38 @@
 mod asset_cache;
 mod buffer_pool;
 mod effect;
-mod material;
 mod mesh;
 mod pool;
+
+use std::io;
 
 pub use asset_cache::*;
 pub use buffer_pool::*;
 use dess_backend::BackendError;
 pub use effect::*;
-pub use material::*;
 pub use mesh::*;
 pub use pool::*;
 
 #[derive(Debug, Clone)]
 pub enum Error {
+    IoError(String),
+    ParseError(String),
     BackendError(BackendError),
     InvalidHandle,
     ImportFailed(dess_assets::Error),
     LoadingFailed,
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Self::IoError(value.to_string())
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(value: serde_json::Error) -> Self {
+        Self::ParseError(value.to_string())
+    }
 }
 
 impl From<BackendError> for Error {

@@ -30,7 +30,7 @@ pub struct VertexAttributeDesc {
 /// Data to create pipeline.
 ///
 /// Contains all data to create new pipeline.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Hash)]
 pub struct PipelineCreateDesc {
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(BlendDesc, BlendDesc)>,
@@ -40,25 +40,6 @@ pub struct PipelineCreateDesc {
     pub depth_write: bool,
     /// Culling information, None if we don't do culling
     pub cull: Option<(vk::CullModeFlags, vk::FrontFace)>,
-    /// Vertex layout
-    pub attributes: &'static [vk::VertexInputAttributeDescription],
-    pub strides: &'static [(usize, vk::VertexInputRate)],
-}
-
-impl Hash for PipelineCreateDesc {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.blend.hash(state);
-        self.depth_test.hash(state);
-        self.depth_write.hash(state);
-        self.cull.hash(state);
-        self.attributes.iter().for_each(|x| {
-            x.binding.hash(state);
-            x.format.hash(state);
-            x.location.hash(state);
-            x.offset.hash(state);
-        });
-        self.strides.hash(state);
-    }
 }
 
 pub trait PipelineVertex: Sized {
@@ -66,18 +47,17 @@ pub trait PipelineVertex: Sized {
     fn strides() -> &'static [(usize, vk::VertexInputRate)];
 }
 
-impl PipelineCreateDesc {
-    pub fn new<T: PipelineVertex>() -> Self {
+impl Default for PipelineCreateDesc {
+    fn default() -> Self {
         Self {
             blend: None,
             depth_test: Some(vk::CompareOp::LESS),
             depth_write: true,
             cull: Some((vk::CullModeFlags::BACK, vk::FrontFace::CLOCKWISE)),
-            attributes: T::attributes(),
-            strides: T::strides(),
         }
     }
-
+}
+impl PipelineCreateDesc {
     pub fn blend(mut self, color: BlendDesc, alpha: BlendDesc) -> Self {
         self.blend = Some((color, alpha));
 
@@ -104,7 +84,7 @@ impl PipelineCreateDesc {
 }
 
 impl Device {
-    pub fn create_pipeline(
+    pub fn create_pipeline<T: PipelineVertex>(
         &self,
         program: ProgramHandle,
         desc: &PipelineCreateDesc,
@@ -138,22 +118,23 @@ impl Device {
             .dynamic_states(&dynamic_states)
             .build();
 
-        let vertex_binding_desc = desc
-            .strides
+        let strides = T::strides();
+        let attributes = T::attributes();
+        let vertex_binding_desc = strides
             .iter()
             .enumerate()
             .map(|(index, _)| {
                 vk::VertexInputBindingDescription::builder()
-                    .stride(desc.strides[index].0 as _)
-                    .binding(desc.attributes[index].binding)
-                    .input_rate(desc.strides[index].1)
+                    .stride(strides[index].0 as _)
+                    .binding(attributes[index].binding)
+                    .input_rate(strides[index].1)
                     .build()
             })
             .collect::<Vec<_>>();
 
         let vertex_input = vk::PipelineVertexInputStateCreateInfo::builder()
             .vertex_binding_descriptions(&vertex_binding_desc)
-            .vertex_attribute_descriptions(desc.attributes)
+            .vertex_attribute_descriptions(attributes)
             .build();
 
         let viewport_state = vk::PipelineViewportStateCreateInfo::builder()

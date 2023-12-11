@@ -239,6 +239,7 @@ impl DescriptorSetInfo {
     }
 }
 
+#[derive(Debug, Hash, PartialEq, Eq)]
 pub struct ShaderDesc<'a> {
     pub stage: vk::ShaderStageFlags,
     pub entry: &'a str,

@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 dess-common = { path = "../common" }
+dess-backend = { path = "../backend" }
 uuid = "1.5.0"
 ash = "0.37.3"
 bytes = "1.5.0"
@@ -14,6 +15,7 @@ serde = { version = "1.0.192", features = ["derive"] }
 speedy = { version = "0.8.6", features = ["speedy-derive", "uuid"] }
 normalize-path = "0.2.1"
 numquant = "0.2.0"
+bevy_tasks = { version = "0.12.1", features = ["multi-threaded"] }
 
 image = { version = "0.24.7", default-features = false, features = [
     "jpeg",
@@ -36,3 +38,6 @@ mikktspace = { version = "0.3.0", features = [
 ], default-features = false }
 glam = "0.24.2"
 meshopt = "0.1.9"
+hassle-rs = "0.11.0"
+shader-prepper = "0.2.0"
+failure = "0.1.8"

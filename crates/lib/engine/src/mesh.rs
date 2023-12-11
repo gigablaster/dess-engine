@@ -13,10 +13,9 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use dess_backend::vulkan::{BufferSlice, DescriptorHandle};
-use smol_str::SmolStr;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
@@ -48,17 +47,17 @@ pub struct RenderMesh {
 #[derive(Debug)]
 pub struct RenderModel {
     // bone transformations
-    bones: Vec<glam::Affine3A>,
+    _bones: Vec<glam::Affine3A>,
     // Bone parents, u32::MAX - no parent
-    bone_parents: Vec<u32>,
+    _bone_parents: Vec<u32>,
     // Bone names
-    bone_names: HashMap<String, u32>,
+    _bone_names: HashMap<String, u32>,
     // Actual meshes
-    meshes: Vec<RenderMesh>,
+    _meshes: Vec<RenderMesh>,
     // Mesh names, name->index
-    mesh_names: HashMap<String, u32>,
+    _mesh_names: HashMap<String, u32>,
     // Which mesh located where, bone->mesh
-    instances: Vec<(u32, u32)>,
+    _instances: Vec<(u32, u32)>,
 }
 
 /// Representation of single gltf file
@@ -66,5 +65,5 @@ pub struct RenderModel {
 /// Contains multiple models (scenes).
 #[derive(Debug)]
 pub struct RenderModelContainer {
-    models: HashMap<String, RenderModel>,
+    _models: HashMap<String, RenderModel>,
 }

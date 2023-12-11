@@ -55,16 +55,17 @@ pub trait ToDrop {
     fn to_drop(&mut self, drop_list: &mut DropList);
 }
 
-#[derive(Debug, Hash, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Index<T>(u32, PhantomData<T>);
 
 impl<T> Copy for Index<T> {}
 
 impl<T> Clone for Index<T> {
     fn clone(&self) -> Self {
-        Self(self.0, PhantomData)
+        *self
     }
 }
+
 unsafe impl<T> Send for Index<T> {}
 unsafe impl<T> Sync for Index<T> {}
 
@@ -97,6 +98,12 @@ impl<T> From<Index<T>> for u32 {
 impl<T> From<u32> for Index<T> {
     fn from(value: u32) -> Self {
         Index(value, PhantomData)
+    }
+}
+
+impl<T> std::hash::Hash for Index<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state)
     }
 }
 
