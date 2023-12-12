@@ -25,8 +25,8 @@ use std::{
 
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use dess_assets::{
-    import_effect, Asset, EffectAsset, EffectSource, ImageAsset, ImageSource, ProcessImageAsset,
-    ASSET_CACHE_PATH,
+    import_effect, Asset, EffectAsset, EffectSource, ImageAsset, ImageSource, MeshMaterial,
+    ProcessImageAsset, ASSET_CACHE_PATH,
 };
 use dess_backend::vulkan::{
     Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle, ShaderDesc,
@@ -35,7 +35,7 @@ use dess_common::{Handle, Pool};
 use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::{Error, RenderEffect, RenderEffectTechinque};
+use crate::{Error, RenderEffect, RenderEffectTechinque, RenderMaterial};
 
 /// Trait to check asset dependencies
 pub trait EngineAsset: Send + Sync + 'static {
@@ -212,6 +212,7 @@ pub struct AssetCache {
     programs: RwLock<HashMap<u64, ProgramHandle>>,
     images: SingleTypeAssetCache<ImageHandle>,
     effects: SingleTypeAssetCache<RenderEffect>,
+    materials: SingleTypeAssetCache<RenderMaterial>,
 }
 
 pub trait AssetCacheFns {
@@ -222,6 +223,12 @@ pub trait AssetCacheFns {
     fn request_effect(&self, name: &str) -> AssetHandle<RenderEffect>;
     fn resolve_effect(&self, handle: AssetHandle<RenderEffect>)
         -> Result<Arc<RenderEffect>, Error>;
+    fn request_material(&self, material: &MeshMaterial) -> AssetHandle<RenderMaterial>;
+    fn is_material_loaded(&self, handle: AssetHandle<RenderMaterial>) -> bool;
+    fn resolve_material(
+        &self,
+        handle: AssetHandle<RenderMaterial>,
+    ) -> Result<Arc<RenderMaterial>, Error>;
     fn is_effect_loaded(&self, handle: AssetHandle<RenderEffect>) -> bool;
     fn maintain(&self);
     fn render_device(&self) -> &Device;
@@ -234,6 +241,7 @@ impl AssetCache {
             device: device.clone(),
             images: SingleTypeAssetCache::default(),
             effects: SingleTypeAssetCache::default(),
+            materials: SingleTypeAssetCache::default(),
             programs: RwLock::default(),
         })
     }
@@ -319,6 +327,22 @@ impl AssetCache {
         let effect: EffectSource = serde_json::from_reader(File::open(source)?)?;
         Ok(import_effect(effect)?)
     }
+
+    async fn import_material<T: AssetCacheFns>(
+        asset_cache: T,
+        source: MeshMaterial,
+    ) -> Result<RenderMaterial, Error> {
+        Ok(RenderMaterial {
+            effect: asset_cache.request_effect(&source.effect),
+            uniform: source.uniform,
+            images: source
+                .images
+                .iter()
+                .map(|(name, image)| (name.into(), asset_cache.request_image(image)))
+                .collect::<HashMap<_, _>>(),
+            descriptors: HashMap::default(),
+        })
+    }
 }
 
 impl AssetCacheFns for Arc<AssetCache> {
@@ -350,6 +374,7 @@ impl AssetCacheFns for Arc<AssetCache> {
     fn maintain(&self) {
         self.images.maintain(self);
         self.effects.maintain(self);
+        self.materials.maintain(self);
     }
 
     fn render_device(&self) -> &Device {
@@ -384,6 +409,24 @@ impl AssetCacheFns for Arc<AssetCache> {
                 Ok(program)
             }
         }
+    }
+
+    fn request_material(&self, material: &MeshMaterial) -> AssetHandle<RenderMaterial> {
+        self.materials.request(
+            material,
+            AssetCache::import_material(self.clone(), material.clone()),
+        )
+    }
+
+    fn is_material_loaded(&self, handle: AssetHandle<RenderMaterial>) -> bool {
+        self.materials.is_finished(handle, self)
+    }
+
+    fn resolve_material(
+        &self,
+        handle: AssetHandle<RenderMaterial>,
+    ) -> Result<Arc<RenderMaterial>, Error> {
+        self.materials.resolve(handle, self)
     }
 }
 
