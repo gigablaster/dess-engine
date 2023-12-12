@@ -22,3 +22,30 @@ pub use draw_stream::*;
 pub use error::*;
 
 pub type BackendResult<T> = Result<T, BackendError>;
+
+pub trait BackendResultExt {
+    fn ignore_invalid_handle(self) -> BackendResult<()>;
+    fn ignore_missing(self) -> BackendResult<()>;
+}
+
+impl BackendResultExt for BackendResult<()> {
+    fn ignore_invalid_handle(self) -> BackendResult<()> {
+        match self {
+            Ok(_) => Ok(()),
+            Err(err) => match err {
+                BackendError::InvalidHandle => Ok(()),
+                other => Err(other),
+            },
+        }
+    }
+
+    fn ignore_missing(self) -> BackendResult<()> {
+        match self {
+            Ok(_) => Ok(()),
+            Err(err) => match err {
+                BackendError::NotFound => Ok(()),
+                other => Err(other),
+            },
+        }
+    }
+}
