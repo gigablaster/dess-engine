@@ -54,11 +54,51 @@ pub struct DescriptorSetInfo {
     pub names: HashMap<String, u32>,
 }
 
+pub struct DescriptorSetCreateInfo {
+    pub stage: vk::ShaderStageFlags,
+    pub set: HashMap<u32, DescriptorInfo>,
+}
+
+impl Default for DescriptorSetCreateInfo {
+    fn default() -> Self {
+        Self {
+            stage: vk::ShaderStageFlags::empty(),
+            set: HashMap::default(),
+        }
+    }
+}
+
+impl DescriptorSetCreateInfo {
+    pub fn stage(mut self, stage: vk::ShaderStageFlags) -> Self {
+        self.stage = stage;
+
+        self
+    }
+
+    pub fn descriptor(
+        mut self,
+        index: usize,
+        name: &str,
+        ty: rspirv_reflect::DescriptorType,
+    ) -> Self {
+        self.set.insert(
+            index as u32,
+            rspirv_reflect::DescriptorInfo {
+                ty,
+                binding_count: rspirv_reflect::BindingCount::One,
+                name: name.to_owned(),
+            },
+        );
+
+        self
+    }
+}
+
 impl DescriptorSetInfo {
-    pub fn new(
+    pub(crate) fn new(
         device: &ash::Device,
         stage: vk::ShaderStageFlags,
-        set: &BTreeMap<u32, DescriptorInfo>,
+        set: &HashMap<u32, DescriptorInfo>,
         expected_count: u32,
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<Self, BackendError> {
@@ -380,10 +420,14 @@ impl Program {
             let set = sets.get(&set_index);
             match set {
                 Some(set) => {
+                    let set = set
+                        .iter()
+                        .map(|(a, b)| (*a, b.clone()))
+                        .collect::<HashMap<_, _>>();
                     layouts.push(DescriptorSetInfo::new(
                         device,
                         stages,
-                        set,
+                        &set,
                         DESCRIPTORS_PER_SLOT[set_index as usize],
                         inmuatable_samplers,
                     )?);
@@ -460,5 +504,19 @@ impl Device {
         let index = programs.len();
         programs.push(program);
         Ok(Index::new(index))
+    }
+
+    pub fn create_descriptor_set_info(
+        &self,
+        info: DescriptorSetCreateInfo,
+        expected_count: usize,
+    ) -> BackendResult<DescriptorSetInfo> {
+        DescriptorSetInfo::new(
+            &self.raw,
+            info.stage,
+            &info.set,
+            expected_count as _,
+            &self.samplers,
+        )
     }
 }

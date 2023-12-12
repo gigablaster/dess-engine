@@ -27,8 +27,8 @@ use smol_str::SmolStr;
 use crate::{BackendError, BackendResult};
 
 use super::{
-    DescriptorSet, Device, Image, ImageHandle, ImageStorage, ImageViewDesc, ProgramHandle,
-    ProgramStorage, UniformStorage,
+    DescriptorSet, DescriptorSetInfo, Device, Image, ImageHandle, ImageStorage, ImageViewDesc,
+    ProgramHandle, ProgramStorage, UniformStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -92,10 +92,7 @@ pub struct UpdateDescriptorContext<'a> {
 
 /// Allows client to manipulate descriptor set
 impl<'a> UpdateDescriptorContext<'a> {
-    /// Created descriptor set from descriptor set info
-    ///
-    /// Descriptor set info can be extracted from Program as an example.
-    pub fn create(
+    pub fn from_program(
         &mut self,
         program: ProgramHandle,
         index: usize,
@@ -105,6 +102,12 @@ impl<'a> UpdateDescriptorContext<'a> {
             .get(program.index())
             .ok_or(BackendError::InvalidHandle)?
             .sets[index];
+        self.from_info(set)
+    }
+    /// Created descriptor set from descriptor set info
+    ///
+    /// Descriptor set info can be extracted from Program as an example.
+    pub fn from_info(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, BackendError> {
         let static_uniforms = set
             .types
             .iter()
