@@ -19,7 +19,6 @@ use std::{
     fs::File,
     future::Future,
     hash::{Hash, Hasher},
-    mem,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -52,14 +51,6 @@ pub enum AssetState<T: EngineAsset> {
     Preparing(Arc<T>),
     Loaded(Arc<T>),
     Failed(Error),
-}
-
-impl EngineAssetKey for String {
-    fn key(&self) -> u64 {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 impl<T: EngineAsset> AssetState<T> {
@@ -151,10 +142,6 @@ impl EngineAsset for ImageHandle {
     }
 }
 
-pub trait EngineAssetKey: Debug {
-    fn key(&self) -> u64;
-}
-
 #[derive(Debug, Default)]
 struct SingleTypeAssetCache<T: EngineAsset> {
     handles: RwLock<HashMap<u64, AssetHandle<T>>>,
@@ -164,11 +151,13 @@ struct SingleTypeAssetCache<T: EngineAsset> {
 impl<T: EngineAsset> SingleTypeAssetCache<T> {
     fn request<S, F>(&self, asset: &S, loading: F) -> AssetHandle<T>
     where
-        S: EngineAssetKey,
+        S: Hash,
         F: Future<Output = Result<T, Error>> + Send + Sync + 'static,
     {
         let handles = self.handles.upgradable_read();
-        let key = asset.key();
+        let mut hasher = siphasher::sip::SipHasher::default();
+        asset.hash(&mut hasher);
+        let key = hasher.finish();
         if let Some(handle) = handles.get(&key) {
             *handle
         } else {
@@ -218,33 +207,11 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
     }
 }
 
-impl<'a> EngineAssetKey for &[ShaderDesc<'a>] {
-    fn key(&self) -> u64 {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.iter().for_each(|x| x.hash(&mut hasher));
-        hasher.finish()
-    }
-}
-
 pub struct AssetCache {
     device: Arc<Device>,
     programs: RwLock<HashMap<u64, ProgramHandle>>,
     images: SingleTypeAssetCache<ImageHandle>,
     effects: SingleTypeAssetCache<RenderEffect>,
-}
-
-impl EngineAssetKey for ImageSource {
-    fn key(&self) -> u64 {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.purpose.hash(&mut hasher);
-        mem::discriminant(&self.source).hash(&mut hasher);
-        match &self.source {
-            dess_assets::ImageDataSource::File(path) => path.hash(&mut hasher),
-            dess_assets::ImageDataSource::Bytes(data) => data.hash(&mut hasher),
-            dess_assets::ImageDataSource::Placeholder(pixel) => pixel.hash(&mut hasher),
-        }
-        hasher.finish()
-    }
 }
 
 pub trait AssetCacheFns {
@@ -273,7 +240,7 @@ impl AssetCache {
 
     async fn load_from_cache_or_import<
         T: Asset,
-        S: EngineAssetKey,
+        S: Hash + Debug,
         I: Future<Output = Result<T, Error>> + Send + Sync + 'static,
     >(
         import: I,
@@ -401,7 +368,9 @@ impl AssetCacheFns for Arc<AssetCache> {
     }
 
     fn get_or_create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
-        let key = shaders.key();
+        let mut hasher = siphasher::sip::SipHasher::default();
+        shaders.hash(&mut hasher);
+        let key = hasher.finish();
         let programs = self.programs.upgradable_read();
         if let Some(program) = programs.get(&key) {
             Ok(*program)
@@ -418,6 +387,9 @@ impl AssetCacheFns for Arc<AssetCache> {
     }
 }
 
-fn get_cached_asset_path<S: EngineAssetKey>(source: &S, ext: &str) -> PathBuf {
-    Path::new(ASSET_CACHE_PATH).join(format!("{:x}.{}", source.key(), ext))
+fn get_cached_asset_path<S: Hash>(source: &S, ext: &str) -> PathBuf {
+    let mut hasher = siphasher::sip::SipHasher::default();
+    source.hash(&mut hasher);
+    let key = hasher.finish();
+    Path::new(ASSET_CACHE_PATH).join(format!("{:x}.{}", key, ext))
 }

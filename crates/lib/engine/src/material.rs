@@ -13,27 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::HashMap,
-    hash::{Hash, Hasher},
-};
+use std::collections::HashMap;
 
-use dess_backend::vulkan::{PipelineCreateDesc, ProgramHandle};
+use dess_backend::vulkan::{DescriptorHandle, ImageHandle, PipelineCreateDesc, ProgramHandle};
 use smol_str::SmolStr;
 
-use crate::{AssetCacheFns, EngineAsset, EngineAssetKey, Error};
+use crate::{AssetCacheFns, AssetHandle, EngineAsset, Error};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct EffectSource {
     pub path: String,
-}
-
-impl EngineAssetKey for EffectSource {
-    fn key(&self) -> u64 {
-        let mut hasher = siphasher::sip::SipHasher::default();
-        self.hash(&mut hasher);
-        hasher.finish()
-    }
 }
 
 #[derive(Debug, Clone, Hash)]
@@ -61,4 +50,15 @@ impl EngineAsset for RenderEffect {
     fn resolve<T: AssetCacheFns>(&mut self, _asset_cache: &T) -> Result<(), Error> {
         Ok(())
     }
+}
+
+/// Material contains effect and a per-material descriptor set
+/// for every effect technique.
+///
+/// Pipelines aren't created at this stage, they belong to render pass.
+#[derive(Debug)]
+pub struct RenderMaterial {
+    effect: AssetHandle<RenderEffect>,
+    images: HashMap<String, AssetHandle<ImageHandle>>,
+    descriptors: HashMap<String, DescriptorHandle>,
 }
