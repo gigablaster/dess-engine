@@ -15,7 +15,7 @@
 
 mod asset_cache;
 mod buffer_pool;
-mod effect;
+mod material;
 mod mesh;
 mod pool;
 
@@ -24,7 +24,7 @@ use std::io;
 pub use asset_cache::*;
 pub use buffer_pool::*;
 use dess_backend::BackendError;
-pub use effect::*;
+pub use material::*;
 pub use mesh::*;
 pub use pool::*;
 
