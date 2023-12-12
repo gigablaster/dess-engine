@@ -13,10 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use core::slice;
 use std::{
     collections::HashMap,
     hash::Hash,
+    mem,
     path::{Path, PathBuf},
+    ptr::copy_nonoverlapping,
 };
 
 use normalize_path::NormalizePath;
@@ -86,6 +89,18 @@ impl LightingAttributes {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+#[repr(C, align(16))]
+pub struct PbrMeshMaterialUniform {
+    pub emissive_power: f32,
+}
+
+#[repr(C, align(16))]
+pub struct MeshSurfaceUniform {
+    pub position_scale: f32,
+    pub uv_scale: f32,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Readable, Writable)]
 pub struct Bone {
     pub parent: Option<u32>,
@@ -127,49 +142,60 @@ impl Hash for BlendMode {
     }
 }
 
-#[derive(Debug, Clone, Copy, Readable, Writable)]
-#[repr(C)]
-pub struct PbrMeshMaterial {
+#[derive(Debug, Clone, PartialEq, Eq, Readable, Writable)]
+pub struct MeshMaterial {
+    pub effect: String,
     pub blend: BlendMode,
-    pub base: u32,
-    pub metallic_roughness: u32,
-    pub normal: u32,
-    pub occlusion: u32,
-    pub emissive: u32,
-    pub emissive_power: f32,
+    pub images: HashMap<String, ImageSource>,
+    pub uniform: Vec<u8>,
 }
 
-impl Eq for PbrMeshMaterial {}
-
-impl PartialEq for PbrMeshMaterial {
-    fn eq(&self, other: &Self) -> bool {
-        self.blend == other.blend
-            && self.base == other.base
-            && self.metallic_roughness == other.metallic_roughness
-            && self.normal == other.normal
-            && self.occlusion == other.occlusion
-            && self.emissive == other.emissive
-            && self.emissive_power == other.emissive_power
-    }
-}
-
-impl Hash for PbrMeshMaterial {
+impl Hash for MeshMaterial {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.effect.hash(state);
         self.blend.hash(state);
-        self.base.hash(state);
-        self.metallic_roughness.hash(state);
-        self.normal.hash(state);
-        self.occlusion.hash(state);
-        self.emissive.hash(state);
-        let dirty_hack = (self.emissive_power * 1000.0) as u32;
-        dirty_hack.hash(state);
+        self.uniform.hash(state);
+        for (name, source) in self.images.iter() {
+            name.hash(state);
+            source.hash(state);
+        }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Readable, Writable)]
-pub enum MeshMaterial {
-    Pbr(PbrMeshMaterial),
-    Unlit(BlendMode, u32),
+impl MeshMaterial {
+    pub fn new(effect: &str) -> Self {
+        Self {
+            effect: effect.to_owned(),
+            blend: BlendMode::Opaque,
+            images: HashMap::default(),
+            uniform: Vec::default(),
+        }
+    }
+
+    pub fn image(mut self, slot: &str, source: ImageSource) -> Self {
+        self.images.insert(slot.to_owned(), source);
+
+        self
+    }
+
+    pub fn blend(mut self, blend: BlendMode) -> Self {
+        self.blend = blend;
+
+        self
+    }
+
+    pub fn uniform<T: Sized + Copy>(mut self, data: &T) -> Self {
+        unsafe { self.set_uniform_impp(data) };
+
+        self
+    }
+
+    unsafe fn set_uniform_impp<T: Sized + Copy>(&mut self, data: &T) {
+        let size = mem::size_of::<T>();
+        let src = slice::from_ref(data).as_ptr() as *const u8;
+        self.uniform.resize(size, 0u8);
+        copy_nonoverlapping(src, self.uniform.as_mut_ptr(), size);
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -221,7 +247,6 @@ pub struct ModelAsset {
     pub attributes: Vec<LightingAttributes>,
     pub indices: Vec<u16>,
     pub materials: Vec<MeshMaterial>,
-    pub images: Vec<ImageSource>,
     pub scenes: HashMap<String, SceneAsset>,
 }
 
@@ -304,7 +329,6 @@ struct SceneProcessingContext<'a> {
     // Index in gltf -> index in asset
     processed_meshes: HashMap<u32, u32>,
     unique_materials: HashMap<MeshMaterial, u32>,
-    unique_images: HashMap<ImageSource, u32>,
 }
 
 fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
@@ -389,32 +413,16 @@ impl ProcessGltfAsset {
         (max_position, positions)
     }
 
-    fn get_or_create_unique_image(
-        &self,
-        ctx: &mut SceneProcessingContext,
-        image: ImageSource,
-    ) -> u32 {
-        if let Some(index) = ctx.unique_images.get(&image) {
-            *index
-        } else {
-            let index = ctx.model.images.len();
-            ctx.model.images.push(image.clone());
-            ctx.unique_images.insert(image, index as u32);
-            index as u32
-        }
-    }
-
     fn process_texture(
         &self,
         ctx: &mut SceneProcessingContext,
         texture: &gltf::texture::Texture,
         purpose: ImagePurpose,
-    ) -> u32 {
+    ) -> ImageSource {
         match texture.source().source() {
             gltf::image::Source::Uri { uri, .. } => {
                 let image_path = ctx.base.join(uri).normalize();
-                let source = ImageSource::from_file(image_path, purpose);
-                self.get_or_create_unique_image(ctx, source)
+                ImageSource::from_file(image_path, purpose)
             }
             _ => panic!(),
         }
@@ -422,12 +430,11 @@ impl ProcessGltfAsset {
 
     fn process_placeholder(
         &self,
-        ctx: &mut SceneProcessingContext,
+        _ctx: &mut SceneProcessingContext,
         color: [f32; 4],
         purpose: ImagePurpose,
-    ) -> u32 {
-        let source = ImageSource::from_color(color, purpose);
-        self.get_or_create_unique_image(ctx, source)
+    ) -> ImageSource {
+        ImageSource::from_color(color, purpose)
     }
 
     fn process_blend(&self, material: &gltf::Material) -> BlendMode {
@@ -454,7 +461,7 @@ impl ProcessGltfAsset {
                 ImagePurpose::Color,
             )
         };
-        MeshMaterial::Unlit(self.process_blend(material), base)
+        MeshMaterial::new("effects/unlit.json").image("base", base)
     }
 
     fn create_pbr_material(
@@ -512,16 +519,15 @@ impl ProcessGltfAsset {
                 ImagePurpose::NonColor,
             )
         };
-
-        MeshMaterial::Pbr(PbrMeshMaterial {
-            blend: self.process_blend(material),
-            base,
-            metallic_roughness,
-            normal,
-            occlusion,
-            emissive,
-            emissive_power: material.emissive_strength().unwrap_or(0.0),
-        })
+        MeshMaterial::new("effects/pbr.json")
+            .image("base", base)
+            .image("metallic_roughness", metallic_roughness)
+            .image("occlusion", occlusion)
+            .image("normal", normal)
+            .image("emissive", emissive)
+            .uniform(&PbrMeshMaterialUniform {
+                emissive_power: material.emissive_strength().unwrap_or(0.0),
+            })
     }
 
     fn process_material(&self, ctx: &mut SceneProcessingContext, material: &gltf::Material) -> u32 {
@@ -529,12 +535,13 @@ impl ProcessGltfAsset {
             self.create_unlit_material(ctx, material)
         } else {
             self.create_pbr_material(ctx, material)
-        };
+        }
+        .blend(self.process_blend(material));
         if let Some(index) = ctx.unique_materials.get(&material) {
             *index
         } else {
             let index = ctx.model.materials.len();
-            ctx.model.materials.push(material);
+            ctx.model.materials.push(material.clone());
             ctx.unique_materials.insert(material, index as u32);
             index as u32
         }
@@ -695,7 +702,6 @@ impl ProcessGltfAsset {
                 base: &gltf.base,
                 buffers: &gltf.buffers,
                 processed_meshes: HashMap::default(),
-                unique_images: HashMap::default(),
                 unique_materials: HashMap::default(),
             };
             self.process_scene(&mut ctx, scene);
