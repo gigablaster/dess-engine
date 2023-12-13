@@ -4,14 +4,16 @@ use dess_backend::{
     DrawStream,
 };
 use dess_common::GameTime;
-use dess_engine::{PoolImageDesc, RelativeImageSize};
-use dess_runner::{Client, RenderContext, Runner};
+use dess_engine::{AssetCacheFns, AssetHandle, PoolImageDesc, RelativeImageSize, RenderModel};
+use dess_runner::{Client, RenderContext, Runner, UpdateContext};
 
 #[derive(Default)]
-struct ClearBackbuffer {}
+struct ClearBackbuffer {
+    model: AssetHandle<RenderModel>,
+}
 
 impl Client for ClearBackbuffer {
-    fn tick(&mut self, _dt: GameTime) -> dess_runner::ClientState {
+    fn tick(&mut self, _context: UpdateContext, _dt: GameTime) -> dess_runner::ClientState {
         dess_runner::ClientState::Continue
     }
 
@@ -69,6 +71,12 @@ impl Client for ClearBackbuffer {
     }
 
     fn hidden(&mut self, _value: bool) {}
+
+    fn init(&mut self, context: UpdateContext) {
+        self.model = context
+            .asset_cache
+            .request_model("models/FlightHelment.gltf");
+    }
 }
 
 fn main() {

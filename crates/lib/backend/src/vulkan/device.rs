@@ -64,6 +64,13 @@ impl BufferSlice {
     pub fn is_valid(&self) -> bool {
         self.buffer.is_valid()
     }
+
+    pub fn part(&self, offset: u32) -> Self {
+        Self {
+            buffer: self.buffer,
+            offset: self.offset + offset,
+        }
+    }
 }
 
 pub(crate) type ImageStorage = Pool<vk::Image, Image>;

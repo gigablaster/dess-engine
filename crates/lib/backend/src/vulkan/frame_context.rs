@@ -300,6 +300,9 @@ impl<'a> ExecutionContext<'a> {
     }
 
     fn execute_stream(&self, stream: &DrawStream) -> BackendResult<()> {
+        if stream.is_empty() {
+            return Ok(());
+        }
         puffin::profile_function!();
         let mut pipeline_layout = vk::PipelineLayout::null();
         let mut dynamic_buffer_offsets = [u32::MAX; 2];

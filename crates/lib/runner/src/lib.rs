@@ -1,9 +1,11 @@
+use std::sync::Arc;
+
 use dess_backend::{vulkan::FrameContext, BackendError};
 use dess_common::GameTime;
 
 mod runner;
 
-use dess_engine::{BufferPool, ResourcePool};
+use dess_engine::{AssetCache, BufferPool, ResourcePool};
 pub use runner::*;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -15,11 +17,16 @@ pub enum ClientState {
 pub struct RenderContext<'a> {
     pub frame: &'a FrameContext<'a>,
     pub resource_pool: &'a ResourcePool<'a>,
-    pub buffer_pool: &'a BufferPool<'a>,
+    pub buffer_pool: &'a BufferPool,
+}
+
+pub struct UpdateContext {
+    pub asset_cache: Arc<AssetCache>,
 }
 
 pub trait Client {
-    fn tick(&mut self, dt: GameTime) -> ClientState;
+    fn init(&mut self, context: UpdateContext);
+    fn tick(&mut self, context: UpdateContext, dt: GameTime) -> ClientState;
     fn hidden(&mut self, value: bool);
     fn render(&self, context: RenderContext) -> Result<(), BackendError>;
 }

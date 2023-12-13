@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
 use dess_backend::{
@@ -29,17 +29,17 @@ const CHUNK_SIZE: usize = 256 * 1024 * 1024;
 ///
 /// All static geometry suballocated in one or few really big buffers. This way engine
 /// guarentee that buffers aren't changed that often.
-pub struct BufferPool<'a> {
-    device: &'a Device,
+pub struct BufferPool {
+    device: Arc<Device>,
     buffers: Mutex<HashMap<BufferHandle, DynamicAllocator>>,
 }
 
-impl<'a> BufferPool<'a> {
-    pub fn new(device: &'a Device) -> Self {
-        Self {
-            device,
+impl BufferPool {
+    pub fn new(device: &Arc<Device>) -> Arc<Self> {
+        Arc::new(Self {
+            device: device.clone(),
             buffers: Mutex::default(),
-        }
+        })
     }
 
     /// Suballocate buffer and copy data there
@@ -83,7 +83,7 @@ impl<'a> BufferPool<'a> {
     }
 }
 
-impl<'a> Drop for BufferPool<'a> {
+impl Drop for BufferPool {
     fn drop(&mut self) {
         let buffers = self.buffers.lock();
         buffers.keys().for_each(|x| self.device.destroy_buffer(*x));

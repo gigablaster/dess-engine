@@ -250,7 +250,7 @@ pub struct ModelAsset {
     pub scenes: HashMap<String, SceneAsset>,
 }
 
-impl Asset for SceneAsset {
+impl Asset for ModelAsset {
     const TYPE_ID: uuid::Uuid = uuid::uuid!("7b229650-8f34-4d5a-b140-8e5d9ce599aa");
 
     fn serialize<W: std::io::prelude::Write>(&self, w: &mut W) -> std::io::Result<()> {

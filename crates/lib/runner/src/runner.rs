@@ -1,6 +1,7 @@
 use std::time::Instant;
 
 use ash::vk;
+use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
 use dess_backend::vulkan::{
     Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
 };
@@ -71,11 +72,18 @@ impl<T: Client> Runner<T> {
         let device = Device::new(instance, pdevice).unwrap();
         let resource_pool = ResourcePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
-        let asset_cache = AssetCache::new(&device);
+        let asset_cache = AssetCache::new(&device, &buffer_pool);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
         let mut time_filter = TimeFilter::default();
+        IoTaskPool::get_or_init(TaskPool::default);
+        AsyncComputeTaskPool::get_or_init(TaskPool::default);
+        ComputeTaskPool::get_or_init(TaskPool::default);
+        info!("Init game");
+        self.client.init(crate::UpdateContext {
+            asset_cache: asset_cache.clone(),
+        });
         info!("Main loop enter");
         let mut last_timestamp = Instant::now();
         let mut alt_pressed = false;
@@ -148,7 +156,13 @@ impl<T: Client> Runner<T> {
                             time_filter.sample((current_timestamp - last_timestamp).as_secs_f64());
                         last_timestamp = current_timestamp;
                         asset_cache.maintain();
-                        if self.client.tick(dt) == ClientState::Exit {
+                        if self.client.tick(
+                            crate::UpdateContext {
+                                asset_cache: asset_cache.clone(),
+                            },
+                            dt,
+                        ) == ClientState::Exit
+                        {
                             elwt.exit();
                         }
 

@@ -25,17 +25,21 @@ use std::{
 
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use dess_assets::{
-    import_effect, Asset, EffectAsset, EffectSource, ImageAsset, ImageSource, MeshMaterial,
-    ProcessImageAsset, ASSET_CACHE_PATH,
+    import_effect, process_image, process_model, Asset, EffectAsset, EffectSource, GltfSource,
+    ImageAsset, ImageSource, MeshMaterial, ModelAsset, ASSET_CACHE_PATH,
 };
 use dess_backend::vulkan::{
-    Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle, ShaderDesc,
+    DescriptorHandle, Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle,
+    ShaderDesc,
 };
 use dess_common::{Handle, Pool};
 use log::debug;
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
-use crate::{Error, RenderEffect, RenderEffectTechinque, RenderMaterial};
+use crate::{
+    BufferPool, Error, RenderEffect, RenderEffectTechinque, RenderMaterial, RenderModel,
+    RenderScene, StaticRenderMesh, SubMesh,
+};
 
 /// Trait to check asset dependencies
 pub trait EngineAsset: Send + Sync + 'static {
@@ -149,14 +153,14 @@ struct SingleTypeAssetCache<T: EngineAsset> {
 }
 
 impl<T: EngineAsset> SingleTypeAssetCache<T> {
-    fn request<S, F>(&self, asset: &S, loading: F) -> AssetHandle<T>
+    fn request<S, F>(&self, source: &S, loading: F) -> AssetHandle<T>
     where
         S: Hash,
         F: Future<Output = Result<T, Error>> + Send + Sync + 'static,
     {
         let handles = self.handles.upgradable_read();
         let mut hasher = siphasher::sip::SipHasher::default();
-        asset.hash(&mut hasher);
+        source.hash(&mut hasher);
         let key = hasher.finish();
         if let Some(handle) = handles.get(&key) {
             *handle
@@ -209,10 +213,12 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
 
 pub struct AssetCache {
     device: Arc<Device>,
+    buffers: Arc<BufferPool>,
     programs: RwLock<HashMap<u64, ProgramHandle>>,
     images: SingleTypeAssetCache<ImageHandle>,
     effects: SingleTypeAssetCache<RenderEffect>,
     materials: SingleTypeAssetCache<RenderMaterial>,
+    models: SingleTypeAssetCache<RenderModel>,
 }
 
 pub trait AssetCacheFns {
@@ -230,19 +236,25 @@ pub trait AssetCacheFns {
         handle: AssetHandle<RenderMaterial>,
     ) -> Result<Arc<RenderMaterial>, Error>;
     fn is_effect_loaded(&self, handle: AssetHandle<RenderEffect>) -> bool;
+    fn request_model(&self, name: &str) -> AssetHandle<RenderModel>;
+    fn resolve_model(&self, handle: AssetHandle<RenderModel>) -> Result<Arc<RenderModel>, Error>;
+    fn is_model_loaded(&self, handle: AssetHandle<RenderModel>) -> bool;
     fn maintain(&self);
     fn render_device(&self) -> &Device;
+    fn buffer_pool(&self) -> &BufferPool;
     fn get_or_create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error>;
 }
 
 impl AssetCache {
-    pub fn new(device: &Arc<Device>) -> Arc<Self> {
+    pub fn new(device: &Arc<Device>, buffers: &Arc<BufferPool>) -> Arc<Self> {
         Arc::new(Self {
             device: device.clone(),
+            buffers: buffers.clone(),
+            programs: RwLock::default(),
             images: SingleTypeAssetCache::default(),
             effects: SingleTypeAssetCache::default(),
             materials: SingleTypeAssetCache::default(),
-            programs: RwLock::default(),
+            models: SingleTypeAssetCache::default(),
         })
     }
 
@@ -294,7 +306,7 @@ impl AssetCache {
     }
 
     async fn import_image(source: ImageSource) -> Result<ImageAsset, Error> {
-        Ok(ProcessImageAsset::import(source.import()?)?)
+        Ok(process_image(source.import()?)?)
     }
 
     async fn load_effect<T: AssetCacheFns>(
@@ -343,6 +355,94 @@ impl AssetCache {
             descriptors: HashMap::default(),
         })
     }
+
+    async fn create_model<T: AssetCacheFns>(
+        source: String,
+        asset_cache: T,
+    ) -> Result<RenderModel, Error> {
+        let asset = AssetCache::load_from_cache_or_import(
+            Self::import_model(source.clone()),
+            source,
+            "model",
+        )
+        .await?;
+        let mut model = RenderModel {
+            static_geometry: asset_cache.buffer_pool().allocate(&asset.static_geometry)?,
+            attributes: asset_cache.buffer_pool().allocate(&asset.attributes)?,
+            indices: asset_cache.buffer_pool().allocate(&asset.indices)?,
+            ..Default::default()
+        };
+        for (name, scene) in asset.scenes {
+            let mut render_scene = RenderScene {
+                bones: scene
+                    .bones
+                    .iter()
+                    .map(|x| {
+                        glam::Affine3A::from_scale_rotation_translation(
+                            glam::Vec3::from_array(x.local_scale),
+                            glam::Quat::from_array(x.local_rotation),
+                            glam::Vec3::from_array(x.local_translation),
+                        )
+                    })
+                    .collect(),
+                bone_parents: scene
+                    .bones
+                    .iter()
+                    .map(|x| x.parent.unwrap_or(u32::MAX))
+                    .collect(),
+                bone_names: scene.names.clone(),
+                mesh_names: scene.mesh_names.clone(),
+                instances: scene.node_to_mesh.clone(),
+                ..Default::default()
+            };
+            render_scene.bone_parents = scene
+                .bones
+                .iter()
+                .map(|x| x.parent.unwrap_or(u32::MAX))
+                .collect();
+            render_scene.bone_names = scene.names;
+            render_scene.mesh_names = scene.mesh_names;
+            render_scene.instances = scene.node_to_mesh;
+            for mesh in scene.static_meshes {
+                let mut render_mesh = StaticRenderMesh {
+                    geometry: model.static_geometry.part(mesh.geometry),
+                    attributes: model.attributes.part(mesh.attributes),
+                    indices: model.static_geometry.part(mesh.indices),
+                    ..Default::default()
+                };
+                let mut mesh_materials = HashMap::new();
+                for surface in mesh.surfaces {
+                    let material = &asset.materials[surface.material as usize];
+                    let material_index = *mesh_materials.entry(material).or_insert({
+                        let index = render_mesh.materials.len();
+                        render_mesh
+                            .materials
+                            .push(asset_cache.request_material(material));
+                        index
+                    });
+                    let surface = SubMesh {
+                        first_index: surface.first,
+                        index_count: surface.count,
+                        bounds: (
+                            glam::Vec3::from_array(surface.bounds.0),
+                            glam::Vec3::from_array(surface.bounds.1),
+                        ),
+                        object_ds: DescriptorHandle::default(),
+                        material_index,
+                    };
+                    render_mesh.submeshes.push(surface);
+                }
+                render_scene.meshes.push(render_mesh);
+            }
+            model.scenes.insert(name, render_scene);
+        }
+
+        Ok(model)
+    }
+
+    async fn import_model(source: String) -> Result<ModelAsset, Error> {
+        Ok(process_model(GltfSource { path: source }.import()?))
+    }
 }
 
 impl AssetCacheFns for Arc<AssetCache> {
@@ -375,6 +475,7 @@ impl AssetCacheFns for Arc<AssetCache> {
         self.images.maintain(self);
         self.effects.maintain(self);
         self.materials.maintain(self);
+        self.models.maintain(self);
     }
 
     fn render_device(&self) -> &Device {
@@ -427,6 +528,25 @@ impl AssetCacheFns for Arc<AssetCache> {
         handle: AssetHandle<RenderMaterial>,
     ) -> Result<Arc<RenderMaterial>, Error> {
         self.materials.resolve(handle, self)
+    }
+
+    fn request_model(&self, name: &str) -> AssetHandle<RenderModel> {
+        self.models.request(
+            &name.to_owned(),
+            AssetCache::create_model(name.to_owned(), self.clone()),
+        )
+    }
+
+    fn resolve_model(&self, handle: AssetHandle<RenderModel>) -> Result<Arc<RenderModel>, Error> {
+        self.models.resolve(handle, self)
+    }
+
+    fn is_model_loaded(&self, handle: AssetHandle<RenderModel>) -> bool {
+        self.models.is_finished(handle, self)
+    }
+
+    fn buffer_pool(&self) -> &BufferPool {
+        &self.buffers
     }
 }
 
