@@ -400,7 +400,12 @@ impl Device {
 
     fn create_image_impl(&self, desc: ImageCreateDesc) -> BackendResult<Image> {
         let image = unsafe { self.raw.create_image(&desc.build(), None) }?;
-        let requirements = unsafe { self.raw.get_image_memory_requirements(image) };
+        if let Some(name) = desc.name {
+            self.set_object_name(image, name);
+        }
+        let mut requirements = unsafe { self.raw.get_image_memory_requirements(image) };
+        // Workaround - gpu_alloc returns wrong offset is wrong when size < aligment.
+        requirements.size = requirements.size.max(requirements.alignment);
         let memory = Self::allocate_impl(
             &self.raw,
             &mut self.memory_allocator.lock(),
@@ -412,9 +417,6 @@ impl Device {
             self.raw
                 .bind_image_memory(image, *memory.memory(), memory.offset())
         }?;
-        if let Some(name) = desc.name {
-            self.set_object_name(image, name);
-        }
         let image = Image {
             raw: image,
             desc: ImageDesc {

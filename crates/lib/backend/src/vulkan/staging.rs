@@ -131,10 +131,7 @@ impl Staging {
             tranfser_cbs,
             allocator: BumpAllocator::new(
                 BUFFER_SIZE * STAGES,
-                pdevice
-                    .properties
-                    .limits
-                    .optimal_buffer_copy_offset_alignment as _,
+                pdevice.properties.limits.buffer_image_granularity as _,
             ),
             upload_buffers: HashMap::with_capacity(64),
             upload_images: HashMap::with_capacity(64),
@@ -190,7 +187,7 @@ impl Staging {
         }
         let mut current_offset = 0;
         loop {
-            let data_len = data.len() * mem::size_of::<T>();
+            let data_len = mem::size_of_val(data);
             let pushed = self.try_push_buffer(
                 target,
                 offset + current_offset,
@@ -239,8 +236,6 @@ impl Staging {
                 )
             };
             let op = vk::BufferImageCopy2::builder()
-                .buffer_image_height(target.desc.extent[0] >> mip)
-                .buffer_row_length(data.row_pitch as _)
                 .image_extent(vk::Extent3D {
                     width: target.desc.extent[0] >> mip,
                     height: target.desc.extent[1] >> mip,
@@ -284,13 +279,7 @@ impl Staging {
         let can_send = self.allocator.validate(bytes);
         let allocated = self.allocator.allocate(can_send).unwrap(); // Already checked that allocator can allocate enough space
         let src_offset = BUFFER_SIZE * self.current + allocated;
-        unsafe {
-            copy_nonoverlapping(
-                data as *const u8,
-                self.mapping.as_ptr().add(src_offset),
-                can_send,
-            )
-        };
+        unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(src_offset), can_send) };
         let op = vk::BufferCopy2::builder()
             .src_offset(src_offset as _)
             .dst_offset(offset as _)

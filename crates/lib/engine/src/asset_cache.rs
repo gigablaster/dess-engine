@@ -292,6 +292,7 @@ impl AssetCache {
     }
 
     async fn load_image(device: Arc<Device>, source: ImageSource) -> Result<ImageHandle, Error> {
+        let name = source.to_string();
         let asset =
             Self::load_from_cache_or_import(Self::import_image(source.clone()), source, "image")
                 .await?;
@@ -307,6 +308,7 @@ impl AssetCache {
         Ok(device.create_image(
             ImageCreateDesc::texture(asset.format, asset.dimensions)
                 .mip_levels(asset.mips.len())
+                .name(&name)
                 .initial_data(&mips),
         )?)
     }
