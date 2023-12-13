@@ -75,7 +75,7 @@ impl Client for ClearBackbuffer {
     fn init(&mut self, context: UpdateContext) {
         self.model = context
             .asset_cache
-            .request_model("models/FlightHelment.gltf");
+            .request_model("models/Avocado/Avocado.gltf");
     }
 }
 

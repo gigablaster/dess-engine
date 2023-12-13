@@ -58,7 +58,9 @@ impl BufferPool {
         } else {
             let buffer = self.device.create_buffer(BufferCreateDesc::gpu(
                 CHUNK_SIZE,
-                vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::INDEX_BUFFER,
+                vk::BufferUsageFlags::VERTEX_BUFFER
+                    | vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_DST,
             ))?;
             let mut allocator = DynamicAllocator::new(CHUNK_SIZE, 1024);
             let offset = allocator.allocate(size).ok_or(BackendError::TooBig)?;

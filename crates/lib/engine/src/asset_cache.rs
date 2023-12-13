@@ -33,7 +33,7 @@ use dess_backend::vulkan::{
     ShaderDesc,
 };
 use dess_common::{Handle, Pool};
-use log::debug;
+use log::{debug, warn};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
@@ -275,7 +275,13 @@ impl AssetCache {
             }
         }
         debug!("Import asset {:?}", source);
-        let asset = import.await?;
+        let asset = match import.await {
+            Ok(asset) => asset,
+            Err(err) => {
+                warn!("Failed to load asset {:?} - {:?}", source, err);
+                return Err(err);
+            }
+        };
         if let Ok(mut file) = File::create(path) {
             if asset.serialize(&mut file).is_ok() {
                 debug!("Written to cache {:?}", source);

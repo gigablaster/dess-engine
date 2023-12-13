@@ -190,14 +190,15 @@ impl Staging {
         }
         let mut current_offset = 0;
         loop {
+            let data_len = data.len() * mem::size_of::<T>();
             let pushed = self.try_push_buffer(
                 target,
                 offset + current_offset,
-                data.len() - current_offset,
-                unsafe { data.as_ptr().add(current_offset) },
+                data_len - current_offset,
+                unsafe { (data.as_ptr() as *const u8).add(current_offset) },
             )?;
             current_offset += pushed;
-            if current_offset == data.len() {
+            if current_offset == data_len {
                 return Ok(());
             } else {
                 self.upload(device)?;
@@ -273,15 +274,14 @@ impl Staging {
         }
     }
 
-    fn try_push_buffer<T: Sized>(
+    fn try_push_buffer(
         &mut self,
         target: &Buffer,
         offset: usize,
-        count: usize,
-        data: *const T,
+        bytes: usize,
+        data: *const u8,
     ) -> BackendResult<usize> {
-        let byte_size = mem::size_of::<T>() * count;
-        let can_send = self.allocator.validate(byte_size);
+        let can_send = self.allocator.validate(bytes);
         let allocated = self.allocator.allocate(can_send).unwrap(); // Already checked that allocator can allocate enough space
         let src_offset = BUFFER_SIZE * self.current + allocated;
         unsafe {

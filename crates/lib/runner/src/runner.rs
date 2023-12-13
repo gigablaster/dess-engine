@@ -131,7 +131,6 @@ impl<T: Client> Runner<T> {
                             alt_pressed = mods.state().alt_key();
                         }
                         WindowEvent::KeyboardInput { event, .. } => {
-                            // dbg!(event.physical_key);
                             if event.physical_key == PhysicalKey::Code(KeyCode::Enter)
                                 && event.state.is_pressed()
                                 && alt_pressed
