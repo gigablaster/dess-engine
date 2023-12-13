@@ -215,8 +215,6 @@ impl ImageSource {
     }
 }
 
-pub struct ProcessImageAsset {}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum BcMode {
     Bc5,
@@ -232,162 +230,160 @@ impl BcMode {
     }
 }
 
-impl ProcessImageAsset {
-    fn process_dds(image: &Dds) -> Result<ImageAsset, Error> {
-        if let Some(format) = Self::get_vk_format(image) {
-            let data = image
-                .get_data(0)
-                .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
-            let pitch_height = image.get_pitch_height();
-            let mut offset = 0;
-            let mips = (0..image.get_num_mipmap_levels())
-                .map(|mip| {
-                    let width = (image.get_width() >> mip).max(pitch_height);
-                    let height = (image.get_height() >> mip).max(pitch_height);
-                    let pitch = dds_util::get_pitch(image, width).unwrap();
-                    let size = dds_util::get_texture_size(pitch, pitch_height, height, 1);
-                    let mip = &data[offset..offset + size];
-                    offset += size;
+fn process_dds(image: &Dds) -> Result<ImageAsset, Error> {
+    if let Some(format) = get_vk_format(image) {
+        let data = image
+            .get_data(0)
+            .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
+        let pitch_height = image.get_pitch_height();
+        let mut offset = 0;
+        let mips = (0..image.get_num_mipmap_levels())
+            .map(|mip| {
+                let width = (image.get_width() >> mip).max(pitch_height);
+                let height = (image.get_height() >> mip).max(pitch_height);
+                let pitch = dds_util::get_pitch(image, width).unwrap();
+                let size = dds_util::get_texture_size(pitch, pitch_height, height, 1);
+                let mip = &data[offset..offset + size];
+                offset += size;
 
-                    mip.to_owned()
-                })
-                .collect::<Vec<_>>();
-            Ok(ImageAsset {
-                format,
-                dimensions: [image.get_width(), image.get_height()],
-                mips,
+                mip.to_owned()
             })
-        } else {
-            Err(Error::BadSourceData)
-        }
-    }
-
-    fn process_rgba(image: &ImageRgba8Data, purpose: ImagePurpose) -> Result<ImageAsset, Error> {
-        let dimensions = image.dimensions;
-
-        let need_compression = purpose != ImagePurpose::Sprite
-            && dimensions[0] >= 4
-            && dimensions[1] >= 4
-            && is_pow2(dimensions[0])
-            && is_pow2(dimensions[1]);
-
-        if !need_compression {
-            let format = if purpose == ImagePurpose::Color {
-                vk::Format::R8G8B8A8_SRGB
-            } else {
-                vk::Format::R8G8B8A8_UNORM
-            };
-            return Ok(ImageAsset {
-                format,
-                dimensions,
-                mips: vec![image.data.to_vec()],
-            });
-        }
-
-        let format = match purpose {
-            ImagePurpose::Color => vk::Format::BC7_SRGB_BLOCK,
-            ImagePurpose::NonColor => vk::Format::BC7_UNORM_BLOCK,
-            ImagePurpose::Normals => vk::Format::BC5_UNORM_BLOCK,
-            _ => unreachable!(),
-        };
-
-        let mut image = DynamicImage::ImageRgba8(
-            image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
-                image.dimensions[0],
-                image.dimensions[1],
-                image.data.to_vec(),
-            )
-            .unwrap(),
-        );
-
-        let mut current_dimensions = dimensions;
-        let mut mips = Vec::new();
-        while current_dimensions[0] >= 4 && current_dimensions[1] >= 4 {
-            mips.push(Self::compress_image(image.as_rgba8().unwrap(), purpose));
-            current_dimensions[0] >>= 1;
-            current_dimensions[1] >>= 1;
-            image = image.resize_exact(
-                current_dimensions[0],
-                current_dimensions[1],
-                FilterType::Lanczos3,
-            );
-        }
-
+            .collect::<Vec<_>>();
         Ok(ImageAsset {
             format,
-            dimensions,
+            dimensions: [image.get_width(), image.get_height()],
             mips,
         })
+    } else {
+        Err(Error::BadSourceData)
     }
+}
 
-    fn compress_image(image: &ImageBuffer<Rgba<u8>, Vec<u8>>, purpose: ImagePurpose) -> Vec<u8> {
-        let block_count = intel_tex_2::divide_up_by_multiple(image.width() * image.height(), 16);
+fn process_rgba(image: &ImageRgba8Data, purpose: ImagePurpose) -> Result<ImageAsset, Error> {
+    let dimensions = image.dimensions;
 
-        let needs_alpha = purpose == ImagePurpose::Color && image.pixels().any(|px| px.0[3] != 255);
+    let need_compression = purpose != ImagePurpose::Sprite
+        && dimensions[0] >= 4
+        && dimensions[1] >= 4
+        && is_pow2(dimensions[0])
+        && is_pow2(dimensions[1]);
 
-        let mode = match purpose {
-            ImagePurpose::Sprite => unreachable!(),
-            ImagePurpose::Color | ImagePurpose::NonColor => BcMode::Bc7,
-            ImagePurpose::Normals => BcMode::Bc5,
+    if !need_compression {
+        let format = if purpose == ImagePurpose::Color {
+            vk::Format::R8G8B8A8_SRGB
+        } else {
+            vk::Format::R8G8B8A8_UNORM
         };
-
-        let block_bytes = mode.block_bytes();
-
-        let surface = intel_tex_2::RgbaSurface {
-            width: image.width(),
-            height: image.height(),
-            stride: image.width() * 4,
-            data: image,
-        };
-
-        let mut compressed_bytes = vec![0u8; block_count as usize * block_bytes];
-
-        match mode {
-            BcMode::Bc5 => bc5::compress_blocks_into(&surface, &mut compressed_bytes),
-            BcMode::Bc7 => {
-                let settings = if needs_alpha {
-                    bc7::alpha_basic_settings()
-                } else {
-                    bc7::opaque_basic_settings()
-                };
-                bc7::compress_blocks_into(&settings, &surface, &mut compressed_bytes)
-            }
-        }
-
-        compressed_bytes
+        return Ok(ImageAsset {
+            format,
+            dimensions,
+            mips: vec![image.data.to_vec()],
+        });
     }
 
-    fn get_vk_format(image: &Dds) -> Option<vk::Format> {
-        if let Some(format) = image.get_dxgi_format() {
-            match format {
-                DxgiFormat::R8G8B8A8_UNorm => return Some(vk::Format::R8G8B8A8_UNORM),
-                DxgiFormat::R8G8B8A8_UNorm_sRGB => return Some(vk::Format::R8G8B8A8_SRGB),
-                DxgiFormat::BC1_UNorm => return Some(vk::Format::BC1_RGB_UNORM_BLOCK),
-                DxgiFormat::BC1_UNorm_sRGB => return Some(vk::Format::BC1_RGB_SRGB_BLOCK),
-                DxgiFormat::BC2_UNorm => return Some(vk::Format::BC2_UNORM_BLOCK),
-                DxgiFormat::BC2_UNorm_sRGB => return Some(vk::Format::BC2_SRGB_BLOCK),
-                DxgiFormat::BC3_UNorm => return Some(vk::Format::BC3_SRGB_BLOCK),
-                DxgiFormat::BC3_UNorm_sRGB => return Some(vk::Format::BC3_SRGB_BLOCK),
-                DxgiFormat::BC4_UNorm => return Some(vk::Format::BC4_UNORM_BLOCK),
-                DxgiFormat::BC4_SNorm => return Some(vk::Format::BC4_SNORM_BLOCK),
-                DxgiFormat::BC5_UNorm => return Some(vk::Format::BC5_UNORM_BLOCK),
-                DxgiFormat::BC5_SNorm => return Some(vk::Format::BC5_SNORM_BLOCK),
-                DxgiFormat::BC6H_SF16 => return Some(vk::Format::BC6H_SFLOAT_BLOCK),
-                DxgiFormat::BC6H_UF16 => return Some(vk::Format::BC6H_UFLOAT_BLOCK),
-                DxgiFormat::BC7_UNorm => return Some(vk::Format::BC7_UNORM_BLOCK),
-                DxgiFormat::BC7_UNorm_sRGB => return Some(vk::Format::BC7_UNORM_BLOCK),
-                _ => return None,
-            }
-        }
+    let format = match purpose {
+        ImagePurpose::Color => vk::Format::BC7_SRGB_BLOCK,
+        ImagePurpose::NonColor => vk::Format::BC7_UNORM_BLOCK,
+        ImagePurpose::Normals => vk::Format::BC5_UNORM_BLOCK,
+        _ => unreachable!(),
+    };
 
-        None
+    let mut image = DynamicImage::ImageRgba8(
+        image::ImageBuffer::<image::Rgba<u8>, _>::from_raw(
+            image.dimensions[0],
+            image.dimensions[1],
+            image.data.to_vec(),
+        )
+        .unwrap(),
+    );
+
+    let mut current_dimensions = dimensions;
+    let mut mips = Vec::new();
+    while current_dimensions[0] >= 4 && current_dimensions[1] >= 4 {
+        mips.push(compress_image(image.as_rgba8().unwrap(), purpose));
+        current_dimensions[0] >>= 1;
+        current_dimensions[1] >>= 1;
+        image = image.resize_exact(
+            current_dimensions[0],
+            current_dimensions[1],
+            FilterType::Lanczos3,
+        );
     }
 
-    pub fn import(content: ImageContent) -> Result<ImageAsset, Error> {
-        match &content.data {
-            RawImageData::Dds(dds) => Self::process_dds(dds),
-            RawImageData::Rgba(image) => Self::process_rgba(image, content.purpose),
+    Ok(ImageAsset {
+        format,
+        dimensions,
+        mips,
+    })
+}
+
+fn compress_image(image: &ImageBuffer<Rgba<u8>, Vec<u8>>, purpose: ImagePurpose) -> Vec<u8> {
+    let block_count = intel_tex_2::divide_up_by_multiple(image.width() * image.height(), 16);
+
+    let needs_alpha = purpose == ImagePurpose::Color && image.pixels().any(|px| px.0[3] != 255);
+
+    let mode = match purpose {
+        ImagePurpose::Sprite => unreachable!(),
+        ImagePurpose::Color | ImagePurpose::NonColor => BcMode::Bc7,
+        ImagePurpose::Normals => BcMode::Bc5,
+    };
+
+    let block_bytes = mode.block_bytes();
+
+    let surface = intel_tex_2::RgbaSurface {
+        width: image.width(),
+        height: image.height(),
+        stride: image.width() * 4,
+        data: image,
+    };
+
+    let mut compressed_bytes = vec![0u8; block_count as usize * block_bytes];
+
+    match mode {
+        BcMode::Bc5 => bc5::compress_blocks_into(&surface, &mut compressed_bytes),
+        BcMode::Bc7 => {
+            let settings = if needs_alpha {
+                bc7::alpha_basic_settings()
+            } else {
+                bc7::opaque_basic_settings()
+            };
+            bc7::compress_blocks_into(&settings, &surface, &mut compressed_bytes)
         }
+    }
+
+    compressed_bytes
+}
+
+fn get_vk_format(image: &Dds) -> Option<vk::Format> {
+    if let Some(format) = image.get_dxgi_format() {
+        match format {
+            DxgiFormat::R8G8B8A8_UNorm => return Some(vk::Format::R8G8B8A8_UNORM),
+            DxgiFormat::R8G8B8A8_UNorm_sRGB => return Some(vk::Format::R8G8B8A8_SRGB),
+            DxgiFormat::BC1_UNorm => return Some(vk::Format::BC1_RGB_UNORM_BLOCK),
+            DxgiFormat::BC1_UNorm_sRGB => return Some(vk::Format::BC1_RGB_SRGB_BLOCK),
+            DxgiFormat::BC2_UNorm => return Some(vk::Format::BC2_UNORM_BLOCK),
+            DxgiFormat::BC2_UNorm_sRGB => return Some(vk::Format::BC2_SRGB_BLOCK),
+            DxgiFormat::BC3_UNorm => return Some(vk::Format::BC3_SRGB_BLOCK),
+            DxgiFormat::BC3_UNorm_sRGB => return Some(vk::Format::BC3_SRGB_BLOCK),
+            DxgiFormat::BC4_UNorm => return Some(vk::Format::BC4_UNORM_BLOCK),
+            DxgiFormat::BC4_SNorm => return Some(vk::Format::BC4_SNORM_BLOCK),
+            DxgiFormat::BC5_UNorm => return Some(vk::Format::BC5_UNORM_BLOCK),
+            DxgiFormat::BC5_SNorm => return Some(vk::Format::BC5_SNORM_BLOCK),
+            DxgiFormat::BC6H_SF16 => return Some(vk::Format::BC6H_SFLOAT_BLOCK),
+            DxgiFormat::BC6H_UF16 => return Some(vk::Format::BC6H_UFLOAT_BLOCK),
+            DxgiFormat::BC7_UNorm => return Some(vk::Format::BC7_UNORM_BLOCK),
+            DxgiFormat::BC7_UNorm_sRGB => return Some(vk::Format::BC7_UNORM_BLOCK),
+            _ => return None,
+        }
+    }
+
+    None
+}
+
+pub fn process_image(content: ImageContent) -> Result<ImageAsset, Error> {
+    match &content.data {
+        RawImageData::Dds(dds) => process_dds(dds),
+        RawImageData::Rgba(image) => process_rgba(image, content.purpose),
     }
 }
 
