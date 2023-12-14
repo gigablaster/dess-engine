@@ -131,7 +131,7 @@ impl Staging {
             tranfser_cbs,
             allocator: BumpAllocator::new(
                 BUFFER_SIZE * STAGES,
-                pdevice.properties.limits.buffer_image_granularity as _,
+                pdevice.properties.limits.buffer_image_granularity.max(512) as _,
             ),
             upload_buffers: HashMap::with_capacity(64),
             upload_images: HashMap::with_capacity(64),
