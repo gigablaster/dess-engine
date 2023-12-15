@@ -136,12 +136,7 @@ impl DescriptorSetInfo {
                     let sampler_index = samplers.len();
                     samplers.push(
                         inmuatable_samplers
-                            .get(&SamplerDesc {
-                                texel_filter: vk::Filter::LINEAR,
-                                mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-                                address_mode: vk::SamplerAddressMode::REPEAT,
-                                anisotropy_level: 3,
-                            })
+                            .get(&Self::get_suitable_sampler_desc(binding))
                             .unwrap(),
                     );
                     bindings.insert(
@@ -276,6 +271,22 @@ impl DescriptorSetInfo {
 
     pub fn free(&self, device: &ash::Device) {
         unsafe { device.destroy_descriptor_set_layout(self.layout, None) };
+    }
+
+    fn get_suitable_sampler_desc(binding: &DescriptorInfo) -> SamplerDesc {
+        let address_mode = if binding.name.ends_with("_e") {
+            vk::SamplerAddressMode::CLAMP_TO_EDGE
+        } else if binding.name.ends_with("_m") {
+            vk::SamplerAddressMode::MIRRORED_REPEAT
+        } else {
+            vk::SamplerAddressMode::REPEAT
+        };
+        SamplerDesc {
+            texel_filter: vk::Filter::LINEAR,
+            mipmap_mode: vk::SamplerMipmapMode::LINEAR,
+            address_mode: address_mode,
+            anisotropy_level: 16, // TODO:: control anisotropy level
+        }
     }
 }
 

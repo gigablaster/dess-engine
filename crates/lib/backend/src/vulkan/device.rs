@@ -52,23 +52,25 @@ pub enum FrameResult {
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub struct BufferSlice {
-    pub buffer: BufferHandle,
+    pub handle: BufferHandle,
     pub offset: u32,
+    pub size: u32
 }
 
 impl BufferSlice {
-    pub fn new(buffer: BufferHandle, offset: u32) -> Self {
-        Self { buffer, offset }
+    pub fn new(buffer: BufferHandle, offset: u32, size: u32) -> Self {
+        Self { handle: buffer, offset, size }
     }
 
     pub fn is_valid(&self) -> bool {
-        self.buffer.is_valid()
+        self.handle.is_valid()
     }
 
     pub fn part(&self, offset: u32) -> Self {
         Self {
-            buffer: self.buffer,
+            handle: self.handle,
             offset: self.offset + offset,
+            size: self.size.checked_sub(offset).expect("Buffer part offset must be less than it's size")
         }
     }
 }

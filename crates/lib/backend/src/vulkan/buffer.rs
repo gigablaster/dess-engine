@@ -148,7 +148,7 @@ impl Device {
     pub fn upload_buffer<T: Sized>(&self, target: BufferSlice, data: &[T]) -> BackendResult<()> {
         let buffers = self.buffer_storage.read();
         let buffer = buffers
-            .get_cold(target.buffer)
+            .get_cold(target.handle)
             .ok_or(BackendError::InvalidHandle)?;
         self.staging
             .lock()

@@ -26,7 +26,7 @@ use std::{
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use dess_assets::{
     import_effect, process_image, process_model, Asset, EffectAsset, EffectSource, GltfSource,
-    ImageAsset, ImageSource, MeshMaterial, ModelAsset, ASSET_CACHE_PATH,
+    ImageAsset, ImageSource, MeshMaterial, ModelAsset, ASSET_CACHE_PATH, get_absolute_asset_path,
 };
 use dess_backend::vulkan::{
     DescriptorHandle, Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle,
@@ -344,7 +344,7 @@ impl AssetCache {
     }
 
     async fn import_effect(source: String) -> Result<EffectAsset, Error> {
-        let effect: EffectSource = serde_json::from_reader(File::open(source)?)?;
+        let effect: EffectSource = serde_json::from_reader(File::open(get_absolute_asset_path(source)?)?)?;
         Ok(import_effect(effect)?)
     }
 

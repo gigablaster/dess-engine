@@ -27,8 +27,8 @@ use smol_str::SmolStr;
 use crate::{BackendError, BackendResult};
 
 use super::{
-    DescriptorSet, DescriptorSetInfo, Device, Image, ImageHandle, ImageStorage, ImageViewDesc,
-    ProgramHandle, ProgramStorage, UniformStorage,
+    BufferSlice, BufferStorage, DescriptorSet, DescriptorSetInfo, Device, Image, ImageHandle,
+    ImageStorage, ImageViewDesc, ProgramHandle, ProgramStorage, UniformStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -44,6 +44,8 @@ pub struct DescriptorData {
     pub(crate) descriptor: Option<DescriptorSet>,
     pub(crate) static_uniforms: Vec<BindingPoint<(u32, u32)>>,
     pub(crate) dynamic_uniforms: Vec<BindingPoint<vk::Buffer>>,
+    pub(crate) storage_buffers: Vec<BindingPoint<(vk::Buffer, u32, u32)>>,
+    pub(crate) storage_images: Vec<BindingPoint<(vk::ImageView, vk::ImageLayout)>>,
     pub(crate) images: Vec<BindingPoint<(vk::ImageView, vk::ImageLayout)>>,
     pub(crate) count: DescriptorTotalCount,
     pub(crate) layout: vk::DescriptorSetLayout,
@@ -72,6 +74,11 @@ impl DescriptorData {
             .all(|buffer| buffer.data.is_some())
             && self.images.iter().all(|image| image.data.is_some())
             && self
+                .storage_buffers
+                .iter()
+                .all(|buffer| buffer.data.is_some())
+            && self.storage_images.iter().all(|image| image.data.is_some())
+            && self
                 .dynamic_uniforms
                 .iter()
                 .all(|buffer| buffer.data.is_some())
@@ -86,6 +93,7 @@ pub struct UpdateDescriptorContext<'a> {
     dirty: &'a mut HashSet<DescriptorHandle>,
     programs: &'a ProgramStorage,
     images: &'a ImageStorage,
+    buffers: &'a BufferStorage,
     retired_descriptors: Vec<DescriptorData>,
     retired_uniforms: Vec<u32>,
 }
@@ -126,7 +134,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .types
             .iter()
             .filter_map(|(index, ty)| {
-                if *ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER {
+                if *ty == vk::DescriptorType::SAMPLED_IMAGE {
                     Some(BindingPoint::<(vk::ImageView, vk::ImageLayout)> {
                         binding: *index,
                         data: None,
@@ -150,9 +158,39 @@ impl<'a> UpdateDescriptorContext<'a> {
                 }
             })
             .collect::<Vec<_>>();
+        let storage_buffers = set
+            .types
+            .iter()
+            .filter_map(|(index, ty)| {
+                if *ty == vk::DescriptorType::STORAGE_BUFFER {
+                    Some(BindingPoint::<(vk::Buffer, u32, u32)> {
+                        binding: *index,
+                        data: None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let storage_images = set
+            .types
+            .iter()
+            .filter_map(|(index, ty)| {
+                if *ty == vk::DescriptorType::STORAGE_IMAGE {
+                    Some(BindingPoint::<(vk::ImageView, vk::ImageLayout)> {
+                        binding: *index,
+                        data: None,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         let count = DescriptorTotalCount {
-            combined_image_sampler: images.len() as _,
+            sampled_image: images.len() as _,
             uniform_buffer: static_uniforms.len() as _,
+            storage_buffer: storage_buffers.len() as _,
+            storage_image: storage_images.len() as _,
             ..Default::default()
         };
         let names = set
@@ -166,6 +204,8 @@ impl<'a> UpdateDescriptorContext<'a> {
                 descriptor: None,
                 static_uniforms,
                 dynamic_uniforms,
+                storage_buffers,
+                storage_images,
                 images,
                 count,
                 layout: set.layout,
@@ -191,6 +231,55 @@ impl<'a> UpdateDescriptorContext<'a> {
         }
     }
 
+    pub fn bind_storage_image(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: usize,
+        image: ImageHandle,
+        layout: vk::ImageLayout,
+    ) -> Result<(), BackendError> {
+        let image = self
+            .images
+            .get_cold(image)
+            .ok_or(BackendError::InvalidHandle)?;
+        debug_assert!(image.desc.usage.contains(vk::ImageUsageFlags::STORAGE));
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+        let image_bind = desc
+            .storage_images
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = image_bind {
+            point.data = Some((
+                image.get_or_create_view(&self.device.raw, ImageViewDesc::default())?,
+                layout,
+            ));
+            self.dirty.insert(handle);
+        }
+
+        Ok(())
+    }
+
+    pub fn bind_storage_image_by_name(
+        &mut self,
+        handle: DescriptorHandle,
+        name: &str,
+        image: ImageHandle,
+        layout: vk::ImageLayout,
+    ) -> Result<(), BackendError> {
+        let binding = self
+            .storage
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .names
+            .get(name)
+            .copied()
+            .ok_or(BackendError::NotFound)?;
+        self.bind_storage_image(handle, binding, image, layout)
+    }
+
     /// Bind image to descriptor set
     pub fn bind_image(
         &mut self,
@@ -203,7 +292,24 @@ impl<'a> UpdateDescriptorContext<'a> {
             .images
             .get_cold(image)
             .ok_or(BackendError::InvalidHandle)?;
-        self.bind_image_direct(handle, binding, image, layout)
+        debug_assert!(image.desc.usage.contains(vk::ImageUsageFlags::SAMPLED));
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+        let image_bind = desc
+            .images
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = image_bind {
+            point.data = Some((
+                image.get_or_create_view(&self.device.raw, ImageViewDesc::default())?,
+                layout,
+            ));
+            self.dirty.insert(handle);
+        }
+
+        Ok(())
     }
 
     /// Bind image to descriptor set by name
@@ -222,37 +328,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .get(name)
             .copied()
             .ok_or(BackendError::NotFound)?;
-        let image = self
-            .images
-            .get_cold(image)
-            .ok_or(BackendError::InvalidHandle)?;
-        self.bind_image_direct(handle, binding, image, layout)
-    }
-
-    fn bind_image_direct(
-        &mut self,
-        handle: DescriptorHandle,
-        binding: usize,
-        image: &Image,
-        layout: vk::ImageLayout,
-    ) -> Result<(), BackendError> {
-        let desc = self
-            .storage
-            .get_cold_mut(handle)
-            .ok_or(BackendError::InvalidHandle)?;
-        let image_bind = desc
-            .images
-            .iter_mut()
-            .find(|point| point.binding == binding as u32);
-        if let Some(point) = image_bind {
-            point.data = Some((
-                image.get_or_create_view(&self.device.raw, ImageViewDesc::default())?,
-                layout,
-            ));
-            self.dirty.insert(handle);
-        }
-
-        Ok(())
+        self.bind_image(handle, binding, image, layout)
     }
 
     /// Bind uniform to descriptor set by name
@@ -340,6 +416,53 @@ impl<'a> UpdateDescriptorContext<'a> {
             self.dirty.insert(handle);
         }
         Ok(())
+    }
+
+    pub fn bind_storage_buffer(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: usize,
+        buffer: BufferSlice,
+    ) -> BackendResult<()> {
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+        let raw = self
+            .buffers
+            .get_cold(buffer.handle)
+            .ok_or(BackendError::InvalidHandle)?;
+        debug_assert!(raw
+            .desc
+            .usage
+            .contains(vk::BufferUsageFlags::STORAGE_BUFFER));
+        let buffer_bind = desc
+            .storage_buffers
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = buffer_bind {
+            point.data = Some((raw.raw, buffer.offset, buffer.size));
+            self.dirty.insert(handle);
+        }
+
+        Ok(())
+    }
+
+    pub fn bind_storage_buffer_by_name(
+        &mut self,
+        handle: DescriptorHandle,
+        name: &str,
+        buffer: BufferSlice,
+    ) -> BackendResult<()> {
+        let binding = self
+            .storage
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .names
+            .get(name)
+            .copied()
+            .ok_or(BackendError::NotFound)?;
+        self.bind_storage_buffer(handle, binding, buffer)
     }
 }
 
@@ -444,7 +567,24 @@ impl Device {
                             .image_info(slice::from_ref(images.add(image)))
                             .dst_binding(binding.binding)
                             .dst_set(*descriptor.raw())
-                            .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                            .build()
+                    })
+                    .for_each(|x| writes.push(x));
+                desc.storage_images
+                    .iter()
+                    .map(|binding| {
+                        let image = binding.data.as_ref().unwrap();
+                        let image = vk::DescriptorImageInfo::builder()
+                            .image_view(image.0)
+                            .image_layout(image.1)
+                            .build();
+
+                        vk::WriteDescriptorSet::builder()
+                            .image_info(slice::from_ref(images.add(image)))
+                            .dst_binding(binding.binding)
+                            .dst_set(*descriptor.raw())
+                            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                             .build()
                     })
                     .for_each(|x| writes.push(x));
@@ -485,6 +625,24 @@ impl Device {
                             .build()
                     })
                     .for_each(|x| writes.push(x));
+                desc.storage_buffers
+                    .iter()
+                    .map(|binding| {
+                        let data = &binding.data.unwrap();
+                        let buffer = vk::DescriptorBufferInfo::builder()
+                            .buffer(data.0)
+                            .offset(data.1 as u64)
+                            .range(data.2 as u64)
+                            .build();
+
+                        vk::WriteDescriptorSet::builder()
+                            .buffer_info(slice::from_ref(buffers.add(buffer)))
+                            .dst_binding(binding.binding)
+                            .dst_set(*descriptor.raw())
+                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .build()
+                    })
+                    .for_each(|x| writes.push(x));
             }
         }
     }
@@ -499,6 +657,7 @@ impl Device {
             storage: &mut self.descriptor_storage.write(),
             dirty: &mut self.dirty_descriptors.lock(),
             images: &self.image_storage.read(),
+            buffers: &self.buffer_storage.read(),
             programs: &self.program_storage.read(),
             retired_descriptors: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),
             retired_uniforms: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),

@@ -52,7 +52,7 @@ impl BufferPool {
         let slice = if let Some(slice) = buffers.iter_mut().find_map(|(handle, allocator)| {
             allocator
                 .allocate(size)
-                .map(|offset| BufferSlice::new(*handle, offset as _))
+                .map(|offset| BufferSlice::new(*handle, offset as _, size as _))
         }) {
             slice
         } else {
@@ -65,7 +65,7 @@ impl BufferPool {
             let mut allocator = DynamicAllocator::new(CHUNK_SIZE, 1024);
             let offset = allocator.allocate(size).ok_or(BackendError::TooBig)?;
             buffers.insert(buffer, allocator);
-            BufferSlice::new(buffer, offset as _)
+            BufferSlice::new(buffer, offset as _, size as _)
         };
         self.device.upload_buffer(slice, data)?;
 
@@ -79,7 +79,7 @@ impl BufferPool {
     pub fn deallocate(&self, buffer: BufferSlice) {
         let mut buffers = self.buffers.lock();
         let allocator = buffers
-            .get_mut(&buffer.buffer)
+            .get_mut(&buffer.handle)
             .expect("Only slices allocated from buffer pool can be deallocated there");
         allocator.deallocate(buffer.offset as _);
     }
