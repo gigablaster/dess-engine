@@ -18,10 +18,16 @@ mod draw_stream;
 mod error;
 pub mod vulkan;
 
+use ash::vk;
 pub use draw_stream::*;
 pub use error::*;
+use vulkan::{FrameContext, ExecutionContext};
 
 pub type BackendResult<T> = Result<T, BackendError>;
+
+pub trait DeferedPass: Send + Sync {
+    fn execute(&self, contex: &ExecutionContext) -> BackendResult<()>;
+}
 
 pub trait BackendResultExt {
     fn ignore_invalid_handle(self) -> BackendResult<()>;

@@ -13,13 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::cmp::{max, min};
+use std::mem;
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{barrier, BackendError, BackendResult, DrawStream};
+use crate::{barrier, BackendError, BackendResult, DrawStream, DeferedPass};
 
 use super::{
     frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
@@ -88,13 +88,64 @@ pub(crate) struct Pass {
     barriers: ArrayVec<Barrier, MAX_BARRIERS>,
 }
 
+impl DeferedPass for Pass {
+    fn execute(&self, context: &ExecutionContext) -> BackendResult<()> {
+        puffin::profile_function!();
+        let color_attachments = self
+            .color_attachments
+            .iter()
+            .map(RenderAttachment::build)
+            .collect::<ArrayVec<_, 8>>();
+        let depth_attachment = self.depth_attachment.map(|x| x.build());
+        let mut image_barriers = ArrayVec::<_, MAX_BARRIERS>::new();
+        for barrier in &self.barriers {
+            image_barriers.push(barrier.build(context.images, context.universal_queue)?);
+        }
+
+        let dependency = vk::DependencyInfo::builder()
+            .image_memory_barriers(&image_barriers)
+            .dependency_flags(vk::DependencyFlags::BY_REGION)
+            .build();
+
+        unsafe {
+            context.device
+                .raw
+                .cmd_pipeline_barrier2(context.frame.main_cb.raw, &dependency)
+        };
+
+        let info = vk::RenderingInfo::builder()
+            .render_area(self.rende_area)
+            .color_attachments(&color_attachments)
+            .layer_count(1);
+        let info = if let Some(depth_attachment) = depth_attachment.as_ref() {
+            info.depth_attachment(depth_attachment)
+        } else {
+            info
+        };
+        unsafe {
+            context.device
+                .raw
+                .cmd_begin_rendering(context.frame.main_cb.raw, &info)
+        };
+
+        for stream in &self.streams {
+            stream.execute(context, context.frame.main_cb.raw)?;
+        }
+
+        unsafe { context.device.raw.cmd_end_rendering(context.frame.main_cb.raw) };
+
+        Ok(())
+
+    }
+}
+
 pub struct FrameContext<'a> {
     pub render_area: vk::Rect2D,
     pub target_view: vk::ImageView,
     pub target_layout: vk::ImageLayout,
     pub(crate) frame: &'a Frame,
     pub(crate) temp_buffer_handle: BufferHandle,
-    pub(crate) passes: Mutex<Vec<Pass>>,
+    pub(crate) passes: Mutex<Vec<Box<dyn DeferedPass>>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -195,7 +246,7 @@ impl<'a> FrameContext<'a> {
     /// Buffer slive is only valid during current frame, no need to free it in any way
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
         let offset = self.frame.temp_allocate(data)?;
-        Ok(BufferSlice::new(self.temp_buffer_handle, offset))
+        Ok(BufferSlice::new(self.temp_buffer_handle, offset, mem::size_of_val(data) as u32))
     }
 
     /// Record render pass
@@ -225,7 +276,7 @@ impl<'a> FrameContext<'a> {
                 .copied()
                 .collect::<ArrayVec<_, MAX_BARRIERS>>(),
         };
-        self.passes.lock().push(pass);
+        self.passes.lock().push(Box::new(pass));
     }
 }
 
@@ -242,207 +293,13 @@ pub(crate) struct ExecutionContext<'a> {
 impl<'a> ExecutionContext<'a> {
     pub fn execute<I>(&self, passes: I) -> BackendResult<()>
     where
-        I: Iterator<Item = &'a Pass>,
+        I: Iterator<Item = &'a Box<dyn DeferedPass>>,
     {
         for pass in passes {
-            self.execute_pass(pass)?;
+            pass.execute(self)?;
         }
 
         Ok(())
     }
 
-    fn execute_pass(&self, pass: &Pass) -> BackendResult<()> {
-        puffin::profile_function!();
-        let color_attachments = pass
-            .color_attachments
-            .iter()
-            .map(RenderAttachment::build)
-            .collect::<ArrayVec<_, 8>>();
-        let depth_attachment = pass.depth_attachment.map(|x| x.build());
-        let mut image_barriers = ArrayVec::<_, MAX_BARRIERS>::new();
-        for barrier in &pass.barriers {
-            image_barriers.push(barrier.build(self.images, self.universal_queue)?);
-        }
-
-        let dependency = vk::DependencyInfo::builder()
-            .image_memory_barriers(&image_barriers)
-            .dependency_flags(vk::DependencyFlags::BY_REGION)
-            .build();
-
-        unsafe {
-            self.device
-                .raw
-                .cmd_pipeline_barrier2(self.frame.main_cb.raw, &dependency)
-        };
-
-        let info = vk::RenderingInfo::builder()
-            .render_area(pass.rende_area)
-            .color_attachments(&color_attachments)
-            .layer_count(1);
-        let info = if let Some(depth_attachment) = depth_attachment.as_ref() {
-            info.depth_attachment(depth_attachment)
-        } else {
-            info
-        };
-        unsafe {
-            self.device
-                .raw
-                .cmd_begin_rendering(self.frame.main_cb.raw, &info)
-        };
-
-        for stream in &pass.streams {
-            self.execute_stream(stream)?;
-        }
-
-        unsafe { self.device.raw.cmd_end_rendering(self.frame.main_cb.raw) };
-
-        Ok(())
-    }
-
-    fn execute_stream(&self, stream: &DrawStream) -> BackendResult<()> {
-        if stream.is_empty() {
-            return Ok(());
-        }
-        puffin::profile_function!();
-        let mut pipeline_layout = vk::PipelineLayout::null();
-        let mut dynamic_buffer_offsets = [u32::MAX; 2];
-        let mut dynamic_buffer_offset_count = 0usize;
-        let mut current_descriptor_sets = [vk::DescriptorSet::null(); 4];
-        let mut need_descriptors_rebind = false;
-        let mut current_vertex_buffers = [(vk::Buffer::null(), u64::MAX); 3];
-        let mut need_vertex_buffers_rebind = false;
-        current_descriptor_sets[0] = self
-            .descriptors
-            .get_hot(stream.pass_descriptor_set())
-            .copied()
-            .ok_or(BackendError::InvalidHandle)?;
-        if current_descriptor_sets[0] == vk::DescriptorSet::null() {
-            return Err(BackendError::DescriptorIsntReady);
-        }
-        for command in stream.iter() {
-            match command {
-                crate::DrawCommand::BindPipeline(handle) => {
-                    let (pipeline, layout) = self
-                        .pipelines
-                        .get(handle.index())
-                        .copied()
-                        .ok_or(BackendError::InvalidHandle)?;
-                    unsafe {
-                        self.device.raw.cmd_bind_pipeline(
-                            self.frame.main_cb.raw,
-                            vk::PipelineBindPoint::GRAPHICS,
-                            pipeline,
-                        );
-                    };
-                    if pipeline_layout != layout {
-                        need_descriptors_rebind = true;
-                    }
-                    pipeline_layout = layout;
-                }
-                crate::DrawCommand::BindVertexBuffer(index, slice) => {
-                    let buffer = self
-                        .buffers
-                        .get_hot(slice.buffer)
-                        .copied()
-                        .ok_or(BackendError::InvalidHandle)?;
-                    current_vertex_buffers[index as usize] = (buffer, slice.offset as u64);
-                    need_vertex_buffers_rebind = true;
-                }
-                crate::DrawCommand::UnbindVertexBuffer(index) => {
-                    current_vertex_buffers[index as usize] = (vk::Buffer::null(), u64::MAX);
-                    need_vertex_buffers_rebind = true;
-                }
-                crate::DrawCommand::BindIndexBuffer(slice) => {
-                    let buffer = self
-                        .buffers
-                        .get_hot(slice.buffer)
-                        .copied()
-                        .ok_or(BackendError::InvalidHandle)?;
-                    unsafe {
-                        self.device.raw.cmd_bind_index_buffer(
-                            self.frame.main_cb.raw,
-                            buffer,
-                            slice.offset as _,
-                            vk::IndexType::UINT16,
-                        )
-                    }
-                }
-                crate::DrawCommand::SetDynamicBufferOffset(index, offset) => {
-                    dynamic_buffer_offsets[index as usize] = offset;
-                    dynamic_buffer_offset_count = max(index as usize, dynamic_buffer_offset_count);
-                }
-                crate::DrawCommand::UnsetDynamicBufferOffset(index) => {
-                    dynamic_buffer_offset_count = min(index as usize, dynamic_buffer_offset_count);
-                }
-                crate::DrawCommand::BindDescriptorSet(index, handle) => {
-                    let descriptor_set = self
-                        .descriptors
-                        .get_hot(handle)
-                        .copied()
-                        .ok_or(BackendError::InvalidHandle)?;
-                    if descriptor_set == vk::DescriptorSet::null() {
-                        return Err(BackendError::DescriptorIsntReady);
-                    }
-                    current_descriptor_sets[index as usize] = descriptor_set;
-                    need_descriptors_rebind = true;
-                }
-                crate::DrawCommand::UnbindDescriptorSet(index) => {
-                    current_descriptor_sets[index as usize] = vk::DescriptorSet::null();
-                    need_descriptors_rebind = true;
-                }
-                crate::DrawCommand::Draw(first_index, triangle_count) => {
-                    if need_descriptors_rebind {
-                        let mut dynamic_offsets = ArrayVec::<_, 2>::new();
-                        for offset in dynamic_buffer_offsets
-                            .iter()
-                            .take(dynamic_buffer_offset_count)
-                        {
-                            dynamic_offsets.push(*offset);
-                        }
-                        unsafe {
-                            self.device.raw.cmd_bind_descriptor_sets(
-                                self.frame.main_cb.raw,
-                                vk::PipelineBindPoint::GRAPHICS,
-                                pipeline_layout,
-                                0,
-                                &current_descriptor_sets,
-                                &dynamic_offsets,
-                            )
-                        };
-                        need_descriptors_rebind = false;
-                    }
-                    if need_vertex_buffers_rebind {
-                        let buffers = current_vertex_buffers
-                            .iter()
-                            .map(|x| x.0)
-                            .collect::<ArrayVec<_, 3>>();
-                        let offsets = current_vertex_buffers
-                            .iter()
-                            .map(|x| x.1)
-                            .collect::<ArrayVec<_, 3>>();
-                        unsafe {
-                            self.device.raw.cmd_bind_vertex_buffers(
-                                self.frame.main_cb.raw,
-                                0,
-                                &buffers,
-                                &offsets,
-                            )
-                        }
-                        need_vertex_buffers_rebind = false;
-                    }
-                    unsafe {
-                        self.device.raw.cmd_draw_indexed(
-                            self.frame.main_cb.raw,
-                            triangle_count * 3,
-                            1,
-                            first_index,
-                            0,
-                            0,
-                        )
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
 }
