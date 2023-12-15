@@ -3,11 +3,11 @@ struct VsOut {
     [[vk::location(0)]] float2 uv: TEXCOORD0;
 };
 
-[[vk::binding(1, 1)]] Texture2D main_texture;
-[[vk::binding(32)]] SamplerState main_sampler;
+[[vk::binding(1, 0)]] SamplerState base_sampler;
+[[vk::binding(0, 1)]] Texture2D<float4> base;
 
 float4 main(VsOut psin) : SV_TARGET {
-    float4 color = main_texture.Sample(main_sampler, psin.uv);
+    float4 color = base.Sample(base_sampler, psin.uv);
 
     return color;
 }

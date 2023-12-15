@@ -221,6 +221,7 @@ pub struct EffectTechniqueSource {
     /// Fragment shader
     pub fragment: Option<EffectShaderDesc>,
     /// Pipeline description
+    #[serde(rename = "pipeline")]
     pub pipeline_desc: EffectPipelineDesc,
 }
 

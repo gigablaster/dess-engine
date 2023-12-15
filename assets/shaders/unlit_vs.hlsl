@@ -3,6 +3,10 @@ struct PassData {
     float4x4 projection;
 };
 
+struct ObjectData {
+    float scale;
+};
+
 struct InstanceTransform {
     float4x4 model;
 };
@@ -18,13 +22,14 @@ struct VsIn {
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<PassData> pass_data;
-[[vk::binding(0, 1)]] ConstantBuffer<InstanceTransform> transform;
+[[vk::binding(0, 2)]] ConstantBuffer<ObjectData> object_data;
+[[vk::binding(0, 3)]] ConstantBuffer<InstanceTransform> transform_dyn;
 
 VsOut main(VsIn vsin) {
     VsOut vsout;
     
-    float4x4 mvp = transform.model * pass_data.view * pass_data.projection;
-    vsout.position = mul(mvp, float4(vsin.pos, 0.0));
+    float4x4 mvp = transform_dyn.model * pass_data.view * pass_data.projection;
+    vsout.position = mul(mvp, float4(vsin.pos * object_data.scale, 0.0));
     vsout.uv = vsin.uv;
 
     return vsout;

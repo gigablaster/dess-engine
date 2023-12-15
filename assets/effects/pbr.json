@@ -1,0 +1,13 @@
+{
+    "techniques": {
+        "opqaue": {
+            "vertex": {
+                "shader": "shaders/unlit_vs.hlsl"
+            },
+            "fragment": {
+                "shader": "shaders/unlit_ps.hlsl"
+            },
+            "pipeline": {}
+        }
+    }
+}
