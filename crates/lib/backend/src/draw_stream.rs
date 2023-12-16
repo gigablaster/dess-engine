@@ -13,24 +13,26 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::{vulkan::{BufferSlice, DescriptorHandle, PipelineHandle, FrameContext, ExecutionContext}, DeferedPass, BackendResult};
+use crate::vulkan::{
+    BufferHandle, BufferSlice, DescriptorHandle, ExecutionContext, PipelineHandle,
+};
 
-pub(crate) const MAX_VERTEX_STREAMS: u32 = 3;
-pub(crate) const MAX_DESCRIPTOR_SETS: u32 = 3;
-pub(crate) const MAX_DYNAMIC_OFFSETS: u32 = 2;
+pub(crate) const MAX_VERTEX_STREAMS: usize = 3;
+pub(crate) const MAX_DESCRIPTOR_SETS: usize = 3;
+pub(crate) const MAX_DYNAMIC_OFFSETS: usize = 2;
 
 #[derive(Debug, Clone, Copy)]
 struct Draw {
     pipeline: PipelineHandle,
-    vertex_buffers: [BufferSlice; MAX_VERTEX_STREAMS as usize],
+    vertex_buffers: [BufferSlice; MAX_VERTEX_STREAMS],
     index_buffer: BufferSlice,
-    descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS as usize],
-    dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS as usize],
+    descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
+    dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
     first_index: u32,
-    instance_count: u32,
-    triangle_count: u32,
+    index_count: u32,
 }
 
 impl Default for Draw {
@@ -49,27 +51,19 @@ impl Default for Draw {
                 DescriptorHandle::default(),
             ],
             dynamic_offsets: [u32::MAX, u32::MAX],
-            instance_count: u32::MAX,
             first_index: u32::MAX,
-            triangle_count: u32::MAX,
+            index_count: u32::MAX,
         }
     }
 }
 
-const PIPELINE: u16 = 1 << 0;
-const VERTEX_BUFFER0: u16 = 1 << 1;
-const VERTEX_BUFFER1: u16 = 1 << 2;
-const VERTEX_BUFFER2: u16 = 1 << 3;
-const INDEX_BUFFER: u16 = 1 << 4;
-const DS1: u16 = 1 << 5;
-const DS2: u16 = 1 << 6;
-const DS3: u16 = 1 << 7;
-const DYNAMIC_OFFSET0: u16 = 1 << 8;
-const DYNAMIC_OFFSET1: u16 = 1 << 9;
-const INSTANCE_COUNT: u16 = 1 << 10;
-const TRIANGLE_COUNT: u16 = 1 << 11;
-const FIRST_INDEX: u16 = 1 << 12;
-const MAX_BIT: u16 = 13;
+const PIPELINE: u16 = 1;
+const VERTEX_BUFFER0: u16 = PIPELINE << 1;
+const INDEX_BUFFER: u16 = VERTEX_BUFFER0 << MAX_VERTEX_STREAMS;
+const DYNAMIC_OFFSET0: u16 = INDEX_BUFFER << 1;
+const DS1: u16 = DYNAMIC_OFFSET0 << MAX_DYNAMIC_OFFSETS;
+const INDEX_COUNT: u16 = DS1 << MAX_DESCRIPTOR_SETS;
+const FIRST_INDEX: u16 = INDEX_COUNT << 1;
 
 /// Collect draw calls
 ///
@@ -85,6 +79,34 @@ pub struct DrawStream {
     mask: u16,
 }
 
+pub enum DrawStreamError {
+    EndOfStream,
+    InvalidHandle,
+}
+
+struct DrawStreamReader<'a> {
+    stream: &'a [u16],
+    cursor: usize,
+}
+
+impl<'a> DrawStreamReader<'a> {
+    fn read(&mut self) -> Option<u16> {
+        if self.cursor >= self.stream.len() {
+            None
+        } else {
+            let data = self.stream[self.cursor];
+            self.cursor += 1;
+            Some(data)
+        }
+    }
+
+    fn read_u32(&mut self) -> Result<u32, DrawStreamError> {
+        let a = self.read().ok_or(DrawStreamError::EndOfStream)? as u32;
+        let b = self.read().ok_or(DrawStreamError::EndOfStream)? as u32;
+        Ok((a << 16) | b)
+    }
+}
+
 impl DrawStream {
     pub fn new(pass_descriptor_set: DescriptorHandle) -> Self {
         Self {
@@ -95,10 +117,6 @@ impl DrawStream {
         }
     }
 
-    pub fn pass_descriptor_set(&self) -> DescriptorHandle {
-        self.pass_descriptor_set
-    }
-
     pub fn bind_pipeline(&mut self, handle: PipelineHandle) {
         if self.current.pipeline != handle {
             self.mask |= PIPELINE;
@@ -106,9 +124,8 @@ impl DrawStream {
         }
     }
 
-    pub fn bind_vertex_buffer(&mut self, slot: u32, buffer: Option<BufferSlice>) {
+    pub fn bind_vertex_buffer(&mut self, slot: usize, buffer: Option<BufferSlice>) {
         debug_assert!(slot < MAX_VERTEX_STREAMS);
-        let slot = slot as usize;
         let buffer = buffer.unwrap_or_default();
         if self.current.vertex_buffers[slot] != buffer {
             self.mask |= VERTEX_BUFFER0 << slot;
@@ -116,16 +133,17 @@ impl DrawStream {
         }
     }
 
-    pub fn bind_index_buffer(&mut self, buffer: BufferSlice) {
+    pub fn bind_index_buffer(&mut self, buffer: Option<BufferSlice>) {
+        let buffer = buffer.unwrap_or_default();
         if self.current.index_buffer != buffer {
             self.mask |= INDEX_BUFFER;
             self.current.index_buffer = buffer;
         }
     }
 
-    pub fn bind_descriptor_set(&mut self, slot: u32, ds: Option<DescriptorHandle>) {
+    pub fn bind_descriptor_set(&mut self, slot: usize, ds: Option<DescriptorHandle>) {
         debug_assert!((1..=MAX_DESCRIPTOR_SETS).contains(&slot));
-        let slot = (slot - 1) as usize;
+        let slot = slot - 1;
         let ds = ds.unwrap_or_default();
         if self.current.descriptors[slot] != ds {
             self.mask |= DS1 << slot;
@@ -133,9 +151,8 @@ impl DrawStream {
         }
     }
 
-    pub fn set_dynamic_buffer_offset(&mut self, slot: u32, offset: Option<u32>) {
+    pub fn set_dynamic_buffer_offset(&mut self, slot: usize, offset: Option<u32>) {
         assert!(slot < MAX_DYNAMIC_OFFSETS);
-        let slot = slot as usize;
         let offset = offset.unwrap_or(u32::MAX);
         if self.current.dynamic_offsets[slot] != offset {
             self.mask |= DYNAMIC_OFFSET0 << slot;
@@ -143,48 +160,25 @@ impl DrawStream {
         }
     }
 
-    pub fn set_instance_count(&mut self, instance_count: u32) {
-        debug_assert!(instance_count >= 1);
-        if self.current.instance_count != instance_count {
-            self.mask |= INSTANCE_COUNT;
-            self.current.instance_count = instance_count;
-        }
-    }
-
-    pub fn set_mesh(&mut self, first_idnex: u32, triangle_count: u32) {
-        if self.current.first_index != first_idnex {
-            self.mask |= FIRST_INDEX;
-            self.current.first_index = first_idnex;
-        }
-        if self.current.triangle_count != triangle_count {
-            self.mask |= TRIANGLE_COUNT;
-            self.current.triangle_count = triangle_count;
-        }
-    }
-
-    pub fn draw(&mut self) {
+    pub fn draw(&mut self, first_index: u32, index_count: u32) {
         debug_assert!(
             self.current.pipeline.is_valid(),
             "Pipeline handle must be valid"
         );
-        debug_assert!(
-            self.current.vertex_buffers[0].is_valid(),
-            "First vertex stream must be set"
-        );
-        debug_assert!(
-            self.current.index_buffer.is_valid(),
-            "Index buffer must be set"
-        );
-        debug_assert!(
-            self.current.triangle_count > 0,
-            "Must draw at least one triangle"
-        );
+        debug_assert!(index_count > 0, "Must draw at least one primitive");
+        if self.current.first_index != first_index {
+            self.current.first_index = first_index;
+            self.mask |= FIRST_INDEX;
+        }
+        if self.current.index_count != index_count {
+            self.current.index_count = index_count;
+            self.mask |= INDEX_COUNT;
+        }
         self.stream.push(self.mask);
         if self.mask & PIPELINE != 0 {
             self.write_u32(self.current.pipeline.into());
         }
         for slot in 0..MAX_VERTEX_STREAMS {
-            let slot = slot as usize;
             if self.mask & (VERTEX_BUFFER0 << slot) != 0 {
                 self.encode_buffer_slice(self.current.vertex_buffers[slot]);
             }
@@ -192,23 +186,18 @@ impl DrawStream {
         if self.mask & INDEX_BUFFER != 0 {
             self.encode_buffer_slice(self.current.index_buffer);
         }
-        for slot in 0..MAX_DESCRIPTOR_SETS {
-            if self.mask & (DS1 << slot) != 0 {
-                let slot = slot as usize;
-                self.write_u32(self.current.descriptors[slot].into());
-            }
-        }
         for slot in 0..MAX_DYNAMIC_OFFSETS {
             if self.mask & (DYNAMIC_OFFSET0 << slot) != 0 {
-                let slot = slot as usize;
                 self.write_u32(self.current.dynamic_offsets[slot]);
             }
         }
-        if self.mask & INSTANCE_COUNT != 0 {
-            self.write_u32(self.current.instance_count);
+        for slot in 0..MAX_DESCRIPTOR_SETS {
+            if self.mask & (DS1 << slot) != 0 {
+                self.write_u32(self.current.descriptors[slot].into());
+            }
         }
-        if self.mask & TRIANGLE_COUNT != 0 {
-            self.write_u32(self.current.triangle_count);
+        if self.mask & INDEX_COUNT != 0 {
+            self.write_u32(self.current.index_count);
         }
         if self.mask & FIRST_INDEX != 0 {
             self.write_u32(self.current.first_index);
@@ -216,8 +205,205 @@ impl DrawStream {
         self.mask = 0;
     }
 
-    pub(crate) fn execute(&self, context: &ExecutionContext, cb: vk::CommandBuffer) -> BackendResult<()> {
-        todo!()
+    #[allow(clippy::needless_range_loop)]
+    pub(crate) fn execute(
+        &self,
+        context: &ExecutionContext,
+        cb: vk::CommandBuffer,
+    ) -> Result<(), DrawStreamError> {
+        if self.stream.is_empty() {
+            return Ok(());
+        }
+        puffin::profile_function!();
+        let mut stream = DrawStreamReader {
+            stream: &self.stream,
+            cursor: 0,
+        };
+        let mut rebind_all_descriptors = true;
+        let mut dynamic_offset_changed = false;
+        let mut current_layout = vk::PipelineLayout::null();
+        let mut descriptors = [vk::DescriptorSet::null(); MAX_DESCRIPTOR_SETS + 1];
+        let mut dynamic_offsets = [0u32; MAX_DYNAMIC_OFFSETS];
+        let mut first_index = 0u32;
+        let mut vertex_count = 0u32;
+        while let Some(mask) = stream.read() {
+            descriptors[0] = context
+                .descriptors
+                .get_hot(self.pass_descriptor_set)
+                .copied()
+                .ok_or(DrawStreamError::InvalidHandle)?;
+            if mask & PIPELINE != 0 {
+                let handle: PipelineHandle = stream.read_u32()?.into();
+                let (pipeline, layout) = context
+                    .pipelines
+                    .get(handle.index())
+                    .copied()
+                    .ok_or(DrawStreamError::InvalidHandle)?;
+                if current_layout != layout {
+                    rebind_all_descriptors = true;
+                    current_layout = layout;
+                }
+                unsafe {
+                    context.device.raw.cmd_bind_pipeline(
+                        cb,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline,
+                    )
+                };
+            }
+            for index in 0..MAX_VERTEX_STREAMS {
+                if mask & (VERTEX_BUFFER0 << index) != 0 {
+                    let handle: BufferHandle = stream.read_u32()?.into();
+                    let offset = stream.read_u32()?;
+                    let buffer = if handle.is_valid() {
+                        context
+                            .buffers
+                            .get_hot(handle)
+                            .copied()
+                            .ok_or(DrawStreamError::InvalidHandle)?
+                    } else {
+                        vk::Buffer::null()
+                    };
+                    unsafe {
+                        context.device.raw.cmd_bind_vertex_buffers(
+                            cb,
+                            index as _,
+                            &[buffer],
+                            &[offset as _],
+                        )
+                    };
+                }
+            }
+            if mask & INDEX_BUFFER != 0 {
+                let handle: BufferHandle = stream.read_u32()?.into();
+                let offset = stream.read_u32()?;
+                let buffer = if handle.is_valid() {
+                    context
+                        .buffers
+                        .get_hot(handle)
+                        .copied()
+                        .ok_or(DrawStreamError::InvalidHandle)?
+                } else {
+                    vk::Buffer::null()
+                };
+                unsafe {
+                    context.device.raw.cmd_bind_index_buffer(
+                        cb,
+                        buffer,
+                        offset as _,
+                        vk::IndexType::UINT16,
+                    )
+                };
+            }
+            for index in 0..MAX_DYNAMIC_OFFSETS {
+                if mask & (DYNAMIC_OFFSET0 << index) != 0 {
+                    let offset = stream.read_u32()?;
+                    if dynamic_offsets[index] != offset {
+                        dynamic_offsets[index] = offset;
+                        dynamic_offset_changed = true;
+                    }
+                }
+            }
+            for index in 0..MAX_DESCRIPTOR_SETS {
+                if mask & (DS1 << index) != 0 {
+                    let handle: DescriptorHandle = stream.read_u32()?.into();
+                    let index = index + 1;
+                    if handle.is_valid() {
+                        descriptors[index] = context
+                            .descriptors
+                            .get_hot(handle)
+                            .copied()
+                            .ok_or(DrawStreamError::InvalidHandle)?;
+                    } else {
+                        descriptors[index] = vk::DescriptorSet::null();
+                    }
+                    if !rebind_all_descriptors {
+                        let ds = descriptors[index];
+                        if index == 3 {
+                            let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
+                            for offset_index in 0..MAX_DYNAMIC_OFFSETS {
+                                if dynamic_offsets[offset_index] != u32::MAX {
+                                    offsets.push(dynamic_offsets[offset_index]);
+                                }
+                            }
+                            unsafe {
+                                context.device.raw.cmd_bind_descriptor_sets(
+                                    cb,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    current_layout,
+                                    index as _,
+                                    &[ds],
+                                    &offsets,
+                                )
+                            }
+                            dynamic_offset_changed = false;
+                        } else {
+                            unsafe {
+                                context.device.raw.cmd_bind_descriptor_sets(
+                                    cb,
+                                    vk::PipelineBindPoint::GRAPHICS,
+                                    current_layout,
+                                    index as _,
+                                    &[ds],
+                                    &[],
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            if mask & FIRST_INDEX != 0 {
+                first_index = stream.read_u32()?;
+            }
+            if mask & INDEX_COUNT != 0 {
+                vertex_count = stream.read_u32()?
+            }
+            if rebind_all_descriptors {
+                let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
+                for offset_index in 0..MAX_DYNAMIC_OFFSETS {
+                    if dynamic_offsets[offset_index] != u32::MAX {
+                        offsets.push(dynamic_offsets[offset_index]);
+                    }
+                }
+                unsafe {
+                    context.device.raw.cmd_bind_descriptor_sets(
+                        cb,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        current_layout,
+                        0,
+                        &descriptors,
+                        &offsets,
+                    );
+                }
+                rebind_all_descriptors = false;
+                dynamic_offset_changed = false;
+            } else if dynamic_offset_changed {
+                let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
+                for offset_index in 0..MAX_DYNAMIC_OFFSETS {
+                    if dynamic_offsets[offset_index] != u32::MAX {
+                        offsets.push(dynamic_offsets[offset_index]);
+                    }
+                }
+                unsafe {
+                    context.device.raw.cmd_bind_descriptor_sets(
+                        cb,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        current_layout,
+                        3,
+                        &[descriptors[3]],
+                        &offsets,
+                    )
+                }
+                dynamic_offset_changed = false;
+            }
+            unsafe {
+                context
+                    .device
+                    .raw
+                    .cmd_draw_indexed(cb, vertex_count, 1, first_index, 0, 0)
+            }
+        }
+        Ok(())
     }
 
     fn write_u32(&mut self, value: u32) {

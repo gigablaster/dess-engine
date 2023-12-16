@@ -284,7 +284,7 @@ impl DescriptorSetInfo {
         SamplerDesc {
             texel_filter: vk::Filter::LINEAR,
             mipmap_mode: vk::SamplerMipmapMode::LINEAR,
-            address_mode: address_mode,
+            address_mode,
             anisotropy_level: 16, // TODO:: control anisotropy level
         }
     }

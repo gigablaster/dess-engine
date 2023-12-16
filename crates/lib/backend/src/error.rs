@@ -15,6 +15,8 @@
 
 use ash::vk;
 
+use crate::DrawStreamError;
+
 #[derive(Debug, Clone)]
 pub enum BackendError {
     OutOfMemory,
@@ -89,5 +91,14 @@ impl From<rspirv_reflect::ReflectError> for BackendError {
 impl From<gpu_descriptor::AllocationError> for BackendError {
     fn from(_value: gpu_descriptor::AllocationError) -> Self {
         Self::OutOfMemory
+    }
+}
+
+impl From<DrawStreamError> for BackendError {
+    fn from(value: DrawStreamError) -> Self {
+        match value {
+            DrawStreamError::EndOfStream => panic!("Draw stream suddenly ended!"),
+            DrawStreamError::InvalidHandle => Self::InvalidHandle,
+        }
     }
 }

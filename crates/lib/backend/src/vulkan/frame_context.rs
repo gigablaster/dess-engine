@@ -19,7 +19,7 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{barrier, BackendError, BackendResult, DrawStream, DeferedPass};
+use crate::{barrier, BackendError, BackendResult, DeferedPass, DrawStream};
 
 use super::{
     frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
@@ -108,7 +108,8 @@ impl DeferedPass for Pass {
             .build();
 
         unsafe {
-            context.device
+            context
+                .device
                 .raw
                 .cmd_pipeline_barrier2(context.frame.main_cb.raw, &dependency)
         };
@@ -123,7 +124,8 @@ impl DeferedPass for Pass {
             info
         };
         unsafe {
-            context.device
+            context
+                .device
                 .raw
                 .cmd_begin_rendering(context.frame.main_cb.raw, &info)
         };
@@ -132,10 +134,14 @@ impl DeferedPass for Pass {
             stream.execute(context, context.frame.main_cb.raw)?;
         }
 
-        unsafe { context.device.raw.cmd_end_rendering(context.frame.main_cb.raw) };
+        unsafe {
+            context
+                .device
+                .raw
+                .cmd_end_rendering(context.frame.main_cb.raw)
+        };
 
         Ok(())
-
     }
 }
 
@@ -246,7 +252,11 @@ impl<'a> FrameContext<'a> {
     /// Buffer slive is only valid during current frame, no need to free it in any way
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
         let offset = self.frame.temp_allocate(data)?;
-        Ok(BufferSlice::new(self.temp_buffer_handle, offset, mem::size_of_val(data) as u32))
+        Ok(BufferSlice::new(
+            self.temp_buffer_handle,
+            offset,
+            mem::size_of_val(data) as u32,
+        ))
     }
 
     /// Record render pass
@@ -301,5 +311,4 @@ impl<'a> ExecutionContext<'a> {
 
         Ok(())
     }
-
 }

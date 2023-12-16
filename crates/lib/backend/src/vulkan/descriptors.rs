@@ -27,7 +27,7 @@ use smol_str::SmolStr;
 use crate::{BackendError, BackendResult};
 
 use super::{
-    BufferSlice, BufferStorage, DescriptorSet, DescriptorSetInfo, Device, Image, ImageHandle,
+    BufferSlice, BufferStorage, DescriptorSet, DescriptorSetInfo, Device, ImageHandle,
     ImageStorage, ImageViewDesc, ProgramHandle, ProgramStorage, UniformStorage,
 };
 
