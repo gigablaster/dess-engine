@@ -1,13 +1,16 @@
 {
     "techniques": {
         "opqaue": {
-            "vertex": {
-                "shader": "shaders/unlit_vs.hlsl"
-            },
-            "fragment": {
-                "shader": "shaders/unlit_ps.hlsl"
-            },
-            "pipeline": {}
+            "shaders": [
+                {
+                    "path": "shaders/unlit_vs.hlsl",
+                    "stage": "vertex"
+                },
+                {
+                    "path": "shaders/unlit_ps.hlsl",
+                    "stage": "fragment"
+                }
+            ]
         }
     }
 }

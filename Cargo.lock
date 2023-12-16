@@ -516,13 +516,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "dess-assets"
+name = "dess-asset-pipeline"
 version = "0.1.0"
 dependencies = [
  "ash",
  "bevy_tasks",
  "bytes",
  "ddsfile",
+ "dess-assets",
  "dess-backend",
  "dess-common",
  "failure",
@@ -535,8 +536,23 @@ dependencies = [
  "mikktspace",
  "normalize-path",
  "numquant",
- "serde",
  "shader-prepper",
+ "siphasher",
+ "speedy",
+ "uuid",
+]
+
+[[package]]
+name = "dess-assets"
+version = "0.1.0"
+dependencies = [
+ "ash",
+ "bytes",
+ "dess-backend",
+ "dess-common",
+ "normalize-path",
+ "numquant",
+ "siphasher",
  "speedy",
  "uuid",
 ]
@@ -869,9 +885,9 @@ dependencies = [
 
 [[package]]
 name = "gimli"
-version = "0.28.0"
+version = "0.28.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fb8d784f27acf97159b40fc4db5ecd8aa23b9ad5ef69cdd136d3bc80665f0c0"
+checksum = "4271d37baee1b8c7e4b708028c57d816cf9d2434acb33a549475f78c181f6253"
 
 [[package]]
 name = "glam"
@@ -1089,9 +1105,9 @@ dependencies = [
 
 [[package]]
 name = "ispc_rt"
-version = "2.0.0"
+version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e0220406fa868139b6368b69f66118d211ec927a88ba41909622e67f08a11de"
+checksum = "c8d30e08ddfd6fe26c3ee2e856dff022420cd0514ed16f5ccf2dc3e1d5cae578"
 dependencies = [
  "libc",
  "num_cpus",

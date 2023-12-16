@@ -134,6 +134,18 @@ pub enum BlendMode {
     AlphaBlend,
 }
 
+impl<'a> From<&gltf::Material<'a>> for BlendMode {
+    fn from(value: &gltf::Material) -> Self {
+        match value.alpha_mode() {
+            gltf::material::AlphaMode::Opaque => BlendMode::Opaque,
+            gltf::material::AlphaMode::Mask => {
+                BlendMode::AlphaTest(value.alpha_cutoff().unwrap_or(0.0))
+            }
+            gltf::material::AlphaMode::Blend => BlendMode::AlphaBlend,
+        }
+    }
+}
+
 impl Eq for BlendMode {}
 
 impl Hash for BlendMode {
@@ -142,60 +154,39 @@ impl Hash for BlendMode {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Readable, Writable)]
-pub struct MeshMaterial {
-    pub effect: String,
-    pub blend: BlendMode,
-    pub images: HashMap<String, ImageSource>,
-    pub uniform: Vec<u8>,
+#[derive(Debug, Clone, PartialEq, Readable, Writable)]
+pub struct PbrMaterialDesc {
+    pub base: ImageSource,
+    pub metallic_roughness: ImageSource,
+    pub normal: ImageSource,
+    pub occlusion: ImageSource,
+    pub emissive: ImageSource,
+    pub emissive_power: f32,
 }
 
-impl Hash for MeshMaterial {
+impl Hash for PbrMaterialDesc {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.effect.hash(state);
-        self.blend.hash(state);
-        self.uniform.hash(state);
-        for (name, source) in self.images.iter() {
-            name.hash(state);
-            source.hash(state);
-        }
+        self.base.hash(state);
+        self.metallic_roughness.hash(state);
+        self.normal.hash(state);
+        self.occlusion.hash(state);
+        self.emissive.hash(state);
+        ((self.emissive_power * 100.0) as u32).hash(state);
     }
 }
 
-impl MeshMaterial {
-    pub fn new(effect: &str) -> Self {
-        Self {
-            effect: effect.to_owned(),
-            blend: BlendMode::Opaque,
-            images: HashMap::default(),
-            uniform: Vec::default(),
-        }
-    }
+impl Eq for PbrMaterialDesc {}
 
-    pub fn image(mut self, slot: &str, source: ImageSource) -> Self {
-        self.images.insert(slot.to_owned(), source);
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Readable, Writable)]
+pub enum MaterialDesc {
+    Pbr(PbrMaterialDesc),
+    Unlit(ImageSource),
+}
 
-        self
-    }
-
-    pub fn blend(mut self, blend: BlendMode) -> Self {
-        self.blend = blend;
-
-        self
-    }
-
-    pub fn uniform<T: Sized + Copy>(mut self, data: &T) -> Self {
-        unsafe { self.set_uniform_impp(data) };
-
-        self
-    }
-
-    unsafe fn set_uniform_impp<T: Sized + Copy>(&mut self, data: &T) {
-        let size = mem::size_of::<T>();
-        let src = slice::from_ref(data).as_ptr() as *const u8;
-        self.uniform.resize(size, 0u8);
-        copy_nonoverlapping(src, self.uniform.as_mut_ptr(), size);
-    }
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Readable, Writable)]
+pub struct MeshMaterial {
+    pub blend: BlendMode,
+    pub desc: MaterialDesc,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -455,7 +446,10 @@ fn create_unlit_material(
             ImagePurpose::Color,
         )
     };
-    MeshMaterial::new("effects/unlit.json").image("base", base)
+    MeshMaterial {
+        blend: material.into(),
+        desc: MaterialDesc::Unlit(base),
+    }
 }
 
 fn create_pbr_material(
@@ -512,15 +506,17 @@ fn create_pbr_material(
             ImagePurpose::NonColor,
         )
     };
-    MeshMaterial::new("effects/pbr.json")
-        .image("base", base)
-        .image("metallic_roughness", metallic_roughness)
-        .image("occlusion", occlusion)
-        .image("normal", normal)
-        .image("emissive", emissive)
-        .uniform(&PbrMeshMaterialUniform {
+    MeshMaterial {
+        blend: material.into(),
+        desc: MaterialDesc::Pbr(PbrMaterialDesc {
+            base,
+            metallic_roughness,
+            normal,
+            occlusion,
+            emissive,
             emissive_power: material.emissive_strength().unwrap_or(0.0),
-        })
+        }),
+    }
 }
 
 fn process_material(ctx: &mut SceneProcessingContext, material: &gltf::Material) -> u32 {
@@ -528,8 +524,7 @@ fn process_material(ctx: &mut SceneProcessingContext, material: &gltf::Material)
         create_unlit_material(ctx, material)
     } else {
         create_pbr_material(ctx, material)
-    }
-    .blend(process_blend(material));
+    };
     if let Some(index) = ctx.unique_materials.get(&material) {
         *index
     } else {

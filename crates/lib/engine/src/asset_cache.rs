@@ -23,22 +23,24 @@ use std::{
     sync::Arc,
 };
 
+use arrayvec::ArrayVec;
+use ash::vk;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use dess_assets::{
-    import_effect, process_image, process_model, Asset, EffectAsset, EffectSource, GltfSource,
-    ImageAsset, ImageSource, MeshMaterial, ModelAsset, ASSET_CACHE_PATH, get_absolute_asset_path,
+    get_absolute_asset_path, process_image, process_model, Asset, GltfSource, ImageAsset,
+    ImageSource, MeshMaterial, ModelAsset, ASSET_CACHE_PATH,
 };
 use dess_backend::vulkan::{
     DescriptorHandle, Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle,
-    ShaderDesc,
+    ShaderDesc, MAX_COLOR_ATTACHMENTS,
 };
 use dess_common::{Handle, Pool};
 use log::{debug, warn};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use smol_str::SmolStr;
 
 use crate::{
-    BufferPool, Error, RenderEffect, RenderEffectTechinque, RenderMaterial, RenderModel,
-    RenderScene, StaticRenderMesh, SubMesh,
+    BufferPool, Error, RenderMaterial, RenderModel, RenderScene, StaticRenderMesh, SubMesh,
 };
 
 /// Trait to check asset dependencies
@@ -211,12 +213,18 @@ impl<T: EngineAsset> SingleTypeAssetCache<T> {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct RenderPassDesc {
+    pub color_attachments: ArrayVec<vk::Format, MAX_COLOR_ATTACHMENTS>,
+    pub depth_attachment: Option<vk::Format>,
+}
+
 pub struct AssetCache {
     device: Arc<Device>,
     buffers: Arc<BufferPool>,
     programs: RwLock<HashMap<u64, ProgramHandle>>,
+    render_passes: RwLock<HashMap<SmolStr, RenderPassDesc>>,
     images: SingleTypeAssetCache<ImageHandle>,
-    effects: SingleTypeAssetCache<RenderEffect>,
     materials: SingleTypeAssetCache<RenderMaterial>,
     models: SingleTypeAssetCache<RenderModel>,
 }
@@ -226,16 +234,12 @@ pub trait AssetCacheFns {
     fn resolve_image(&self, handle: AssetHandle<ImageHandle>) -> Result<Arc<ImageHandle>, Error>;
     fn is_image_loaded(&self, handle: AssetHandle<ImageHandle>) -> bool;
     fn are_images_loaded(&self, handles: &[AssetHandle<ImageHandle>]) -> bool;
-    fn request_effect(&self, name: &str) -> AssetHandle<RenderEffect>;
-    fn resolve_effect(&self, handle: AssetHandle<RenderEffect>)
-        -> Result<Arc<RenderEffect>, Error>;
     fn request_material(&self, material: &MeshMaterial) -> AssetHandle<RenderMaterial>;
     fn is_material_loaded(&self, handle: AssetHandle<RenderMaterial>) -> bool;
     fn resolve_material(
         &self,
         handle: AssetHandle<RenderMaterial>,
     ) -> Result<Arc<RenderMaterial>, Error>;
-    fn is_effect_loaded(&self, handle: AssetHandle<RenderEffect>) -> bool;
     fn request_model(&self, name: &str) -> AssetHandle<RenderModel>;
     fn resolve_model(&self, handle: AssetHandle<RenderModel>) -> Result<Arc<RenderModel>, Error>;
     fn is_model_loaded(&self, handle: AssetHandle<RenderModel>) -> bool;
@@ -243,6 +247,8 @@ pub trait AssetCacheFns {
     fn render_device(&self) -> &Device;
     fn buffer_pool(&self) -> &BufferPool;
     fn get_or_create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error>;
+    fn register_render_pass(&self, name: &str, pass: RenderPassDesc);
+    fn get_render_pass(&self, name: &str) -> Option<RenderPassDesc>;
 }
 
 impl AssetCache {
@@ -251,8 +257,8 @@ impl AssetCache {
             device: device.clone(),
             buffers: buffers.clone(),
             programs: RwLock::default(),
+            render_passes: RwLock::default(),
             images: SingleTypeAssetCache::default(),
-            effects: SingleTypeAssetCache::default(),
             materials: SingleTypeAssetCache::default(),
             models: SingleTypeAssetCache::default(),
         })
@@ -317,50 +323,16 @@ impl AssetCache {
         Ok(process_image(source.import()?)?)
     }
 
-    async fn load_effect<T: AssetCacheFns>(
-        asset_cache: T,
-        source: String,
-    ) -> Result<RenderEffect, Error> {
-        let asset =
-            Self::load_from_cache_or_import(Self::import_effect(source.clone()), source, "effect")
-                .await?;
-        let mut techinques = HashMap::new();
-        for (name, tech) in asset.techniques {
-            let shaders = tech
-                .shaders
-                .iter()
-                .map(|x| ShaderDesc::new(x.stage.into(), &x.code))
-                .collect::<Vec<_>>();
-            let program = asset_cache.get_or_create_program(&shaders)?;
-            techinques.insert(
-                name.into(),
-                RenderEffectTechinque {
-                    program,
-                    pipeline_desc: tech.pipeline_desc.into(),
-                },
-            );
-        }
-        Ok(RenderEffect { techinques })
-    }
-
-    async fn import_effect(source: String) -> Result<EffectAsset, Error> {
-        let effect: EffectSource = serde_json::from_reader(File::open(get_absolute_asset_path(source)?)?)?;
-        Ok(import_effect(effect)?)
-    }
-
     async fn import_material<T: AssetCacheFns>(
         asset_cache: T,
         source: MeshMaterial,
     ) -> Result<RenderMaterial, Error> {
         Ok(RenderMaterial {
-            effect: asset_cache.request_effect(&source.effect),
-            uniform: source.uniform,
             images: source
                 .images
                 .iter()
                 .map(|(name, image)| (name.into(), asset_cache.request_image(image)))
                 .collect::<HashMap<_, _>>(),
-            descriptors: HashMap::default(),
         })
     }
 
@@ -473,32 +445,14 @@ impl AssetCacheFns for Arc<AssetCache> {
         self.images.are_finished(handles, self)
     }
 
-    fn request_effect(&self, name: &str) -> AssetHandle<RenderEffect> {
-        let name = name.to_owned();
-        self.effects
-            .request(&name.clone(), AssetCache::load_effect(self.clone(), name))
-    }
-
     fn maintain(&self) {
         self.images.maintain(self);
-        self.effects.maintain(self);
         self.materials.maintain(self);
         self.models.maintain(self);
     }
 
     fn render_device(&self) -> &Device {
         &self.device
-    }
-
-    fn resolve_effect(
-        &self,
-        handle: AssetHandle<RenderEffect>,
-    ) -> Result<Arc<RenderEffect>, Error> {
-        self.effects.resolve(handle, self)
-    }
-
-    fn is_effect_loaded(&self, handle: AssetHandle<RenderEffect>) -> bool {
-        self.effects.is_finished(handle, self)
     }
 
     fn get_or_create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
@@ -555,6 +509,14 @@ impl AssetCacheFns for Arc<AssetCache> {
 
     fn buffer_pool(&self) -> &BufferPool {
         &self.buffers
+    }
+
+    fn register_render_pass(&self, name: &str, pass: RenderPassDesc) {
+        self.render_passes.write().insert(name.into(), pass);
+    }
+
+    fn get_render_pass(&self, name: &str) -> Option<RenderPassDesc> {
+        self.render_passes.read().get(name.into()).cloned()
     }
 }
 

@@ -16,20 +16,20 @@
 use std::{
     any::Any,
     env,
-    fs::{self},
-    io::{self, Read, Write},
+    io::{self, BufWriter, Read, Write},
     path::{Path, PathBuf},
 };
 
+use speedy::Readable;
 use uuid::Uuid;
 
-mod effect;
 mod image;
-mod model;
+// mod model;
+// mod shader;
 
-pub use effect::*;
 pub use image::*;
-pub use model::*;
+// pub use model::*;
+// pub use shader::*;
 
 pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";
@@ -50,26 +50,25 @@ impl From<io::Error> for Error {
     }
 }
 
-pub trait Asset: Sized + Any {
-    const TYPE_ID: Uuid;
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+pub struct AssetRef(Uuid);
 
-    fn serialize<W: Write>(&self, w: &mut W) -> io::Result<()>;
-    fn deserialize<R: Read>(r: &mut R) -> io::Result<Self>;
+impl From<u128> for AssetRef {
+    fn from(value: u128) -> Self {
+        Self(Uuid::from_u128(value))
+    }
 }
 
-pub(crate) fn read_to_end<P>(path: P) -> io::Result<Vec<u8>>
-where
-    P: AsRef<Path>,
-{
-    let file = fs::File::open(path.as_ref())?;
-    // Allocate one extra byte so the buffer doesn't need to grow before the
-    // final `read` call at the end of the file.  Don't worry about `usize`
-    // overflow because reading will fail regardless in that case.
-    let length = file.metadata().map(|x| x.len() + 1).unwrap_or(0);
-    let mut reader = io::BufReader::new(file);
-    let mut data = Vec::with_capacity(length as usize);
-    reader.read_to_end(&mut data)?;
-    Ok(data)
+pub trait ContentSource {
+    fn get_ref(&self) -> AssetRef;
+}
+
+pub trait Asset: Send + Sync {
+    fn to_buffer(&self) -> io::Result<Vec<u8>>;
+}
+
+pub trait AssetLoad: Sized {
+    fn from_buffer(data: &[u8]) -> io::Result<Self>;
 }
 
 pub fn get_relative_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {

@@ -78,7 +78,7 @@ impl RenderAttachment {
 }
 
 const MAX_BARRIERS: usize = 32;
-const MAX_COLOR_ATTACHMENTS: usize = 8;
+pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 
 pub(crate) struct Pass {
     color_attachments: ArrayVec<RenderAttachment, MAX_COLOR_ATTACHMENTS>,
