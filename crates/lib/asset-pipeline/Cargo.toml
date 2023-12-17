@@ -17,6 +17,8 @@ normalize-path = "0.2.1"
 numquant = "0.2.0"
 bevy_tasks = { version = "0.12.1", features = ["multi-threaded"] }
 siphasher = "1.0.0"
+parking_lot = "0.12.1"
+log = "0.4.20"
 
 image = { version = "0.24.7", default-features = false, features = [
     "jpeg",

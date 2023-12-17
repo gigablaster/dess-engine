@@ -29,11 +29,40 @@ pub enum ImageType {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash, Readable, Writable)]
-pub struct ImageSouceDesc {
+pub struct ImageSourceDesc {
     pub ty: ImageType,
     pub generate_mips: bool,
     pub need_compression: bool,
     pub srgb: bool,
+}
+
+impl ImageSourceDesc {
+    pub fn color() -> Self {
+        Self {
+            ty: ImageType::Rgba,
+            generate_mips: true,
+            need_compression: true,
+            srgb: true,
+        }
+    }
+
+    pub fn non_color() -> Self {
+        Self {
+            ty: ImageType::Rgba,
+            generate_mips: true,
+            need_compression: true,
+            srgb: false,
+        }
+    }
+
+    pub fn normals() -> Self {
+        Self {
+            ty: ImageType::Rg,
+            generate_mips: true,
+            need_compression: true,
+            srgb: false,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -52,7 +81,7 @@ pub enum ImageDataSource {
 #[derive(Debug, Clone, PartialEq, Eq, Readable, Writable, Hash)]
 pub struct ImageSource {
     pub source: ImageDataSource,
-    pub desc: ImageSouceDesc,
+    pub desc: ImageSourceDesc,
 }
 
 impl ContentSource for ImageSource {
@@ -64,21 +93,21 @@ impl ContentSource for ImageSource {
 }
 
 impl ImageSource {
-    pub fn from_file<P: AsRef<Path>>(path: P, desc: ImageSouceDesc) -> Self {
+    pub fn from_file<P: AsRef<Path>>(path: P, desc: ImageSourceDesc) -> Self {
         Self {
             source: ImageDataSource::File(path.as_ref().to_str().unwrap().to_owned()),
             desc,
         }
     }
 
-    pub fn from_bytes(bytes: &[u8], desc: ImageSouceDesc) -> Self {
+    pub fn from_bytes(bytes: &[u8], desc: ImageSourceDesc) -> Self {
         Self {
             source: ImageDataSource::Bytes(bytes.to_vec()),
             desc,
         }
     }
 
-    pub fn from_color(color: [f32; 4], desc: ImageSouceDesc) -> Self {
+    pub fn from_color(color: [f32; 4], desc: ImageSourceDesc) -> Self {
         Self {
             source: ImageDataSource::Placeholder(color_to_pixles(color)),
             desc,
@@ -126,13 +155,13 @@ impl<C: Context> Writable<C> for ImageAsset {
 }
 
 impl Asset for ImageAsset {
-    fn to_buffer(&self) -> io::Result<Vec<u8>> {
+    fn to_bytes(&self) -> io::Result<Vec<u8>> {
         Ok(self.write_to_vec()?)
     }
 }
 
 impl AssetLoad for ImageAsset {
-    fn from_buffer(data: &[u8]) -> io::Result<Self> {
+    fn from_bytes(data: &[u8]) -> io::Result<Self> {
         Ok(Self::read_from_buffer(data)?)
     }
 }

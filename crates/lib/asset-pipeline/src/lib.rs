@@ -1,15 +1,23 @@
+mod gltf;
 mod image;
+mod shader;
 
 use std::{
-    fs,
-    io::{self, Read},
+    collections::{HashMap, HashSet},
+    fmt::Debug,
+    fs::{self, File},
+    io::{self, Read, Write},
     path::Path,
 };
 
-pub use image::*;
-
 use ::image::ImageError;
-use dess_assets::{Asset, AssetRef, ContentSource};
+use bevy_tasks::AsyncComputeTaskPool;
+use dess_assets::{get_cached_asset_path, Asset, AssetRef, ContentSource};
+pub use gltf::*;
+pub use image::*;
+use log::{error, info};
+use parking_lot::Mutex;
+pub use shader::*;
 
 #[derive(Debug)]
 pub enum Error {
@@ -30,12 +38,12 @@ impl From<ImageError> for Error {
     }
 }
 
-pub trait AsseetImporter: ContentSource {
+pub trait AssetImporter: ContentSource {
     fn import(&self, ctx: &dyn ImportContext) -> Result<Box<dyn Asset>, Error>;
 }
 
 pub trait ImportContext {
-    fn import(&self, content: Box<dyn AsseetImporter>) -> AssetRef;
+    fn import(&self, content: Box<dyn AssetImporter>) -> AssetRef;
 }
 
 pub(crate) fn read_to_end<P>(path: P) -> io::Result<Vec<u8>>
@@ -51,4 +59,60 @@ where
     let mut data = Vec::with_capacity(length as usize);
     reader.read_to_end(&mut data)?;
     Ok(data)
+}
+
+pub struct ContentProcessor {
+    to_process: Mutex<HashMap<AssetRef, Box<dyn AssetImporter>>>,
+    processed: Mutex<HashSet<AssetRef>>,
+}
+
+impl ImportContext for ContentProcessor {
+    fn import(&self, content: Box<dyn AssetImporter>) -> AssetRef {
+        let asset = content.get_ref();
+        if self.processed.lock().contains(&asset) {
+            return asset;
+        }
+        let mut to_process = self.to_process.lock();
+        if to_process.contains_key(&asset) {
+            return asset;
+        }
+        to_process.insert(asset, content);
+        asset
+    }
+}
+
+impl ContentProcessor {
+    pub fn process(&self) {
+        loop {
+            let mut to_process = self
+                .to_process
+                .lock()
+                .drain()
+                .map(|(_, x)| x)
+                .collect::<Vec<_>>();
+            if to_process.is_empty() {
+                break;
+            }
+            AsyncComputeTaskPool::get().scope(|s| {
+                for content in to_process.drain(..) {
+                    s.spawn(self.do_process(content));
+                }
+            });
+        }
+    }
+
+    async fn do_process(&self, content: Box<dyn AssetImporter>) {
+        match self.do_process_impl(&content).await {
+            Ok(_) => info!("Processed {:?}", content),
+            Err(err) => error!("Failed to process {:?} - {:?}", content, err),
+        }
+    }
+
+    async fn do_process_impl(&self, content: &Box<dyn AssetImporter>) -> Result<(), Error> {
+        let asset = content.get_ref();
+        let data = content.import(self)?.to_bytes()?;
+        File::create(get_cached_asset_path(asset))?.write_all(&data)?;
+        self.processed.lock().insert(asset);
+        Ok(())
+    }
 }

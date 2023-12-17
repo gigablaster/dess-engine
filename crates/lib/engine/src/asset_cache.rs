@@ -519,10 +519,3 @@ impl AssetCacheFns for Arc<AssetCache> {
         self.render_passes.read().get(name.into()).cloned()
     }
 }
-
-fn get_cached_asset_path<S: Hash>(source: &S, ext: &str) -> PathBuf {
-    let mut hasher = siphasher::sip::SipHasher::default();
-    source.hash(&mut hasher);
-    let key = hasher.finish();
-    Path::new(ASSET_CACHE_PATH).join(format!("{:x}.{}", key, ext))
-}

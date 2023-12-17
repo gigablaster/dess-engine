@@ -4,13 +4,13 @@ use ash::vk;
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use dess_assets::{
-    get_absolute_asset_path, Asset, ImageAsset, ImageDataSource, ImageRgba8Data, ImageSouceDesc,
-    ImageSource, ImageType,
+    get_absolute_asset_path, Asset, ImageAsset, ImageDataSource, ImageRgba8Data, ImageSource,
+    ImageSourceDesc, ImageType,
 };
 use image::{imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
-use crate::{read_to_end, AsseetImporter, Error, ImportContext};
+use crate::{read_to_end, AssetImporter, Error, ImportContext};
 
 #[derive(Debug)]
 pub enum RawImageData {
@@ -21,7 +21,7 @@ pub enum RawImageData {
 #[derive(Debug)]
 pub struct ImageContent {
     data: RawImageData,
-    desc: ImageSouceDesc,
+    desc: ImageSourceDesc,
 }
 
 fn import_image(source: &ImageSource) -> Result<ImageContent, Error> {
@@ -102,7 +102,7 @@ fn process_dds(image: &Dds) -> Result<ImageAsset, Error> {
     }
 }
 
-fn process_rgba(image: &ImageRgba8Data, desc: ImageSouceDesc) -> Result<ImageAsset, Error> {
+fn process_rgba(image: &ImageRgba8Data, desc: ImageSourceDesc) -> Result<ImageAsset, Error> {
     let dimensions = image.dimensions;
 
     let need_compression = desc.need_compression
@@ -253,7 +253,7 @@ mod dds_util {
     }
 }
 
-impl AsseetImporter for ImageSource {
+impl AssetImporter for ImageSource {
     fn import(&self, _ctx: &dyn ImportContext) -> Result<Box<dyn Asset>, Error> {
         let content = import_image(self)?;
         Ok(Box::new(process_image(content)?))

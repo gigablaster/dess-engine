@@ -16,20 +16,21 @@
 use std::{
     any::Any,
     env,
+    fmt::{Debug, Display},
     io::{self, BufWriter, Read, Write},
     path::{Path, PathBuf},
 };
 
-use speedy::Readable;
+use speedy::{Readable, Writable};
 use uuid::Uuid;
 
 mod image;
-// mod model;
-// mod shader;
+mod model;
+mod shader;
 
 pub use image::*;
-// pub use model::*;
-// pub use shader::*;
+pub use model::*;
+pub use shader::*;
 
 pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";
@@ -50,8 +51,14 @@ impl From<io::Error> for Error {
     }
 }
 
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Readable, Writable)]
 pub struct AssetRef(Uuid);
+
+impl Display for AssetRef {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0.as_hyphenated())
+    }
+}
 
 impl From<u128> for AssetRef {
     fn from(value: u128) -> Self {
@@ -59,16 +66,16 @@ impl From<u128> for AssetRef {
     }
 }
 
-pub trait ContentSource {
+pub trait ContentSource: Debug + Send + Sync {
     fn get_ref(&self) -> AssetRef;
 }
 
 pub trait Asset: Send + Sync {
-    fn to_buffer(&self) -> io::Result<Vec<u8>>;
+    fn to_bytes(&self) -> io::Result<Vec<u8>>;
 }
 
 pub trait AssetLoad: Sized {
-    fn from_buffer(data: &[u8]) -> io::Result<Self>;
+    fn from_bytes(data: &[u8]) -> io::Result<Self>;
 }
 
 pub fn get_relative_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
@@ -87,4 +94,8 @@ pub fn get_relative_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
 pub fn get_absolute_asset_path<P: AsRef<Path>>(path: P) -> io::Result<PathBuf> {
     let root = env::current_dir()?.canonicalize()?.join(ROOT_DATA_PATH);
     Ok(root.join(get_relative_asset_path(path.as_ref())?))
+}
+
+pub fn get_cached_asset_path(asset: AssetRef) -> PathBuf {
+    Path::new(ASSET_CACHE_PATH).join(format!("{}", asset))
 }
