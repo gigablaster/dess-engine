@@ -552,6 +552,7 @@ dependencies = [
  "bytes",
  "dess-backend",
  "dess-common",
+ "downcast-rs",
  "normalize-path",
  "numquant",
  "siphasher",
@@ -610,15 +611,15 @@ dependencies = [
  "ash",
  "bevy_tasks",
  "byte-slice-cast",
+ "bytes",
  "dess-assets",
  "dess-backend",
  "dess-common",
  "glam 0.24.2",
  "log",
+ "memmap2",
  "parking_lot",
  "puffin",
- "serde",
- "serde_json",
  "siphasher",
  "smol_str",
 ]
@@ -1261,9 +1262,9 @@ checksum = "f665ee40bc4a3c5590afb1e9677db74a508659dfd71e126420da8274909a0167"
 
 [[package]]
 name = "memmap2"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "deaba38d7abf1d4cca21cc89e932e542ba2b9258664d2a9ef0e61512039c9375"
+checksum = "8f850157af41022bbb1b04ed15c011ce4d59520be82a4e3718b10c34b02cb85e"
 dependencies = [
  "libc",
 ]

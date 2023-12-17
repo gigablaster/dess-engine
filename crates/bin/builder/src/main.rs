@@ -11,7 +11,6 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
             collect(processor, &path.path())?
         } else {
             let path = path.path().strip_prefix(ROOT_DATA_PATH).unwrap().to_owned();
-            dbg!(&path);
             let path_str = path.to_str().unwrap();
             if path_str.ends_with(".gltf") {
                 processor.import(Box::new(GltfSource::new(path)));

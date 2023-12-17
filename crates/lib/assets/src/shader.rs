@@ -16,6 +16,7 @@
 use std::{hash::Hash, path::Path};
 
 use ash::vk;
+use bytes::Bytes;
 use siphasher::sip128::Hasher128;
 
 use crate::{Asset, AssetLoad, ContentSource};
@@ -76,19 +77,19 @@ impl ContentSource for ShaderSource {
 
 #[derive(Debug)]
 pub struct ShaderAsset {
-    pub code: Vec<u8>,
+    pub code: Bytes,
 }
 
 impl Asset for ShaderAsset {
-    fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
-        Ok(self.code.clone())
+    fn to_bytes(&self) -> std::io::Result<Bytes> {
+        Ok(Bytes::copy_from_slice(&self.code))
     }
 }
 
 impl AssetLoad for ShaderAsset {
     fn from_bytes(data: &[u8]) -> std::io::Result<Self> {
         Ok(Self {
-            code: data.to_vec(),
+            code: Bytes::copy_from_slice(data),
         })
     }
 }

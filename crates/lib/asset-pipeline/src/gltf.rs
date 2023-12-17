@@ -1,6 +1,7 @@
 use std::{
     collections::HashMap,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use dess_assets::{
@@ -11,7 +12,7 @@ use dess_assets::{
 use normalize_path::NormalizePath;
 use numquant::linear::quantize;
 
-use crate::{AssetImporter, Error, ImportContext};
+use crate::{is_asset_changed, AssetImporter, Error, ImportContext};
 
 #[derive(Debug)]
 pub struct GltfContent {
@@ -452,8 +453,12 @@ fn process_model(gltf: GltfContent, ctx: &dyn ImportContext) -> ModelAsset {
 }
 
 impl AssetImporter for GltfSource {
-    fn import(&self, ctx: &dyn ImportContext) -> Result<Box<dyn dess_assets::Asset>, Error> {
+    fn import(&self, ctx: &dyn ImportContext) -> Result<Arc<dyn dess_assets::Asset>, Error> {
         let content = import_gltf(self)?;
-        Ok(Box::new(process_model(content, ctx)))
+        Ok(Arc::new(process_model(content, ctx)))
+    }
+
+    fn is_changed(&self, timestamp: std::time::SystemTime) -> bool {
+        is_asset_changed(&self.path, timestamp)
     }
 }

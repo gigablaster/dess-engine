@@ -8,11 +8,13 @@ use std::{
     fs::{self, File},
     io::{self, Read, Write},
     path::Path,
+    sync::Arc,
+    time::SystemTime,
 };
 
 use ::image::ImageError;
 use bevy_tasks::AsyncComputeTaskPool;
-use dess_assets::{get_cached_asset_path, Asset, AssetRef, ContentSource};
+use dess_assets::{get_absolute_asset_path, get_cached_asset_path, Asset, AssetRef, ContentSource};
 pub use gltf::*;
 pub use image::*;
 use log::{error, info};
@@ -22,7 +24,6 @@ pub use shader::*;
 #[derive(Debug)]
 pub enum Error {
     Io(io::Error),
-    BadSourceData,
     ProcessingFailed(String),
 }
 
@@ -39,7 +40,8 @@ impl From<ImageError> for Error {
 }
 
 pub trait AssetImporter: ContentSource {
-    fn import(&self, ctx: &dyn ImportContext) -> Result<Box<dyn Asset>, Error>;
+    fn import(&self, ctx: &dyn ImportContext) -> Result<Arc<dyn Asset>, Error>;
+    fn is_changed(&self, timestamp: SystemTime) -> bool;
 }
 
 pub trait ImportContext {
@@ -96,10 +98,24 @@ impl ContentProcessor {
             }
             AsyncComputeTaskPool::get().scope(|s| {
                 for content in to_process.drain(..) {
-                    s.spawn(self.do_process(content));
+                    if Self::need_rebuild(content.as_ref()) {
+                        s.spawn(self.do_process(content));
+                    }
                 }
             });
         }
+    }
+
+    pub fn need_rebuild(content: &dyn AssetImporter) -> bool {
+        let path = get_cached_asset_path(content.get_ref());
+        if path.exists() {
+            if let Ok(metadata) = fs::metadata(path) {
+                if let Ok(created) = metadata.created() {
+                    return content.is_changed(created);
+                }
+            }
+        }
+        true
     }
 
     async fn do_process(&self, content: Box<dyn AssetImporter>) {
@@ -116,4 +132,16 @@ impl ContentProcessor {
         self.processed.lock().insert(asset);
         Ok(())
     }
+}
+
+pub(crate) fn is_asset_changed<P: AsRef<Path>>(path: P, timestamp: SystemTime) -> bool {
+    if let Ok(metadata) = fs::metadata(get_absolute_asset_path(path).unwrap()) {
+        if let Ok(modified) = metadata.modified() {
+            return modified > timestamp;
+        }
+        if let Ok(created) = metadata.created() {
+            return created > timestamp;
+        }
+    }
+    false
 }

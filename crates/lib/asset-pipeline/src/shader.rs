@@ -1,11 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use dess_assets::{
     get_absolute_asset_path, get_relative_asset_path, ShaderAsset, ShaderSource, ShaderStage,
 };
 use shader_prepper::SourceChunk;
 
-use crate::{read_to_end, AssetImporter, Error};
+use crate::{is_asset_changed, read_to_end, AssetImporter, Error};
 
 struct IncludeProvider {}
 
@@ -59,7 +62,8 @@ fn compile_shader(
         ],
         &[],
     )
-    .map_err(|x| Error::ProcessingFailed(x.to_string()))?;
+    .map_err(|x| Error::ProcessingFailed(x.to_string()))?
+    .into();
     Ok(ShaderAsset { code })
 }
 
@@ -67,8 +71,17 @@ impl AssetImporter for ShaderSource {
     fn import(
         &self,
         _ctx: &dyn crate::ImportContext,
-    ) -> Result<Box<dyn dess_assets::Asset>, Error> {
+    ) -> Result<Arc<dyn dess_assets::Asset>, Error> {
         let chunks = import_shader(&self.path)?;
-        Ok(Box::new(compile_shader(&self.path, &chunks, self.stage)?))
+        Ok(Arc::new(compile_shader(&self.path, &chunks, self.stage)?))
+    }
+
+    fn is_changed(&self, timestamp: std::time::SystemTime) -> bool {
+        match import_shader(&self.path) {
+            Ok(chunks) => chunks
+                .iter()
+                .any(|chunk| is_asset_changed(&chunk.file, timestamp)),
+            Err(_) => true,
+        }
     }
 }

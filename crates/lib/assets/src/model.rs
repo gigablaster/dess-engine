@@ -13,22 +13,17 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use core::slice;
 use std::{
     collections::HashMap,
-    hash::{self, Hash, Hasher},
-    path::{Path, PathBuf},
+    hash::{self, Hash},
+    path::Path,
 };
 
-use normalize_path::NormalizePath;
-use numquant::linear::quantize;
+use bytes::Bytes;
 use siphasher::sip128::Hasher128;
 use speedy::{Context, Readable, Writable};
 
-use crate::{
-    get_absolute_asset_path, get_relative_asset_path, Asset, AssetLoad, AssetRef, ContentSource,
-    Error, ImageSource,
-};
+use crate::{Asset, AssetLoad, AssetRef, ContentSource};
 
 #[derive(Debug, Clone, Hash)]
 pub struct GltfSource {
@@ -262,8 +257,8 @@ pub struct ModelAsset {
 }
 
 impl Asset for ModelAsset {
-    fn to_bytes(&self) -> std::io::Result<Vec<u8>> {
-        Ok(self.write_to_vec()?)
+    fn to_bytes(&self) -> std::io::Result<Bytes> {
+        Ok(self.write_to_vec()?.into())
     }
 }
 

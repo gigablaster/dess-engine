@@ -1,4 +1,4 @@
-use std::{io::Cursor, path::Path};
+use std::{fs, io::Cursor, path::Path, sync::Arc};
 
 use ash::vk;
 use bytes::Bytes;
@@ -10,7 +10,7 @@ use dess_assets::{
 use image::{imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
-use crate::{read_to_end, AssetImporter, Error, ImportContext};
+use crate::{is_asset_changed, read_to_end, AssetImporter, Error, ImportContext};
 
 #[derive(Debug)]
 pub enum RawImageData {
@@ -98,7 +98,9 @@ fn process_dds(image: &Dds) -> Result<ImageAsset, Error> {
             mips,
         })
     } else {
-        Err(Error::BadSourceData)
+        Err(Error::ProcessingFailed(
+            "Failed to load DDS file".to_owned(),
+        ))
     }
 }
 
@@ -254,8 +256,15 @@ mod dds_util {
 }
 
 impl AssetImporter for ImageSource {
-    fn import(&self, _ctx: &dyn ImportContext) -> Result<Box<dyn Asset>, Error> {
+    fn import(&self, _ctx: &dyn ImportContext) -> Result<Arc<dyn Asset>, Error> {
         let content = import_image(self)?;
-        Ok(Box::new(process_image(content)?))
+        Ok(Arc::new(process_image(content)?))
+    }
+
+    fn is_changed(&self, timestamp: std::time::SystemTime) -> bool {
+        match &self.source {
+            ImageDataSource::File(path) => is_asset_changed(path, timestamp),
+            _ => false,
+        }
     }
 }

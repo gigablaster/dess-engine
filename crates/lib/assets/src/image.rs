@@ -155,8 +155,8 @@ impl<C: Context> Writable<C> for ImageAsset {
 }
 
 impl Asset for ImageAsset {
-    fn to_bytes(&self) -> io::Result<Vec<u8>> {
-        Ok(self.write_to_vec()?)
+    fn to_bytes(&self) -> io::Result<Bytes> {
+        Ok(self.write_to_vec()?.into())
     }
 }
 

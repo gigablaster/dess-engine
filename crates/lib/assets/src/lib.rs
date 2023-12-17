@@ -21,6 +21,8 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use bytes::Bytes;
+use downcast_rs::{impl_downcast, Downcast, DowncastSync};
 use speedy::{Readable, Writable};
 use uuid::Uuid;
 
@@ -35,21 +37,6 @@ pub use shader::*;
 pub const ROOT_DATA_PATH: &str = "assets";
 pub const ASSET_CACHE_PATH: &str = ".cache";
 pub const BUNDLE_DESC_PATH: &str = "bundles";
-
-#[derive(Debug, Clone)]
-pub enum Error {
-    Io(String),
-    ImportFailed(String),
-    ProcessingFailed(String),
-    BadSourceData,
-    EvalFailed,
-}
-
-impl From<io::Error> for Error {
-    fn from(value: io::Error) -> Self {
-        Self::Io(value.to_string())
-    }
-}
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, Readable, Writable)]
 pub struct AssetRef(Uuid);
@@ -70,9 +57,10 @@ pub trait ContentSource: Debug + Send + Sync {
     fn get_ref(&self) -> AssetRef;
 }
 
-pub trait Asset: Send + Sync {
-    fn to_bytes(&self) -> io::Result<Vec<u8>>;
+pub trait Asset: DowncastSync + Debug + Send + Sync + 'static {
+    fn to_bytes(&self) -> io::Result<Bytes>;
 }
+impl_downcast!(Asset);
 
 pub trait AssetLoad: Sized {
     fn from_bytes(data: &[u8]) -> io::Result<Self>;

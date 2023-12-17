@@ -13,40 +13,44 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod asset_cache;
+// mod asset_cache;
 mod buffer_pool;
-mod material;
-mod mesh;
+// mod material;
+// mod mesh;
 mod pool;
+mod resource_manager;
 
-use std::io;
+use std::{
+    fs::File,
+    io::{self, Write},
+    path::Path,
+    sync::Arc,
+};
 
-pub use asset_cache::*;
+// pub use asset_cache::*;
 pub use buffer_pool::*;
+use dess_assets::{get_cached_asset_path, Asset, AssetLoad, ContentSource};
 use dess_backend::BackendError;
-pub use material::*;
-pub use mesh::*;
+use log::debug;
+use memmap2::Mmap;
+// pub use material::*;
+// pub use mesh::*;
 pub use pool::*;
+pub use resource_manager::*;
 
 #[derive(Debug, Clone)]
 pub enum Error {
-    IoError(String),
+    Io(Arc<io::Error>),
     ParseError(String),
     BackendError(BackendError),
     InvalidHandle,
-    ImportFailed(dess_assets::Error),
+    ImportFailed(String),
     LoadingFailed,
 }
 
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
-        Self::IoError(value.to_string())
-    }
-}
-
-impl From<serde_json::Error> for Error {
-    fn from(value: serde_json::Error) -> Self {
-        Self::ParseError(value.to_string())
+        Self::Io(Arc::new(value))
     }
 }
 
@@ -56,8 +60,25 @@ impl From<BackendError> for Error {
     }
 }
 
-impl From<dess_assets::Error> for Error {
-    fn from(value: dess_assets::Error) -> Self {
-        Self::ImportFailed(value)
+fn map_file<P: AsRef<Path>>(path: P) -> io::Result<Mmap> {
+    let file = File::open(path)?;
+    let mmap = unsafe { Mmap::map(&file) }?;
+    Ok(mmap)
+}
+
+pub(crate) fn load_cached_asset<T: Asset + AssetLoad, U: ContentSource>(
+    source: &U,
+) -> io::Result<T> {
+    let asset = source.get_ref();
+    let path = get_cached_asset_path(asset);
+    if path.exists() {
+        debug!("Loading asset {:?}", source);
+        let data = map_file(path)?;
+        Ok(T::from_bytes(&data)?)
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("Asset {:?} not found", source),
+        ))
     }
 }

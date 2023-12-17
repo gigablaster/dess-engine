@@ -19,5 +19,5 @@ siphasher = "1.0.0"
 log = "0.4.20"
 arrayvec = "0.7.4"
 byte-slice-cast = "1.2.2"
-serde = { version = "1.0.192", features = ["derive"] }
-serde_json = "1.0.108"
+memmap2 = "0.9.1"
+bytes = "1.5.0"

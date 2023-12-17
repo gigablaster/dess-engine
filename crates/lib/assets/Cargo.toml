@@ -15,3 +15,4 @@ speedy = { version = "0.8.6", features = ["speedy-derive", "uuid"] }
 normalize-path = "0.2.1"
 numquant = "0.2.0"
 siphasher = "1.0.0"
+downcast-rs = "1.2.0"
