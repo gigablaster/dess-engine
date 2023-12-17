@@ -585,6 +585,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "dess-builder"
+version = "0.1.0"
+dependencies = [
+ "bevy_tasks",
+ "dess-asset-pipeline",
+ "dess-assets",
+ "log",
+ "simple_logger",
+]
+
+[[package]]
 name = "dess-common"
 version = "0.1.0"
 dependencies = [

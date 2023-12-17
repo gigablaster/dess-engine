@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::hash::Hash;
+use std::{hash::Hash, path::Path};
 
 use ash::vk;
 use siphasher::sip128::Hasher128;
@@ -41,6 +41,29 @@ impl From<ShaderStage> for vk::ShaderStageFlags {
 pub struct ShaderSource {
     pub stage: ShaderStage,
     pub path: String,
+}
+
+impl ShaderSource {
+    pub fn vertex<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            stage: ShaderStage::Vertex,
+            path: path.as_ref().to_str().unwrap().to_owned(),
+        }
+    }
+
+    pub fn fragment<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            stage: ShaderStage::Fragment,
+            path: path.as_ref().to_str().unwrap().to_owned(),
+        }
+    }
+
+    pub fn compute<P: AsRef<Path>>(path: P) -> Self {
+        Self {
+            stage: ShaderStage::Compute,
+            path: path.as_ref().to_str().unwrap().to_owned(),
+        }
+    }
 }
 
 impl ContentSource for ShaderSource {

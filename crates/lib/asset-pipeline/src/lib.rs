@@ -61,6 +61,7 @@ where
     Ok(data)
 }
 
+#[derive(Debug, Default)]
 pub struct ContentProcessor {
     to_process: Mutex<HashMap<AssetRef, Box<dyn AssetImporter>>>,
     processed: Mutex<HashSet<AssetRef>>,
