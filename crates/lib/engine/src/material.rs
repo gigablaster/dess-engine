@@ -15,33 +15,49 @@
 
 use std::collections::HashMap;
 
-use dess_backend::vulkan::ImageHandle;
+use ash::vk;
+use dess_backend::{
+    vulkan::{DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
+    BackendResultExt,
+};
 use smol_str::SmolStr;
 
-use crate::{AssetCacheFns, AssetHandle, EngineAsset, Error};
+use crate::{Error, Resource, ResourceContext, ResourceHandle};
 
 /// Material contains effect and a per-material descriptor set
 /// for every effect technique.
 ///
 /// Pipelines aren't created at this stage, they belong to render pass.
 #[derive(Debug, Default)]
-pub struct RenderMaterial {
-    pub images: HashMap<SmolStr, AssetHandle<ImageHandle>>,
+pub struct Material {
+    program: ProgramHandle,
+    images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
+    ds: DescriptorHandle,
 }
 
-impl EngineAsset for RenderMaterial {
-    fn is_ready<T: AssetCacheFns>(&self, asset_cache: &T) -> bool {
+impl Resource for Material {
+    fn is_finished(&self, ctx: &ResourceContext) -> bool {
         self.images
             .iter()
-            .all(|(_, image)| asset_cache.is_image_loaded(*image))
+            .all(|(_, image)| ctx.is_image_finished(*image))
     }
 
-    fn resolve<T: AssetCacheFns>(&mut self, asset_cache: &T) -> Result<(), Error> {
+    fn resolve(&mut self, ctx: &ResourceContext) -> Result<(), Error> {
         let mut images = HashMap::new();
         for (name, image) in self.images.iter() {
-            let image = asset_cache.resolve_image(*image)?;
-            images.insert(name, image);
+            images.insert(name, ctx.resolve_image(*image)?);
         }
+        ctx.device.with_descriptors(|ctx| {
+            let ds = ctx.from_program(self.program, PER_MATERIAL_BINDING_SLOT)?;
+            for (name, image) in images {
+                ctx.bind_image_by_name(ds, name, *image, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .ignore_missing()?;
+            }
+            self.ds = ds;
+
+            Ok(())
+        })?;
+
         Ok(())
     }
 }

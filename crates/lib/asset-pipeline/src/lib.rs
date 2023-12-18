@@ -119,13 +119,13 @@ impl ContentProcessor {
     }
 
     async fn do_process(&self, content: Box<dyn AssetImporter>) {
-        match self.do_process_impl(&content).await {
+        match self.do_process_impl(content.as_ref()).await {
             Ok(_) => info!("Processed {:?}", content),
             Err(err) => error!("Failed to process {:?} - {:?}", content, err),
         }
     }
 
-    async fn do_process_impl(&self, content: &Box<dyn AssetImporter>) -> Result<(), Error> {
+    async fn do_process_impl(&self, content: &dyn AssetImporter) -> Result<(), Error> {
         let asset = content.get_ref();
         let data = content.import(self)?.to_bytes()?;
         File::create(get_cached_asset_path(asset))?.write_all(&data)?;

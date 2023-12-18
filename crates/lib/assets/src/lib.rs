@@ -14,15 +14,14 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    any::Any,
     env,
     fmt::{Debug, Display},
-    io::{self, BufWriter, Read, Write},
+    io::{self},
     path::{Path, PathBuf},
 };
 
 use bytes::Bytes;
-use downcast_rs::{impl_downcast, Downcast, DowncastSync};
+use downcast_rs::{impl_downcast, DowncastSync};
 use speedy::{Readable, Writable};
 use uuid::Uuid;
 

@@ -5,7 +5,7 @@ use dess_common::GameTime;
 
 mod runner;
 
-use dess_engine::{AssetCache, BufferPool, ResourcePool};
+use dess_engine::{BufferPool, ResourceManager, ResourcePool};
 pub use runner::*;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -21,7 +21,7 @@ pub struct RenderContext<'a> {
 }
 
 pub struct UpdateContext {
-    pub asset_cache: Arc<AssetCache>,
+    pub resource_manager: Arc<ResourceManager>,
 }
 
 pub trait Client {

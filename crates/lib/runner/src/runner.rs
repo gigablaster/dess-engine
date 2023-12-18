@@ -6,7 +6,7 @@ use dess_backend::vulkan::{
     Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
 };
 use dess_common::TimeFilter;
-use dess_engine::{AssetCache, AssetCacheFns, BufferPool, ResourcePool};
+use dess_engine::{BufferPool, ResourceManager, ResourcePool};
 use log::info;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
@@ -72,7 +72,7 @@ impl<T: Client> Runner<T> {
         let device = Device::new(instance, pdevice).unwrap();
         let resource_pool = ResourcePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
-        let asset_cache = AssetCache::new(&device, &buffer_pool);
+        let asset_cache = ResourceManager::new(&device);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
@@ -82,7 +82,7 @@ impl<T: Client> Runner<T> {
         ComputeTaskPool::get_or_init(TaskPool::default);
         info!("Init game");
         self.client.init(crate::UpdateContext {
-            asset_cache: asset_cache.clone(),
+            resource_manager: asset_cache.clone(),
         });
         info!("Main loop enter");
         let mut last_timestamp = Instant::now();
@@ -157,7 +157,7 @@ impl<T: Client> Runner<T> {
                         asset_cache.maintain();
                         if self.client.tick(
                             crate::UpdateContext {
-                                asset_cache: asset_cache.clone(),
+                                resource_manager: asset_cache.clone(),
                             },
                             dt,
                         ) == ClientState::Exit

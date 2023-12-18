@@ -31,7 +31,7 @@ impl shader_prepper::IncludeProvider for IncludeProvider {
 fn import_shader(path: &str) -> Result<Vec<SourceChunk>, Error> {
     let mut include_provider = IncludeProvider {};
     let chunks =
-        shader_prepper::process_file(&path, &mut include_provider, Path::new("").to_path_buf())
+        shader_prepper::process_file(path, &mut include_provider, Path::new("").to_path_buf())
             .map_err(|x| Error::ProcessingFailed(x.to_string()))?;
     Ok(chunks)
 }
@@ -42,14 +42,14 @@ fn compile_shader(
     stage: ShaderStage,
 ) -> Result<ShaderAsset, Error> {
     let mut source = String::new();
-    chunks.into_iter().for_each(|x| source += &x.source);
+    chunks.iter().for_each(|x| source += &x.source);
     let profile = match stage {
         ShaderStage::Vertex => "vs_6_4",
         ShaderStage::Fragment => "ps_6_4",
         ShaderStage::Compute => "cs_6_4",
     };
     let code = hassle_rs::compile_hlsl(
-        &name,
+        name,
         &source,
         "main",
         profile,

@@ -649,9 +649,9 @@ impl Device {
 
     pub fn with_descriptors<F>(&self, cb: F) -> BackendResult<()>
     where
-        F: FnOnce(UpdateDescriptorContext) -> BackendResult<()>,
+        F: FnOnce(&mut UpdateDescriptorContext) -> BackendResult<()>,
     {
-        let context = UpdateDescriptorContext {
+        let mut context = UpdateDescriptorContext {
             device: self,
             uniforms: &mut self.uniform_storage.lock(),
             storage: &mut self.descriptor_storage.write(),
@@ -662,7 +662,7 @@ impl Device {
             retired_descriptors: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),
             retired_uniforms: Vec::with_capacity(BASIC_DESCIPTOR_UPDATE_COUNT),
         };
-        cb(context)
+        cb(&mut context)
     }
 
     fn is_valid_descriptor_impl(

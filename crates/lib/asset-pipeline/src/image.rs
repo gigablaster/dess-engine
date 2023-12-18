@@ -1,4 +1,4 @@
-use std::{fs, io::Cursor, path::Path, sync::Arc};
+use std::{io::Cursor, path::Path, sync::Arc};
 
 use ash::vk;
 use bytes::Bytes;

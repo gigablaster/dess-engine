@@ -15,25 +15,25 @@
 
 // mod asset_cache;
 mod buffer_pool;
-// mod material;
+mod material;
 // mod mesh;
 mod pool;
 mod resource_manager;
 
 use std::{
     fs::File,
-    io::{self, Write},
+    io::{self},
     path::Path,
     sync::Arc,
 };
 
 // pub use asset_cache::*;
 pub use buffer_pool::*;
-use dess_assets::{get_cached_asset_path, Asset, AssetLoad, ContentSource};
+use dess_assets::{get_cached_asset_path, Asset, AssetLoad, AssetRef};
 use dess_backend::BackendError;
 use log::debug;
+pub use material::*;
 use memmap2::Mmap;
-// pub use material::*;
 // pub use mesh::*;
 pub use pool::*;
 pub use resource_manager::*;
@@ -66,19 +66,16 @@ fn map_file<P: AsRef<Path>>(path: P) -> io::Result<Mmap> {
     Ok(mmap)
 }
 
-pub(crate) fn load_cached_asset<T: Asset + AssetLoad, U: ContentSource>(
-    source: &U,
-) -> io::Result<T> {
-    let asset = source.get_ref();
+pub(crate) fn load_cached_asset<T: Asset + AssetLoad>(asset: AssetRef) -> io::Result<T> {
     let path = get_cached_asset_path(asset);
     if path.exists() {
-        debug!("Loading asset {:?}", source);
+        debug!("Loading asset {:?}", asset);
         let data = map_file(path)?;
         Ok(T::from_bytes(&data)?)
     } else {
         Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!("Asset {:?} not found", source),
+            format!("Asset {:?} not found", asset),
         ))
     }
 }

@@ -142,9 +142,8 @@ impl Eq for BlendMode {}
 impl Hash for BlendMode {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         core::mem::discriminant(self).hash(state);
-        match self {
-            BlendMode::AlphaTest(value) => (((value.clamp(0.0, 1.0)) * 255.0) as u8).hash(state),
-            _ => {}
+        if let BlendMode::AlphaTest(value) = self {
+            (((value.clamp(0.0, 1.0)) * 255.0) as u8).hash(state)
         }
     }
 }
