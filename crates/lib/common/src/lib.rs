@@ -14,13 +14,13 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod chunky_list;
-mod handle;
 mod memory;
+mod pool;
 mod time;
 
 pub use chunky_list::*;
-pub use handle::*;
 pub use memory::*;
+pub use pool::*;
 pub use time::*;
 
 pub trait Align<T> {
