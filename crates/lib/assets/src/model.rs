@@ -238,7 +238,7 @@ impl StaticMeshGeometry {
 }
 
 #[derive(Debug, Default, Readable, Writable)]
-pub struct SceneAsset {
+pub struct ModelAsset {
     pub static_meshes: Vec<MeshData>,
     pub mesh_names: HashMap<String, u32>,
     pub bones: Vec<Bone>,
@@ -247,21 +247,21 @@ pub struct SceneAsset {
 }
 
 #[derive(Debug, Default, Readable, Writable)]
-pub struct ModelAsset {
+pub struct ModelCollectionAsset {
     pub static_geometry: Vec<StaticMeshGeometry>,
     pub attributes: Vec<LightingAttributes>,
     pub indices: Vec<u16>,
     pub materials: Vec<MeshMaterial>,
-    pub scenes: HashMap<String, SceneAsset>,
+    pub models: HashMap<String, ModelAsset>,
 }
 
-impl Asset for ModelAsset {
+impl Asset for ModelCollectionAsset {
     fn to_bytes(&self) -> std::io::Result<Bytes> {
         Ok(self.write_to_vec()?.into())
     }
 }
 
-impl AssetLoad for ModelAsset {
+impl AssetLoad for ModelCollectionAsset {
     fn from_bytes(data: &[u8]) -> std::io::Result<Self> {
         Ok(Self::read_from_buffer(data)?)
     }

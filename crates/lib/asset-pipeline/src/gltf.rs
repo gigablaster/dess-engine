@@ -7,7 +7,7 @@ use std::{
 use dess_assets::{
     get_absolute_asset_path, get_relative_asset_path, AssetRef, BlendMode, Bone, GltfSource,
     ImageSource, ImageSourceDesc, LightingAttributes, MeshData, MeshMaterial, ModelAsset,
-    SceneAsset, StaticMeshGeometry, SubMesh, MATERIAL_TYPE_PBR, MATERIAL_TYPE_UNLIT,
+    ModelCollectionAsset, StaticMeshGeometry, SubMesh, MATERIAL_TYPE_PBR, MATERIAL_TYPE_UNLIT,
 };
 use normalize_path::NormalizePath;
 use numquant::linear::quantize;
@@ -71,8 +71,8 @@ impl<'a> mikktspace::Geometry for TangentCalcContext<'a> {
 
 struct SceneProcessingContext<'a> {
     ctx: &'a dyn ImportContext,
-    model: &'a mut ModelAsset,
-    scene: &'a mut SceneAsset,
+    model: &'a mut ModelCollectionAsset,
+    scene: &'a mut ModelAsset,
     buffers: &'a Vec<gltf::buffer::Data>,
     base: &'a Path,
     // Index in gltf -> index in asset
@@ -127,10 +127,8 @@ pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[i16; 2]> {
     quantized.iter().map(|x| [x[0], x[1]]).collect()
 }
 
-fn process_scene(ctx: &mut SceneProcessingContext, scene: gltf::Scene) {
-    for node in scene.nodes() {
-        process_node(ctx, "", None, node);
-    }
+fn process_model(ctx: &mut SceneProcessingContext, root: gltf::Node) {
+    process_node(ctx, "", None, root);
 }
 
 fn process_attributes(
@@ -430,32 +428,38 @@ fn process_node(
     }
 }
 
-fn process_model(gltf: GltfContent, ctx: &dyn ImportContext) -> ModelAsset {
-    let mut model = ModelAsset::default();
+fn process_model_collection(gltf: GltfContent, ctx: &dyn ImportContext) -> ModelCollectionAsset {
+    let mut collection = ModelCollectionAsset::default();
 
-    for (index, scene) in gltf.document.scenes().enumerate() {
-        let name = scene.name().unwrap_or(&format!("{}", index)).to_string();
-        let mut result = SceneAsset::default();
-        let mut ctx = SceneProcessingContext {
-            ctx,
-            model: &mut model,
-            scene: &mut result,
-            base: &gltf.base,
-            buffers: &gltf.buffers,
-            processed_meshes: HashMap::default(),
-            unique_materials: HashMap::default(),
-        };
-        process_scene(&mut ctx, scene);
-        model.scenes.insert(name, result);
+    for (scene_index, scene) in gltf.document.scenes().enumerate() {
+        let name = scene.name().unwrap_or(&format!("{scene_index}")).to_owned();
+        for (node_index, node) in scene.nodes().enumerate() {
+            let mut result = ModelAsset::default();
+            let name = node
+                .name()
+                .unwrap_or(&format!("{name}_{node_index}"))
+                .to_owned();
+            let mut ctx = SceneProcessingContext {
+                ctx,
+                model: &mut collection,
+                scene: &mut result,
+                base: &gltf.base,
+                buffers: &gltf.buffers,
+                processed_meshes: HashMap::default(),
+                unique_materials: HashMap::default(),
+            };
+            process_model(&mut ctx, node);
+            collection.models.insert(name, result);
+        }
     }
 
-    model
+    collection
 }
 
 impl AssetImporter for GltfSource {
     fn import(&self, ctx: &dyn ImportContext) -> Result<Arc<dyn dess_assets::Asset>, Error> {
         let content = import_gltf(self)?;
-        Ok(Arc::new(process_model(content, ctx)))
+        Ok(Arc::new(process_model_collection(content, ctx)))
     }
 
     fn is_changed(&self, timestamp: std::time::SystemTime) -> bool {
