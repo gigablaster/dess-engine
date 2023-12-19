@@ -46,7 +46,7 @@ pub struct DescriptorData {
     pub(crate) dynamic_uniforms: Vec<BindingPoint<vk::Buffer>>,
     pub(crate) storage_buffers: Vec<BindingPoint<(vk::Buffer, u32, u32)>>,
     pub(crate) storage_images: Vec<BindingPoint<(vk::ImageView, vk::ImageLayout)>>,
-    pub(crate) images: Vec<BindingPoint<(vk::ImageView, vk::ImageLayout)>>,
+    pub(crate) sampled_images: Vec<BindingPoint<(vk::ImageView, vk::ImageLayout)>>,
     pub(crate) count: DescriptorTotalCount,
     pub(crate) layout: vk::DescriptorSetLayout,
     pub(crate) names: HashMap<SmolStr, usize>,
@@ -72,7 +72,7 @@ impl DescriptorData {
         self.static_uniforms
             .iter()
             .all(|buffer| buffer.data.is_some())
-            && self.images.iter().all(|image| image.data.is_some())
+            && self.sampled_images.iter().all(|image| image.data.is_some())
             && self
                 .storage_buffers
                 .iter()
@@ -206,7 +206,7 @@ impl<'a> UpdateDescriptorContext<'a> {
                 dynamic_uniforms,
                 storage_buffers,
                 storage_images,
-                images,
+                sampled_images: images,
                 count,
                 layout: set.layout,
                 names,
@@ -298,7 +298,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .get_cold_mut(handle)
             .ok_or(BackendError::InvalidHandle)?;
         let image_bind = desc
-            .images
+            .sampled_images
             .iter_mut()
             .find(|point| point.binding == binding as u32);
         if let Some(point) = image_bind {
@@ -554,7 +554,7 @@ impl Device {
                 return;
             }
             if let Some(descriptor) = &desc.descriptor {
-                desc.images
+                desc.sampled_images
                     .iter()
                     .map(|binding| {
                         let image = binding.data.as_ref().unwrap();
