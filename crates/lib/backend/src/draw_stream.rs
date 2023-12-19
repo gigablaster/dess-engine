@@ -161,7 +161,7 @@ impl DrawStream {
             "Pipeline handle must be valid"
         );
         debug_assert!(index_count > 0, "Must draw at least one primitive");
-        debug_assert!(instance_count> 0, "Must render at least one instance");
+        debug_assert!(instance_count > 0, "Must render at least one instance");
         if self.current.first_index != first_index {
             self.current.first_index = first_index;
             self.mask |= FIRST_INDEX;
@@ -404,10 +404,14 @@ impl DrawStream {
                 dynamic_offset_changed = false;
             }
             unsafe {
-                context
-                    .device
-                    .raw
-                    .cmd_draw_indexed(cb, vertex_count, instance_count, first_index, 0, 0)
+                context.device.raw.cmd_draw_indexed(
+                    cb,
+                    vertex_count,
+                    instance_count,
+                    first_index,
+                    0,
+                    0,
+                )
             }
         }
         Ok(())

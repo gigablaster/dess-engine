@@ -259,7 +259,7 @@ impl Device {
                 vk::BufferUsageFlags::VERTEX_BUFFER
                     | vk::BufferUsageFlags::INDEX_BUFFER
                     | vk::BufferUsageFlags::UNIFORM_BUFFER
-                    | vk::BufferUsageFlags::STORAGE_BUFFER
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
             )
             .sharing_mode(vk::SharingMode::EXCLUSIVE)
             .queue_family_indices(&[universal_queue_index])
