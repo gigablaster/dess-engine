@@ -13,7 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{fmt::Display, hash::Hash, marker::PhantomData};
+use std::{
+    fmt::{Debug, Display},
+    hash::Hash,
+    marker::PhantomData,
+};
 
 const DEFAULT_SPACE: usize = 4096;
 const GENERATION_BITS: u32 = 12;
@@ -273,6 +277,148 @@ impl<T> Iterator for Drain<T> {
             return None;
         }
         let result = Some(self.data[self.current].take().unwrap());
+        self.current += 1;
+
+        result
+    }
+}
+
+pub struct HotColdPool<T: Debug, U: Debug> {
+    hot: Pool<T>,
+    cold: Pool<U>,
+}
+
+impl<T: Debug, U: Debug> HotColdPool<T, U> {
+    pub fn hot(&self) -> &Pool<T> {
+        &self.hot
+    }
+
+    pub fn cold(&self) -> &Pool<U> {
+        &self.cold
+    }
+
+    pub fn push(&mut self, hot: T, cold: U) -> Handle<T> {
+        let hot_handle = self.hot.push(hot);
+        let cold_handle = self.cold.push(cold);
+        debug_assert_eq!(hot_handle, cold_handle.into_another());
+
+        hot_handle
+    }
+
+    pub fn get(&self, handle: Handle<T>) -> Option<&T> {
+        self.hot.get(handle)
+    }
+
+    pub fn get_mut(&mut self, handle: Handle<T>) -> Option<&mut T> {
+        self.hot.get_mut(handle)
+    }
+
+    pub fn get_cold(&self, handle: Handle<T>) -> Option<&U> {
+        self.cold.get(handle.into_another())
+    }
+
+    pub fn get_cold_mut(&mut self, handle: Handle<T>) -> Option<&mut U> {
+        self.cold.get_mut(handle.into_another())
+    }
+
+    pub fn replace(&mut self, handle: Handle<T>, data: T) -> Option<T> {
+        self.hot.replace(handle, data)
+    }
+
+    pub fn replace_cold(&mut self, handle: Handle<T>, data: U) -> Option<U> {
+        self.cold.replace(handle.into_another(), data)
+    }
+
+    pub fn remove(&mut self, handle: Handle<T>) -> Option<(T, U)> {
+        if let Some(hot) = self.hot.remove(handle) {
+            let cold = self
+                .cold
+                .remove(handle.into_another())
+                .expect("Cold data must present under same handle");
+            Some((hot, cold))
+        } else {
+            None
+        }
+    }
+
+    pub fn iter(&self) -> HotColdIter<T, U> {
+        HotColdIter {
+            hot: &self.hot,
+            cold: &self.cold,
+            current: 0,
+        }
+    }
+
+    pub fn drain(&mut self) -> HotColdDrain<T, U> {
+        HotColdDrain {
+            hot: std::mem::take(&mut self.hot.data),
+            cold: std::mem::take(&mut self.cold.data),
+            current: 0,
+        }
+    }
+}
+
+pub struct HotColdIter<'a, T, U> {
+    hot: &'a Pool<T>,
+    cold: &'a Pool<U>,
+    current: usize,
+}
+
+impl<'a, T, U> Iterator for HotColdIter<'a, T, U> {
+    type Item = (&'a T, &'a U);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current != self.hot.data.len() && self.hot.data[self.current].is_none() {
+            self.current += 1;
+        }
+        if self.current == self.hot.data.len() {
+            return None;
+        }
+        let result = Some((
+            self.hot.data[self.current].as_ref().unwrap(),
+            self.cold.data[self.current].as_ref().unwrap(),
+        ));
+        self.current += 1;
+
+        result
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = self.hot.data.len() - self.hot.empty.len() - self.current;
+
+        (size, Some(size))
+    }
+}
+
+impl<T: Debug, U: Debug> Default for HotColdPool<T, U> {
+    fn default() -> Self {
+        Self {
+            hot: Default::default(),
+            cold: Default::default(),
+        }
+    }
+}
+
+pub struct HotColdDrain<T, U> {
+    hot: Vec<Option<T>>,
+    cold: Vec<Option<U>>,
+    current: usize,
+}
+
+impl<T, U> Iterator for HotColdDrain<T, U> {
+    type Item = (T, U);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current != self.hot.len() && self.hot[self.current].is_none() {
+            self.current += 1;
+        }
+        if self.current == self.hot.len() {
+            return None;
+        }
+        let result = Some((
+            self.hot[self.current].take().unwrap(),
+            self.cold[self.current].take().unwrap(),
+        ));
         self.current += 1;
 
         result
