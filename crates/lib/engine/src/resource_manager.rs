@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, future::Future, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug, future::Future, sync::Arc};
 
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use bytes::Bytes;
@@ -9,7 +9,7 @@ use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 
 use crate::{load_cached_asset, Error};
 
-pub trait Resource: Send + Sync + 'static {
+pub trait Resource: Send + Sync + Debug + 'static {
     fn is_finished(&self, ctx: &ResourceContext) -> bool;
     fn resolve(&mut self, ctx: &ResourceContext) -> Result<(), Error>;
 }

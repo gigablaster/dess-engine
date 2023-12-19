@@ -126,14 +126,103 @@ impl<T> From<u32> for Handle<T> {
     }
 }
 
+pub trait PoolValueWrapper<T>: Debug {
+    type Wrapped: Debug;
+    fn wrap(value: T) -> Self::Wrapped;
+    fn get(wrapped: &Self::Wrapped) -> Option<&T>;
+    fn get_mut(wrapped: &mut Self::Wrapped) -> Option<&mut T>;
+    fn unwrap(wrapped: Self::Wrapped) -> Option<T>;
+    fn has_value(wrapped: &Self::Wrapped) -> bool;
+    fn replace(wrpapped: &mut Self::Wrapped, value: T) -> T;
+    fn take(wrapped: &mut Self::Wrapped) -> T;
+}
+
 #[derive(Debug)]
-pub struct Pool<T> {
-    data: Vec<Option<T>>,
+pub struct OptionPoolStrategy<T> {
+    _marker: PhantomData<T>,
+}
+
+impl<T: Debug> PoolValueWrapper<T> for OptionPoolStrategy<T> {
+    type Wrapped = Option<T>;
+
+    fn wrap(value: T) -> Self::Wrapped {
+        Some(value)
+    }
+
+    fn get(wrapped: &Self::Wrapped) -> Option<&T> {
+        wrapped.as_ref()
+    }
+
+    fn unwrap(wrapped: Self::Wrapped) -> Option<T> {
+        wrapped
+    }
+
+    fn has_value(wrapped: &Self::Wrapped) -> bool {
+        wrapped.is_some()
+    }
+
+    fn get_mut(wrapped: &mut Self::Wrapped) -> Option<&mut T> {
+        wrapped.as_mut()
+    }
+
+    fn replace(wrpapped: &mut Self::Wrapped, value: T) -> T {
+        wrpapped.replace(value).unwrap()
+    }
+
+    fn take(wrapped: &mut Self::Wrapped) -> T {
+        wrapped.take().unwrap()
+    }
+}
+
+#[derive(Debug)]
+pub struct SentinelPoolStrategy<T> {
+    _marker: PhantomData<T>,
+}
+
+impl<T: Default + Copy + Eq + Debug> PoolValueWrapper<T> for SentinelPoolStrategy<T> {
+    type Wrapped = T;
+
+    fn wrap(value: T) -> Self::Wrapped {
+        value
+    }
+
+    fn get(wrapped: &T) -> Option<&T> {
+        Self::has_value(wrapped).then_some(wrapped)
+    }
+
+    fn unwrap(wrapped: Self::Wrapped) -> Option<T> {
+        Self::has_value(&wrapped).then_some(wrapped)
+    }
+
+    fn has_value(wrapped: &Self::Wrapped) -> bool {
+        *wrapped != T::default()
+    }
+
+    fn get_mut(wrapped: &mut Self::Wrapped) -> Option<&mut T> {
+        Self::has_value(wrapped).then_some(wrapped)
+    }
+
+    fn replace(wrpapped: &mut Self::Wrapped, value: T) -> T {
+        let old = *wrpapped;
+        *wrpapped = value;
+        old
+    }
+
+    fn take(wrapped: &mut Self::Wrapped) -> T {
+        let old = *wrapped;
+        *wrapped = T::default();
+        old
+    }
+}
+
+#[derive(Debug)]
+pub struct Pool<T, Wrapper: PoolValueWrapper<T> = OptionPoolStrategy<T>> {
+    data: Vec<Wrapper::Wrapped>,
     generations: Vec<u32>,
     empty: Vec<u32>,
 }
 
-impl<T> Pool<T> {
+impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
     pub fn new() -> Self {
         Self {
             data: Vec::with_capacity(DEFAULT_SPACE),
@@ -144,7 +233,7 @@ impl<T> Pool<T> {
 
     pub fn push(&mut self, data: T) -> Handle<T> {
         if let Some(slot) = self.empty.pop() {
-            self.data[slot as usize] = Some(data);
+            self.data[slot as usize] = Wrapper::wrap(data);
             Handle::new(slot, self.generations[slot as usize])
         } else {
             let index = self.generations.len();
@@ -152,8 +241,7 @@ impl<T> Pool<T> {
                 panic!("Too many items in HandleContainer.");
             }
             self.generations.push(0);
-            self.data.push(Some(data));
-            debug_assert_eq!(self.generations.len(), self.data.len());
+            self.data.push(Wrapper::wrap(data));
             Handle::new(index as u32, 0)
         }
     }
@@ -161,7 +249,7 @@ impl<T> Pool<T> {
     pub fn get(&self, handle: Handle<T>) -> Option<&T> {
         if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some(self.data[index].as_ref().unwrap())
+            Some(Wrapper::get(&self.data[index]).unwrap())
         } else {
             None
         }
@@ -170,7 +258,7 @@ impl<T> Pool<T> {
     pub fn get_mut(&mut self, handle: Handle<T>) -> Option<&mut T> {
         if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some(self.data[index].as_mut().unwrap())
+            Some(Wrapper::get_mut(&mut self.data[index]).unwrap())
         } else {
             None
         }
@@ -179,7 +267,7 @@ impl<T> Pool<T> {
     pub fn replace(&mut self, handle: Handle<T>, data: T) -> Option<T> {
         if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some(self.data[index].replace(data).unwrap())
+            Some(Wrapper::replace(&mut self.data[index], data))
         } else {
             None
         }
@@ -190,7 +278,7 @@ impl<T> Pool<T> {
             let index = handle.index() as usize;
             self.generations[index] = self.generations[index].wrapping_add(1) % MAX_GENERATION;
             self.empty.push(index as _);
-            return Some(self.data[index].take().unwrap());
+            return Some(Wrapper::take(&mut self.data[index]));
         }
 
         None
@@ -201,14 +289,14 @@ impl<T> Pool<T> {
         index < self.generations.len() && self.generations[index] == handle.generation()
     }
 
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<T, Wrapper> {
         Iter {
             container: self,
             current: 0,
         }
     }
 
-    pub fn drain(&mut self) -> Drain<T> {
+    pub fn drain(&mut self) -> Drain<T, Wrapper> {
         Drain {
             data: std::mem::take(&mut self.data),
             current: 0,
@@ -217,43 +305,42 @@ impl<T> Pool<T> {
 
     pub fn for_each_mut<OP: Fn(&mut T)>(&mut self, op: OP) {
         for index in 0..self.data.len() {
-            if let Some(data) = &mut self.data[index] {
+            if let Some(data) = Wrapper::get_mut(&mut self.data[index]) {
                 op(data);
             }
         }
     }
 }
 
-impl<T> Default for Pool<T> {
+impl<T, Wrapper: PoolValueWrapper<T>> Default for Pool<T, Wrapper> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(Debug)]
-pub struct Iter<'a, T> {
-    container: &'a Pool<T>,
+pub struct Iter<'a, T, Wrapper: PoolValueWrapper<T>> {
+    container: &'a Pool<T, Wrapper>,
     current: usize,
 }
 
-pub struct Drain<T> {
-    data: Vec<Option<T>>,
+pub struct Drain<T, Wrapper: PoolValueWrapper<T>> {
+    data: Vec<Wrapper::Wrapped>,
     current: usize,
 }
 
-impl<'a, T> Iterator for Iter<'a, T> {
+impl<'a, T, Wrapper: PoolValueWrapper<T>> Iterator for Iter<'a, T, Wrapper> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.current != self.container.data.len()
-            && self.container.data[self.current].is_none()
+            && !Wrapper::has_value(&self.container.data[self.current])
         {
             self.current += 1;
         }
         if self.current == self.container.data.len() {
             return None;
         }
-        let result = Some(self.container.data[self.current].as_ref().unwrap());
+        let result = Wrapper::get(&self.container.data[self.current]);
         self.current += 1;
 
         result
@@ -266,41 +353,52 @@ impl<'a, T> Iterator for Iter<'a, T> {
     }
 }
 
-impl<T> Iterator for Drain<T> {
+impl<T, Wrapper: PoolValueWrapper<T>> Iterator for Drain<T, Wrapper> {
     type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.current != self.data.len() && self.data[self.current].is_none() {
+        while self.current != self.data.len() && !Wrapper::has_value(&self.data[self.current]) {
             self.current += 1;
         }
         if self.current == self.data.len() {
             return None;
         }
-        let result = Some(self.data[self.current].take().unwrap());
+        let result = Wrapper::take(&mut self.data[self.current]);
         self.current += 1;
 
-        result
+        Some(result)
     }
 }
 
-pub struct HotColdPool<T: Debug, U: Debug> {
-    hot: Pool<T>,
-    cold: Pool<U>,
+pub struct HotColdPool<T, U, WrapperT = OptionPoolStrategy<T>, WrapperU = OptionPoolStrategy<U>>
+where
+    WrapperT: PoolValueWrapper<T>,
+    WrapperU: PoolValueWrapper<U>,
+{
+    hot: Pool<T, WrapperT>,
+    cold: Pool<U, WrapperU>,
 }
 
-impl<T: Debug, U: Debug> HotColdPool<T, U> {
-    pub fn hot(&self) -> &Pool<T> {
+impl<T, U, WrapperT, WrapperU> HotColdPool<T, U, WrapperT, WrapperU>
+where
+    WrapperT: PoolValueWrapper<T>,
+    WrapperU: PoolValueWrapper<U>,
+{
+    pub fn hot(&self) -> &Pool<T, WrapperT> {
         &self.hot
     }
 
-    pub fn cold(&self) -> &Pool<U> {
+    pub fn cold(&self) -> &Pool<U, WrapperU> {
         &self.cold
     }
 
     pub fn push(&mut self, hot: T, cold: U) -> Handle<T> {
         let hot_handle = self.hot.push(hot);
         let cold_handle = self.cold.push(cold);
-        debug_assert_eq!(hot_handle, cold_handle.into_another());
+        #[cfg(debug_assertions)]
+        if hot_handle.data != cold_handle.data {
+            panic!("Mismatched handles");
+        }
 
         hot_handle
     }
@@ -341,7 +439,7 @@ impl<T: Debug, U: Debug> HotColdPool<T, U> {
         }
     }
 
-    pub fn iter(&self) -> HotColdIter<T, U> {
+    pub fn iter(&self) -> HotColdIter<T, U, WrapperT, WrapperU> {
         HotColdIter {
             hot: &self.hot,
             cold: &self.cold,
@@ -349,7 +447,7 @@ impl<T: Debug, U: Debug> HotColdPool<T, U> {
         }
     }
 
-    pub fn drain(&mut self) -> HotColdDrain<T, U> {
+    pub fn drain(&mut self) -> HotColdDrain<T, U, WrapperT, WrapperU> {
         HotColdDrain {
             hot: std::mem::take(&mut self.hot.data),
             cold: std::mem::take(&mut self.cold.data),
@@ -358,25 +456,31 @@ impl<T: Debug, U: Debug> HotColdPool<T, U> {
     }
 }
 
-pub struct HotColdIter<'a, T, U> {
-    hot: &'a Pool<T>,
-    cold: &'a Pool<U>,
+pub struct HotColdIter<'a, T, U, WrapperT: PoolValueWrapper<T>, WrapperU: PoolValueWrapper<U>> {
+    hot: &'a Pool<T, WrapperT>,
+    cold: &'a Pool<U, WrapperU>,
     current: usize,
 }
 
-impl<'a, T, U> Iterator for HotColdIter<'a, T, U> {
+impl<'a, T, U, WrapperT, WrapperU> Iterator for HotColdIter<'a, T, U, WrapperT, WrapperU>
+where
+    WrapperT: PoolValueWrapper<T>,
+    WrapperU: PoolValueWrapper<U>,
+{
     type Item = (&'a T, &'a U);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.current != self.hot.data.len() && self.hot.data[self.current].is_none() {
+        while self.current != self.hot.data.len()
+            && !WrapperT::has_value(&self.hot.data[self.current])
+        {
             self.current += 1;
         }
         if self.current == self.hot.data.len() {
             return None;
         }
         let result = Some((
-            self.hot.data[self.current].as_ref().unwrap(),
-            self.cold.data[self.current].as_ref().unwrap(),
+            WrapperT::get(&self.hot.data[self.current]).unwrap(),
+            WrapperU::get(&self.cold.data[self.current]).unwrap(),
         ));
         self.current += 1;
 
@@ -390,7 +494,11 @@ impl<'a, T, U> Iterator for HotColdIter<'a, T, U> {
     }
 }
 
-impl<T: Debug, U: Debug> Default for HotColdPool<T, U> {
+impl<T, U, WrapperT, WrapperU> Default for HotColdPool<T, U, WrapperT, WrapperU>
+where
+    WrapperT: PoolValueWrapper<T>,
+    WrapperU: PoolValueWrapper<U>,
+{
     fn default() -> Self {
         Self {
             hot: Default::default(),
@@ -399,25 +507,27 @@ impl<T: Debug, U: Debug> Default for HotColdPool<T, U> {
     }
 }
 
-pub struct HotColdDrain<T, U> {
-    hot: Vec<Option<T>>,
-    cold: Vec<Option<U>>,
+pub struct HotColdDrain<T, U, WrapperT: PoolValueWrapper<T>, WrapperU: PoolValueWrapper<U>> {
+    hot: Vec<WrapperT::Wrapped>,
+    cold: Vec<WrapperU::Wrapped>,
     current: usize,
 }
 
-impl<T, U> Iterator for HotColdDrain<T, U> {
+impl<T, U, WrapperT: PoolValueWrapper<T>, WrapperU: PoolValueWrapper<U>> Iterator
+    for HotColdDrain<T, U, WrapperT, WrapperU>
+{
     type Item = (T, U);
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.current != self.hot.len() && self.hot[self.current].is_none() {
+        while self.current != self.hot.len() && !WrapperT::has_value(&self.hot[self.current]) {
             self.current += 1;
         }
         if self.current == self.hot.len() {
             return None;
         }
         let result = Some((
-            self.hot[self.current].take().unwrap(),
-            self.cold[self.current].take().unwrap(),
+            WrapperT::take(&mut self.hot[self.current]),
+            WrapperU::take(&mut self.cold[self.current]),
         ));
         self.current += 1;
 
