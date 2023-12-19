@@ -24,58 +24,61 @@ const MAX_INDEX: u32 = (1 << INDEX_BITS) - 1;
 const MAX_GENERATION: u32 = 1 << GENERATION_BITS;
 
 #[derive(Debug)]
-pub struct Handle<T, U> {
+pub struct Handle<T> {
     data: u32,
-    _phantom1: PhantomData<T>,
-    _phantom2: PhantomData<U>,
+    _phantom: PhantomData<T>,
 }
 
-unsafe impl<T, U> Send for Handle<T, U> {}
-unsafe impl<T, U> Sync for Handle<T, U> {}
+unsafe impl<T> Send for Handle<T> {}
+unsafe impl<T> Sync for Handle<T> {}
 
 #[allow(clippy::non_canonical_clone_impl)]
-impl<T, U> Clone for Handle<T, U> {
+impl<T> Clone for Handle<T> {
     fn clone(&self) -> Self {
         Self {
             data: self.data,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            _phantom: PhantomData,
         }
     }
 }
 
-impl<T, U> Copy for Handle<T, U> {}
+impl<T> Copy for Handle<T> {}
 
-impl<T, U> PartialEq for Handle<T, U> {
+impl<T> PartialEq for Handle<T> {
     fn eq(&self, other: &Self) -> bool {
         self.data == other.data
     }
 }
 
-impl<T, U> Eq for Handle<T, U> {}
+impl<T> Eq for Handle<T> {}
 
-impl<T, U> Hash for Handle<T, U> {
+impl<T> Hash for Handle<T> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.data.hash(state);
     }
 }
 
-impl<T, U> Handle<T, U> {
+impl<T> Handle<T> {
+    pub fn into_another<U>(&self) -> Handle<U> {
+        Handle {
+            data: self.data,
+            _phantom: PhantomData,
+        }
+    }
+
     pub fn new(index: u32, generation: u32) -> Self {
         assert!(index < MAX_INDEX);
         assert!(generation < MAX_GENERATION);
         Self {
             data: (generation << INDEX_BITS) | index,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            _phantom: PhantomData,
         }
     }
 
     pub fn invalid() -> Self {
         Self {
             data: u32::MAX,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            _phantom: PhantomData,
         }
     }
 
@@ -92,56 +95,52 @@ impl<T, U> Handle<T, U> {
     }
 }
 
-impl<T, U> Default for Handle<T, U> {
+impl<T> Default for Handle<T> {
     fn default() -> Self {
         Self::invalid()
     }
 }
 
-impl<T, U> Display for Handle<T, U> {
+impl<T> Display for Handle<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "(idx: {} gen: {})", self.index(), self.generation())
     }
 }
 
-impl<T, U> From<Handle<T, U>> for u32 {
-    fn from(value: Handle<T, U>) -> Self {
+impl<T> From<Handle<T>> for u32 {
+    fn from(value: Handle<T>) -> Self {
         value.data
     }
 }
 
-impl<T, U> From<u32> for Handle<T, U> {
+impl<T> From<u32> for Handle<T> {
     fn from(value: u32) -> Self {
         Handle {
             data: value,
-            _phantom1: PhantomData,
-            _phantom2: PhantomData,
+            _phantom: PhantomData,
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Pool<T, U> {
-    hot: Vec<Option<T>>,
-    cold: Vec<Option<U>>,
+pub struct Pool<T> {
+    data: Vec<Option<T>>,
     generations: Vec<u32>,
     empty: Vec<u32>,
 }
 
-impl<T, U> Pool<T, U> {
+impl<T> Pool<T> {
     pub fn new() -> Self {
         Self {
-            hot: Vec::with_capacity(DEFAULT_SPACE),
-            cold: Vec::with_capacity(DEFAULT_SPACE),
+            data: Vec::with_capacity(DEFAULT_SPACE),
             generations: Vec::with_capacity(DEFAULT_SPACE),
             empty: Vec::with_capacity(DEFAULT_SPACE),
         }
     }
 
-    pub fn push(&mut self, hot: T, cold: U) -> Handle<T, U> {
+    pub fn push(&mut self, data: T) -> Handle<T> {
         if let Some(slot) = self.empty.pop() {
-            self.hot[slot as usize] = Some(hot);
-            self.cold[slot as usize] = Some(cold);
+            self.data[slot as usize] = Some(data);
             Handle::new(slot, self.generations[slot as usize])
         } else {
             let index = self.generations.len();
@@ -149,198 +148,131 @@ impl<T, U> Pool<T, U> {
                 panic!("Too many items in HandleContainer.");
             }
             self.generations.push(0);
-            self.hot.push(Some(hot));
-            self.cold.push(Some(cold));
-            assert_eq!(self.generations.len(), self.hot.len());
+            self.data.push(Some(data));
+            debug_assert_eq!(self.generations.len(), self.data.len());
             Handle::new(index as u32, 0)
         }
     }
 
-    pub fn get(&self, handle: Handle<T, U>) -> Option<(&T, &U)> {
+    pub fn get(&self, handle: Handle<T>) -> Option<&T> {
         if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some((
-                self.hot[index].as_ref().unwrap(),
-                self.cold[index].as_ref().unwrap(),
-            ))
+            Some(self.data[index].as_ref().unwrap())
         } else {
             None
         }
     }
 
-    pub fn get_hot(&self, handle: Handle<T, U>) -> Option<&T> {
+    pub fn get_mut(&mut self, handle: Handle<T>) -> Option<&mut T> {
         if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some(self.hot[index].as_ref().unwrap())
+            Some(self.data[index].as_mut().unwrap())
         } else {
             None
         }
     }
 
-    pub fn get_cold(&self, handle: Handle<T, U>) -> Option<&U> {
+    pub fn replace(&mut self, handle: Handle<T>, data: T) -> Option<T> {
         if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
-            Some(self.cold[index].as_ref().unwrap())
+            Some(self.data[index].replace(data).unwrap())
         } else {
             None
         }
     }
 
-    pub fn get_hot_mut(&mut self, handle: Handle<T, U>) -> Option<&mut T> {
-        if self.is_handle_valid(&handle) {
-            let index = handle.index() as usize;
-            Some(self.hot[index].as_mut().unwrap())
-        } else {
-            None
-        }
-    }
-
-    pub fn get_cold_mut(&mut self, handle: Handle<T, U>) -> Option<&mut U> {
-        if self.is_handle_valid(&handle) {
-            let index = handle.index() as usize;
-            Some(self.cold[index].as_mut().unwrap())
-        } else {
-            None
-        }
-    }
-
-    pub fn replace(&mut self, handle: Handle<T, U>, hot: T, cold: U) -> Option<(T, U)> {
-        if self.is_handle_valid(&handle) {
-            let index = handle.index() as usize;
-
-            Some((
-                self.hot[index].replace(hot).unwrap(),
-                self.cold[index].replace(cold).unwrap(),
-            ))
-        } else {
-            None
-        }
-    }
-
-    pub fn replace_hot(&mut self, handle: Handle<T, U>, hot: T) -> Option<T> {
-        if self.is_handle_valid(&handle) {
-            let index = handle.index() as usize;
-
-            Some(self.hot[index].replace(hot).unwrap())
-        } else {
-            None
-        }
-    }
-
-    pub fn replace_cold(&mut self, handle: Handle<T, U>, cold: U) -> Option<U> {
-        if self.is_handle_valid(&handle) {
-            let index = handle.index() as usize;
-
-            Some(self.cold[index].replace(cold).unwrap())
-        } else {
-            None
-        }
-    }
-
-    pub fn remove(&mut self, handle: Handle<T, U>) -> Option<(T, U)> {
+    pub fn remove(&mut self, handle: Handle<T>) -> Option<T> {
         if self.is_handle_valid(&handle) {
             let index = handle.index() as usize;
             self.generations[index] = self.generations[index].wrapping_add(1) % MAX_GENERATION;
             self.empty.push(index as _);
-            return Some((
-                self.hot[index].take().unwrap(),
-                self.cold[index].take().unwrap(),
-            ));
+            return Some(self.data[index].take().unwrap());
         }
 
         None
     }
 
-    pub fn is_handle_valid(&self, handle: &Handle<T, U>) -> bool {
+    pub fn is_handle_valid(&self, handle: &Handle<T>) -> bool {
         let index = handle.index() as usize;
         index < self.generations.len() && self.generations[index] == handle.generation()
     }
 
-    pub fn iter(&self) -> Iter<T, U> {
+    pub fn iter(&self) -> Iter<T> {
         Iter {
             container: self,
             current: 0,
         }
     }
 
-    pub fn drain(&mut self) -> Drain<T, U> {
+    pub fn drain(&mut self) -> Drain<T> {
         Drain {
-            hot: std::mem::take(&mut self.hot),
-            cold: std::mem::take(&mut self.cold),
+            data: std::mem::take(&mut self.data),
             current: 0,
         }
     }
 
-    pub fn for_each_mut<OP: Fn(&mut T, &mut U)>(&mut self, op: OP) {
-        for index in 0..self.hot.len() {
-            if let Some(hot) = &mut self.hot[index] {
-                if let Some(cold) = &mut self.cold[index] {
-                    op(hot, cold);
-                }
+    pub fn for_each_mut<OP: Fn(&mut T)>(&mut self, op: OP) {
+        for index in 0..self.data.len() {
+            if let Some(data) = &mut self.data[index] {
+                op(data);
             }
         }
     }
 }
 
-impl<T, U> Default for Pool<T, U> {
+impl<T> Default for Pool<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[derive(Debug)]
-pub struct Iter<'a, T, U> {
-    container: &'a Pool<T, U>,
+pub struct Iter<'a, T> {
+    container: &'a Pool<T>,
     current: usize,
 }
 
-pub struct Drain<T, U> {
-    hot: Vec<Option<T>>,
-    cold: Vec<Option<U>>,
+pub struct Drain<T> {
+    data: Vec<Option<T>>,
     current: usize,
 }
 
-impl<'a, T, U> Iterator for Iter<'a, T, U> {
-    type Item = (&'a T, &'a U);
+impl<'a, T> Iterator for Iter<'a, T> {
+    type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.current != self.container.hot.len() && self.container.hot[self.current].is_none()
+        while self.current != self.container.data.len()
+            && self.container.data[self.current].is_none()
         {
             self.current += 1;
         }
-        if self.current == self.container.hot.len() {
+        if self.current == self.container.data.len() {
             return None;
         }
-        let result = Some((
-            self.container.hot[self.current].as_ref().unwrap(),
-            self.container.cold[self.current].as_ref().unwrap(),
-        ));
+        let result = Some(self.container.data[self.current].as_ref().unwrap());
         self.current += 1;
 
         result
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let size = self.container.hot.len() - self.container.empty.len() - self.current;
+        let size = self.container.data.len() - self.container.empty.len() - self.current;
 
         (size, Some(size))
     }
 }
 
-impl<T, U> Iterator for Drain<T, U> {
-    type Item = (T, U);
+impl<T> Iterator for Drain<T> {
+    type Item = T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        while self.current != self.hot.len() && self.hot[self.current].is_none() {
+        while self.current != self.data.len() && self.data[self.current].is_none() {
             self.current += 1;
         }
-        if self.current == self.hot.len() {
+        if self.current == self.data.len() {
             return None;
         }
-        let result = Some((
-            self.hot[self.current].take().unwrap(),
-            self.cold[self.current].take().unwrap(),
-        ));
+        let result = Some(self.data[self.current].take().unwrap());
         self.current += 1;
 
         result
@@ -353,94 +285,91 @@ mod test {
 
     #[test]
     fn handle() {
-        let handle = Handle::<(), ()>::new(100, 10);
+        let handle = Handle::<()>::new(100, 10);
         assert_eq!(100, handle.index());
         assert_eq!(10, handle.generation());
     }
 
     #[test]
     fn handle_container_push_get() {
-        let mut container = Pool::<u32, i32>::new();
-        let handle1 = container.push(1, -1);
-        let handle2 = container.push(2, -2);
-        let handle3 = container.push(3, -3);
-        assert_eq!(Some((&1, &-1)), container.get(handle1));
-        assert_eq!(Some((&2, &-2)), container.get(handle2));
-        assert_eq!(Some((&3, &-3)), container.get(handle3));
-        assert_eq!(Some(&2), container.get_hot(handle2));
-        assert_eq!(Some(&-3), container.get_cold(handle3));
+        let mut container = Pool::<u32>::new();
+        let handle1 = container.push(1);
+        let handle2 = container.push(2);
+        let handle3 = container.push(3);
+        assert_eq!(Some(&1), container.get(handle1));
+        assert_eq!(Some(&2), container.get(handle2));
+        assert_eq!(Some(&3), container.get(handle3));
     }
 
     #[test]
     fn reuse_slot() {
-        let mut container = Pool::<u32, i32>::new();
-        let handle = container.push(1, -1);
+        let mut container = Pool::<u32>::new();
+        let handle = container.push(1);
         container.remove(handle);
-        let handle = container.push(2, -2);
+        let handle = container.push(2);
         assert_eq!(1, handle.generation());
         assert_eq!(0, handle.index());
-        assert_eq!(Some((&2, &-2)), container.get(handle));
+        assert_eq!(Some(&2), container.get(handle));
     }
 
     #[test]
     fn old_handle_returns_none() {
-        let mut container = Pool::<u32, i32>::new();
-        let handle1 = container.push(1, -1);
-        assert_eq!(Some((1, -1)), container.remove(handle1));
-        let handle2 = container.push(2, -2);
+        let mut container = Pool::<u32>::new();
+        let handle1 = container.push(1);
+        assert_eq!(Some(1), container.remove(handle1));
+        let handle2 = container.push(2);
         assert_eq!(None, container.get(handle1));
-        assert_eq!(Some((&2, &-2)), container.get(handle2));
+        assert_eq!(Some(&2), container.get(handle2));
     }
 
     #[test]
     fn mutate_by_handle() {
-        let mut container = Pool::<u32, i32>::new();
-        let handle = container.push(1, -1);
-        assert_eq!(Some((&1, &-1)), container.get(handle));
-        assert_eq!(Some((1, -1)), container.replace(handle, 2, -2));
-        assert_eq!(Some((&2, &-2)), container.get(handle));
-        assert_eq!(Some(2), container.replace_hot(handle, 3));
-        assert_eq!(Some(-2), container.replace_cold(handle, -3));
-        assert_eq!(Some((&3, &-3)), container.get(handle));
+        let mut container = Pool::<u32>::new();
+        let handle = container.push(1);
+        assert_eq!(Some(&1), container.get(handle));
+        assert_eq!(Some(1), container.replace(handle, 2));
+        assert_eq!(Some(&2), container.get(handle));
+        assert_eq!(Some(2), container.replace(handle, 3));
+        assert_eq!(Some(&3), container.get(handle));
     }
 
     #[test]
     fn iterate_empty() {
-        let container = Pool::<u32, i32>::new();
-        let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
+        let container = Pool::<u32>::new();
+        let cont = container.iter().copied().collect::<Vec<_>>();
         assert!(cont.is_empty());
     }
 
     #[test]
     fn iterate_full() {
-        let mut container = Pool::<u32, i32>::new();
-        container.push(1, -1);
-        container.push(2, -2);
-        container.push(3, -3);
-        let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
-        assert_eq!([(1u32, -1i32), (2, -2), (3, -3)].to_vec(), cont);
+        let mut container = Pool::<u32>::new();
+        container.push(1);
+        container.push(2);
+        container.push(3);
+        let cont = container.iter().map(|x| (*x)).collect::<Vec<_>>();
+        assert_eq!([1, 2, 3].to_vec(), cont);
     }
 
     #[test]
     fn iterate_hole() {
-        let mut container = Pool::<u32, i32>::new();
-        container.push(1, -1);
-        let handle = container.push(2, -2);
-        container.push(3, -3);
+        let mut container = Pool::<u32>::new();
+        container.push(1);
+        let handle = container.push(2);
+        container.push(3);
         container.remove(handle);
-        let cont = container.iter().map(|(x, y)| (*x, *y)).collect::<Vec<_>>();
-        assert_eq!([(1u32, -1i32), (3, -3)].to_vec(), cont);
+        let cont = container.iter().map(|x| *x).collect::<Vec<_>>();
+        assert_eq!([1, 3].to_vec(), cont);
     }
 
     #[test]
     fn drain() {
-        let mut container = Pool::<u32, i32>::new();
-        container.push(1, -1);
-        container.push(2, -2);
-        container.push(3, -3);
+        let mut container = Pool::<u32>::new();
+        container.push(1);
+        container.push(2);
+        container.push(3);
 
         let cont = container.drain().collect::<Vec<_>>();
-        assert_eq!([(1u32, -1i32), (2, -2), (3, -3)].to_vec(), cont);
+        assert_eq!([1u32, 2, 3].to_vec(), cont);
         assert!(container.iter().collect::<Vec<_>>().is_empty());
     }
 }
