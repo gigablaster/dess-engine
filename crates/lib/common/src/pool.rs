@@ -492,7 +492,7 @@ mod test {
         container.push(1);
         container.push(2);
         container.push(3);
-        let cont = container.iter().map(|x| (*x)).collect::<Vec<_>>();
+        let cont = container.iter().copied().collect::<Vec<_>>();
         assert_eq!([1, 2, 3].to_vec(), cont);
     }
 
@@ -503,7 +503,7 @@ mod test {
         let handle = container.push(2);
         container.push(3);
         container.remove(handle);
-        let cont = container.iter().map(|x| *x).collect::<Vec<_>>();
+        let cont = container.iter().copied().collect::<Vec<_>>();
         assert_eq!([1, 3].to_vec(), cont);
     }
 

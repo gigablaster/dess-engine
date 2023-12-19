@@ -15,7 +15,7 @@
 
 use arrayvec::ArrayVec;
 use ash::{extensions::khr, vk};
-use dess_common::{Handle, Pool};
+use dess_common::{Handle, HotColdPool};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use gpu_descriptor_ash::AshDescriptorDevice;
@@ -23,6 +23,7 @@ use log::{info, warn};
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
+use std::fmt::Debug;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{mem, slice};
@@ -40,8 +41,8 @@ use super::{
     Program, Staging, Swapchain,
 };
 
-pub type ImageHandle = Handle<vk::Image, Image>;
-pub type BufferHandle = Handle<vk::Buffer, Buffer>;
+pub type ImageHandle = Handle<vk::Image>;
+pub type BufferHandle = Handle<vk::Buffer>;
 pub type ProgramHandle = Index<Program>;
 pub type PipelineHandle = Index<(vk::Pipeline, vk::PipelineLayout)>;
 
@@ -82,8 +83,8 @@ impl BufferSlice {
     }
 }
 
-pub(crate) type ImageStorage = Pool<vk::Image, Image>;
-pub(crate) type BufferStorage = Pool<vk::Buffer, Buffer>;
+pub(crate) type ImageStorage = HotColdPool<vk::Image, Image>;
+pub(crate) type BufferStorage = HotColdPool<vk::Buffer, Buffer>;
 pub(crate) type ProgramStorage = Vec<Program>;
 pub(crate) type PipelineStorage = Vec<(vk::Pipeline, vk::PipelineLayout)>;
 
@@ -606,10 +607,10 @@ impl Device {
         Ok(())
     }
 
-    pub(crate) fn destroy_resource<T, U: ToDrop>(
+    pub(crate) fn destroy_resource<T: Debug, U: ToDrop + Debug>(
         &self,
-        handle: Handle<T, U>,
-        storage: &RwLock<Pool<T, U>>,
+        handle: Handle<T>,
+        storage: &RwLock<HotColdPool<T, U>>,
     ) {
         let item: Option<(T, U)> = storage.write().remove(handle);
         if let Some((_, mut item)) = item {

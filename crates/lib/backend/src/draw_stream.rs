@@ -229,7 +229,7 @@ impl DrawStream {
         while let Some(mask) = stream.read() {
             descriptors[0] = context
                 .descriptors
-                .get_hot(self.pass_descriptor_set)
+                .get(self.pass_descriptor_set)
                 .copied()
                 .ok_or(DrawStreamError::InvalidHandle)?;
             if mask & PIPELINE != 0 {
@@ -258,7 +258,7 @@ impl DrawStream {
                     let buffer = if handle.is_valid() {
                         context
                             .buffers
-                            .get_hot(handle)
+                            .get(handle)
                             .copied()
                             .ok_or(DrawStreamError::InvalidHandle)?
                     } else {
@@ -280,7 +280,7 @@ impl DrawStream {
                 let buffer = if handle.is_valid() {
                     context
                         .buffers
-                        .get_hot(handle)
+                        .get(handle)
                         .copied()
                         .ok_or(DrawStreamError::InvalidHandle)?
                 } else {
@@ -311,7 +311,7 @@ impl DrawStream {
                     if handle.is_valid() {
                         descriptors[index] = context
                             .descriptors
-                            .get_hot(handle)
+                            .get(handle)
                             .copied()
                             .ok_or(DrawStreamError::InvalidHandle)?;
                     } else {

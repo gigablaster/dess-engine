@@ -19,7 +19,7 @@ use std::{
 };
 
 use ash::vk;
-use dess_common::{Handle, Pool, TempList};
+use dess_common::{Handle, HotColdPool, TempList};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use smol_str::SmolStr;
@@ -52,8 +52,8 @@ pub struct DescriptorData {
     pub(crate) names: HashMap<SmolStr, usize>,
 }
 
-pub type DescriptorHandle = Handle<vk::DescriptorSet, Box<DescriptorData>>;
-pub(crate) type DescriptorStorage = Pool<vk::DescriptorSet, Box<DescriptorData>>;
+pub type DescriptorHandle = Handle<vk::DescriptorSet>;
+pub(crate) type DescriptorStorage = HotColdPool<vk::DescriptorSet, Box<DescriptorData>>;
 
 pub trait PushAndGetRef<T> {
     fn push_get_ref(&mut self, data: T) -> &T;
@@ -536,7 +536,7 @@ impl Device {
                 if desc.is_valid() {
                     if let Some(descriptor) = &desc.descriptor {
                         let raw = *descriptor.raw();
-                        storage.replace_hot(*handle, raw);
+                        storage.replace(*handle, raw);
                     }
                 }
             }
@@ -672,7 +672,7 @@ impl Device {
     }
 
     fn is_valid_descriptor_impl(
-        container: &Pool<vk::DescriptorSet, Box<DescriptorData>>,
+        container: &HotColdPool<vk::DescriptorSet, Box<DescriptorData>>,
         handle: DescriptorHandle,
     ) -> bool {
         if let Some(desc) = container.get_cold(handle) {

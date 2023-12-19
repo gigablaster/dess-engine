@@ -159,9 +159,8 @@ impl Device {
         Ok(self
             .buffer_storage
             .read()
-            .get(handle)
+            .get_cold(handle)
             .ok_or(BackendError::InvalidHandle)?
-            .1
             .desc)
     }
 

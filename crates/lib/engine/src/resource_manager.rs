@@ -123,13 +123,13 @@ impl<T: Resource> ResourceState<T> {
     }
 }
 
-pub type ResourceHandle<T> = Handle<ResourceState<T>, ()>;
+pub type ResourceHandle<T> = Handle<ResourceState<T>>;
 
 #[derive(Debug, Default)]
 struct SingleTypeResourceCache<T: Resource> {
     // RefCell should work there unless we have some sort circular dependencies in resources
     handles: RefCell<HashMap<AssetRef, ResourceHandle<T>>>,
-    assets: RefCell<Pool<ResourceState<T>, ()>>,
+    assets: RefCell<Pool<ResourceState<T>>>,
 }
 
 impl<T: Resource> SingleTypeResourceCache<T> {
@@ -141,17 +141,14 @@ impl<T: Resource> SingleTypeResourceCache<T> {
             *handle
         } else {
             let task = IoTaskPool::get().spawn(load);
-            let handle = self
-                .assets
-                .borrow_mut()
-                .push(ResourceState::Pending(task), ());
+            let handle = self.assets.borrow_mut().push(ResourceState::Pending(task));
             self.handles.borrow_mut().insert(asset, handle);
             handle
         }
     }
 
     pub fn is_finished(&self, handle: ResourceHandle<T>, ctx: &ResourceContext) -> bool {
-        if let Some(state) = self.assets.borrow().get_hot(handle) {
+        if let Some(state) = self.assets.borrow().get(handle) {
             state.is_finished(ctx)
         } else {
             false
@@ -163,7 +160,7 @@ impl<T: Resource> SingleTypeResourceCache<T> {
         handle: ResourceHandle<T>,
         ctx: &ResourceContext,
     ) -> Result<Arc<T>, Error> {
-        if let Some(state) = self.assets.borrow_mut().get_hot_mut(handle) {
+        if let Some(state) = self.assets.borrow_mut().get_mut(handle) {
             state.resolve(ctx)
         } else {
             Err(Error::InvalidHandle)
@@ -173,7 +170,7 @@ impl<T: Resource> SingleTypeResourceCache<T> {
     pub fn maintain(&self, ctx: &ResourceContext) {
         self.assets
             .borrow_mut()
-            .for_each_mut(|hot, _| hot.maintain(ctx))
+            .for_each_mut(|hot| hot.maintain(ctx))
     }
 }
 

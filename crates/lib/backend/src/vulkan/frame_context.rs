@@ -218,9 +218,7 @@ impl Barrier {
         images: &ImageStorage,
         queue_family_index: u32,
     ) -> BackendResult<vk::ImageMemoryBarrier2> {
-        let image = images
-            .get_hot(self.image)
-            .ok_or(BackendError::InvalidHandle)?;
+        let image = images.get(self.image).ok_or(BackendError::InvalidHandle)?;
         let barrier = match self.ty {
             BarrierType::ColorToAttachment => {
                 barrier::undefined_to_color_attachment(image, queue_family_index)
