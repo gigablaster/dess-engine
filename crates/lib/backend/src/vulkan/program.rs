@@ -100,6 +100,7 @@ impl DescriptorSetInfo {
         stage: vk::ShaderStageFlags,
         set: &HashMap<u32, DescriptorInfo>,
         expected_count: u32,
+        dynamic: bool,
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<Self, BackendError> {
         let mut uniform_buffers_count = 0;
@@ -115,7 +116,7 @@ impl DescriptorSetInfo {
                 | rspirv_reflect::DescriptorType::STORAGE_IMAGE
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    let binding = Self::create_uniform_binding(*index, stage, binding);
+                    let binding = Self::create_uniform_binding(*index, stage, binding, dynamic);
 
                     bindings.insert(*index, binding);
                     if binding.descriptor_type == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
@@ -196,24 +197,21 @@ impl DescriptorSetInfo {
         index: u32,
         stage: vk::ShaderStageFlags,
         binding: &DescriptorInfo,
+        dynamic: bool,
     ) -> vk::DescriptorSetLayoutBinding {
         let descriptor_type = match binding.ty {
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if binding.name.ends_with("_dyn") => {
+            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if dynamic => {
                 vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
-
             rspirv_reflect::DescriptorType::UNIFORM_BUFFER => vk::DescriptorType::UNIFORM_BUFFER,
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
-                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-            }
             rspirv_reflect::DescriptorType::UNIFORM_TEXEL_BUFFER => {
                 vk::DescriptorType::UNIFORM_TEXEL_BUFFER
             }
             rspirv_reflect::DescriptorType::STORAGE_IMAGE => vk::DescriptorType::STORAGE_IMAGE,
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER => vk::DescriptorType::STORAGE_BUFFER,
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
+            rspirv_reflect::DescriptorType::STORAGE_BUFFER if dynamic => {
                 vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
             }
+            rspirv_reflect::DescriptorType::STORAGE_BUFFER => vk::DescriptorType::STORAGE_BUFFER,
             _ => unimplemented!("{:?}", binding),
         };
         vk::DescriptorSetLayoutBinding::builder()
@@ -440,6 +438,7 @@ impl Program {
                         stages,
                         &set,
                         DESCRIPTORS_PER_SLOT[set_index as usize],
+                        set_index == PER_DRAW_BINDING_SLOT as u32,
                         inmuatable_samplers,
                     )?);
                 }
@@ -521,12 +520,14 @@ impl Device {
         &self,
         info: DescriptorSetCreateInfo,
         expected_count: usize,
+        dynamic: bool,
     ) -> BackendResult<DescriptorSetInfo> {
         DescriptorSetInfo::new(
             &self.raw,
             info.stage,
             &info.set,
             expected_count as _,
+            dynamic,
             &self.samplers,
         )
     }

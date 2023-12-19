@@ -22,7 +22,7 @@ use crate::vulkan::{
 
 pub(crate) const MAX_VERTEX_STREAMS: usize = 3;
 pub(crate) const MAX_DESCRIPTOR_SETS: usize = 3;
-pub(crate) const MAX_DYNAMIC_OFFSETS: usize = 2;
+pub(crate) const MAX_DYNAMIC_OFFSETS: usize = 4;
 
 #[derive(Debug, Clone, Copy)]
 struct Draw {
@@ -33,26 +33,20 @@ struct Draw {
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
     first_index: u32,
     index_count: u32,
+    instance_count: u32,
 }
 
 impl Default for Draw {
     fn default() -> Self {
         Self {
             pipeline: PipelineHandle::default(),
-            vertex_buffers: [
-                BufferSlice::default(),
-                BufferSlice::default(),
-                BufferSlice::default(),
-            ],
+            vertex_buffers: [BufferSlice::default(); MAX_VERTEX_STREAMS],
             index_buffer: BufferSlice::default(),
-            descriptors: [
-                DescriptorHandle::default(),
-                DescriptorHandle::default(),
-                DescriptorHandle::default(),
-            ],
-            dynamic_offsets: [u32::MAX, u32::MAX],
+            descriptors: [DescriptorHandle::default(); MAX_DESCRIPTOR_SETS],
+            dynamic_offsets: [u32::MAX; MAX_DYNAMIC_OFFSETS],
             first_index: u32::MAX,
             index_count: u32::MAX,
+            instance_count: u32::MAX,
         }
     }
 }
@@ -64,6 +58,7 @@ const DYNAMIC_OFFSET0: u16 = INDEX_BUFFER << 1;
 const DS1: u16 = DYNAMIC_OFFSET0 << MAX_DYNAMIC_OFFSETS;
 const INDEX_COUNT: u16 = DS1 << MAX_DESCRIPTOR_SETS;
 const FIRST_INDEX: u16 = INDEX_COUNT << 1;
+const INSTANCE_COUNT: u16 = FIRST_INDEX << 1;
 
 /// Collect draw calls
 ///
@@ -160,12 +155,13 @@ impl DrawStream {
         }
     }
 
-    pub fn draw(&mut self, first_index: u32, index_count: u32) {
+    pub fn draw(&mut self, first_index: u32, index_count: u32, instance_count: u32) {
         debug_assert!(
             self.current.pipeline.is_valid(),
             "Pipeline handle must be valid"
         );
         debug_assert!(index_count > 0, "Must draw at least one primitive");
+        debug_assert!(instance_count> 0, "Must render at least one instance");
         if self.current.first_index != first_index {
             self.current.first_index = first_index;
             self.mask |= FIRST_INDEX;
@@ -173,6 +169,10 @@ impl DrawStream {
         if self.current.index_count != index_count {
             self.current.index_count = index_count;
             self.mask |= INDEX_COUNT;
+        }
+        if self.current.instance_count != instance_count {
+            self.current.instance_count = instance_count;
+            self.mask |= INSTANCE_COUNT;
         }
         self.stream.push(self.mask);
         if self.mask & PIPELINE != 0 {
@@ -202,6 +202,9 @@ impl DrawStream {
         if self.mask & FIRST_INDEX != 0 {
             self.write_u32(self.current.first_index);
         }
+        if self.mask & INSTANCE_COUNT != 0 {
+            self.write_u32(self.current.instance_count);
+        }
         self.mask = 0;
     }
 
@@ -226,6 +229,7 @@ impl DrawStream {
         let mut dynamic_offsets = [0u32; MAX_DYNAMIC_OFFSETS];
         let mut first_index = 0u32;
         let mut vertex_count = 0u32;
+        let mut instance_count = 0u32;
         while let Some(mask) = stream.read() {
             descriptors[0] = context
                 .descriptors
@@ -358,6 +362,9 @@ impl DrawStream {
             if mask & INDEX_COUNT != 0 {
                 vertex_count = stream.read_u32()?
             }
+            if mask & INSTANCE_COUNT != 0 {
+                instance_count = stream.read_u32()?;
+            }
             if rebind_all_descriptors {
                 let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
                 for offset_index in 0..MAX_DYNAMIC_OFFSETS {
@@ -400,7 +407,7 @@ impl DrawStream {
                 context
                     .device
                     .raw
-                    .cmd_draw_indexed(cb, vertex_count, 1, first_index, 0, 0)
+                    .cmd_draw_indexed(cb, vertex_count, instance_count, first_index, 0, 0)
             }
         }
         Ok(())
