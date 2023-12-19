@@ -15,7 +15,7 @@
 
 use arrayvec::ArrayVec;
 use ash::{extensions::khr, vk};
-use dess_common::{Handle, HotColdPool};
+use dess_common::{Handle, HotColdPool, SentinelPoolStrategy};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
 use gpu_descriptor_ash::AshDescriptorDevice;
@@ -83,8 +83,8 @@ impl BufferSlice {
     }
 }
 
-pub(crate) type ImageStorage = HotColdPool<vk::Image, Image>;
-pub(crate) type BufferStorage = HotColdPool<vk::Buffer, Buffer>;
+pub(crate) type ImageStorage = HotColdPool<vk::Image, Image, SentinelPoolStrategy<vk::Image>>;
+pub(crate) type BufferStorage = HotColdPool<vk::Buffer, Buffer, SentinelPoolStrategy<vk::Buffer>>;
 pub(crate) type ProgramStorage = Vec<Program>;
 pub(crate) type PipelineStorage = Vec<(vk::Pipeline, vk::PipelineLayout)>;
 
@@ -607,10 +607,10 @@ impl Device {
         Ok(())
     }
 
-    pub(crate) fn destroy_resource<T: Debug, U: ToDrop + Debug>(
+    pub(crate) fn destroy_resource<T: Debug + Default + Copy + Eq, U: ToDrop + Debug>(
         &self,
         handle: Handle<T>,
-        storage: &RwLock<HotColdPool<T, U>>,
+        storage: &RwLock<HotColdPool<T, U, SentinelPoolStrategy<T>>>,
     ) {
         let item: Option<(T, U)> = storage.write().remove(handle);
         if let Some((_, mut item)) = item {
