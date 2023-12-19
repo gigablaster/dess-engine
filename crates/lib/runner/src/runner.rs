@@ -6,7 +6,7 @@ use dess_backend::vulkan::{
     Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
 };
 use dess_common::TimeFilter;
-use dess_engine::{BufferPool, ResourceManager, ResourcePool};
+use dess_engine::{BufferPool, ResourceManager, TemporaryImagePool};
 use log::info;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
@@ -70,7 +70,7 @@ impl<T: Client> Runner<T> {
             )
             .unwrap();
         let device = Device::new(instance, pdevice).unwrap();
-        let resource_pool = ResourcePool::new(&device).unwrap();
+        let resource_pool = TemporaryImagePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
         let asset_cache = ResourceManager::new(&device);
         let mut swapchain = None;

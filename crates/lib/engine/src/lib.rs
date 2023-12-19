@@ -13,8 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// mod asset_cache;
-mod buffer_pool;
 mod material;
 // mod mesh;
 mod pool;
@@ -28,7 +26,6 @@ use std::{
 };
 
 // pub use asset_cache::*;
-pub use buffer_pool::*;
 use dess_assets::{get_cached_asset_path, Asset, AssetLoad, AssetRef};
 use dess_backend::BackendError;
 use log::debug;

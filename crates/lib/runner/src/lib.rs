@@ -5,7 +5,7 @@ use dess_common::GameTime;
 
 mod runner;
 
-use dess_engine::{BufferPool, ResourceManager, ResourcePool};
+use dess_engine::{BufferPool, ResourceManager, TemporaryImagePool};
 pub use runner::*;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -16,7 +16,7 @@ pub enum ClientState {
 
 pub struct RenderContext<'a> {
     pub frame: &'a FrameContext<'a>,
-    pub resource_pool: &'a ResourcePool<'a>,
+    pub resource_pool: &'a TemporaryImagePool<'a>,
     pub buffer_pool: &'a BufferPool,
 }
 
