@@ -296,6 +296,13 @@ impl<T, Wrapper: PoolValueWrapper<T>> Pool<T, Wrapper> {
         }
     }
 
+    pub fn enumerate(&self) -> EnumerateHandlesIter<T, Wrapper> {
+        EnumerateHandlesIter {
+            container: self,
+            current: 0,
+        }
+    }
+
     pub fn drain(&mut self) -> Drain<T, Wrapper> {
         Drain {
             data: std::mem::take(&mut self.data),
@@ -323,6 +330,11 @@ pub struct Iter<'a, T, Wrapper: PoolValueWrapper<T>> {
     current: usize,
 }
 
+pub struct EnumerateHandlesIter<'a, T, Wrapper: PoolValueWrapper<T>> {
+    container: &'a Pool<T, Wrapper>,
+    current: usize,
+}
+
 pub struct Drain<T, Wrapper: PoolValueWrapper<T>> {
     data: Vec<Wrapper::Wrapped>,
     current: usize,
@@ -344,6 +356,37 @@ impl<'a, T, Wrapper: PoolValueWrapper<T>> Iterator for Iter<'a, T, Wrapper> {
         self.current += 1;
 
         result
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = self.container.data.len() - self.container.empty.len() - self.current;
+
+        (size, Some(size))
+    }
+}
+
+impl<'a, T, Wrapper: PoolValueWrapper<T>> Iterator for EnumerateHandlesIter<'a, T, Wrapper> {
+    type Item = (Handle<T>, &'a T);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current != self.container.data.len()
+            && !Wrapper::has_value(&self.container.data[self.current])
+        {
+            self.current += 1;
+        }
+        if self.current == self.container.data.len() {
+            return None;
+        }
+        let result = (
+            Handle::new(
+                self.current as u32,
+                self.container.generations[self.current],
+            ),
+            Wrapper::get(&self.container.data[self.current]).unwrap(),
+        );
+        self.current += 1;
+
+        Some(result)
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -447,6 +490,14 @@ where
         }
     }
 
+    pub fn enumerate(&self) -> EnumerateHandleHotColdIter<T, U, WrapperT, WrapperU> {
+        EnumerateHandleHotColdIter {
+            hot: &self.hot,
+            cold: &self.cold,
+            current: 0,
+        }
+    }
+
     pub fn drain(&mut self) -> HotColdDrain<T, U, WrapperT, WrapperU> {
         HotColdDrain {
             hot: std::mem::take(&mut self.hot.data),
@@ -457,6 +508,18 @@ where
 }
 
 pub struct HotColdIter<'a, T, U, WrapperT: PoolValueWrapper<T>, WrapperU: PoolValueWrapper<U>> {
+    hot: &'a Pool<T, WrapperT>,
+    cold: &'a Pool<U, WrapperU>,
+    current: usize,
+}
+
+pub struct EnumerateHandleHotColdIter<
+    'a,
+    T,
+    U,
+    WrapperT: PoolValueWrapper<T>,
+    WrapperU: PoolValueWrapper<U>,
+> {
     hot: &'a Pool<T, WrapperT>,
     cold: &'a Pool<U, WrapperU>,
     current: usize,
@@ -479,6 +542,40 @@ where
             return None;
         }
         let result = Some((
+            WrapperT::get(&self.hot.data[self.current]).unwrap(),
+            WrapperU::get(&self.cold.data[self.current]).unwrap(),
+        ));
+        self.current += 1;
+
+        result
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let size = self.hot.data.len() - self.hot.empty.len() - self.current;
+
+        (size, Some(size))
+    }
+}
+
+impl<'a, T, U, WrapperT, WrapperU> Iterator
+    for EnumerateHandleHotColdIter<'a, T, U, WrapperT, WrapperU>
+where
+    WrapperT: PoolValueWrapper<T>,
+    WrapperU: PoolValueWrapper<U>,
+{
+    type Item = (Handle<T>, &'a T, &'a U);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.current != self.hot.data.len()
+            && !WrapperT::has_value(&self.hot.data[self.current])
+        {
+            self.current += 1;
+        }
+        if self.current == self.hot.data.len() {
+            return None;
+        }
+        let result = Some((
+            Handle::new(self.current as u32, self.hot.generations[self.current]),
             WrapperT::get(&self.hot.data[self.current]).unwrap(),
             WrapperU::get(&self.cold.data[self.current]).unwrap(),
         ));
