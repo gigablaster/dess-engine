@@ -1,13 +1,18 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Debug, future::Future, sync::Arc};
+use std::{cell::RefCell, collections::HashMap, fmt::Debug, future::Future, hash::Hash, sync::Arc};
 
+use arrayvec::ArrayVec;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use bytes::Bytes;
-use dess_assets::{AssetRef, ContentSource, ImageAsset, ShaderAsset, ShaderSource};
-use dess_backend::vulkan::{Device, ImageCreateDesc, ImageHandle, ImageSubresourceData};
+use dess_assets::{AssetRef, ContentSource, ImageAsset, MeshMaterial, ShaderAsset, ShaderSource};
+use dess_backend::vulkan::{
+    Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle, ShaderDesc,
+    MAX_SHADERS,
+};
 use dess_common::{Handle, Pool};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
+use siphasher::sip128::Hasher128;
 
-use crate::{load_cached_asset, Error};
+use crate::{load_cached_asset, Error, Material};
 
 pub trait Resource: Send + Sync + Debug + 'static {
     fn is_finished(&self, ctx: &ResourceContext) -> bool;
@@ -44,6 +49,12 @@ impl<'a> ResourceContext<'a> {
 
 pub trait ResourceLoader {
     fn request_image(&self, asset: AssetRef) -> ResourceHandle<ImageHandle>;
+    fn request_material<CreateUniform: FnOnce(&MeshMaterial) -> Bytes>(
+        &self,
+        program: ProgramHandle,
+        material: &MeshMaterial,
+        create_unfiform: CreateUniform,
+    ) -> ResourceHandle<Material>;
 }
 
 #[derive(Debug)]
@@ -174,10 +185,14 @@ impl<T: Resource> SingleTypeResourceCache<T> {
     }
 }
 
+type ProgramSource = ArrayVec<ShaderSource, MAX_SHADERS>;
+
 pub struct ResourceManager {
     device: Arc<Device>,
     shaders: RwLock<HashMap<ShaderSource, Bytes>>,
+    programs: RwLock<HashMap<ProgramSource, ProgramHandle>>,
     images: Mutex<SingleTypeResourceCache<ImageHandle>>,
+    materials: Mutex<SingleTypeResourceCache<Material>>,
 }
 
 impl ResourceManager {
@@ -185,7 +200,9 @@ impl ResourceManager {
         Arc::new(Self {
             device: device.clone(),
             shaders: RwLock::default(),
+            programs: RwLock::default(),
             images: Mutex::default(),
+            materials: Mutex::default(),
         })
     }
 
@@ -198,20 +215,50 @@ impl ResourceManager {
         images.maintain(&context);
     }
 
-    pub fn get_or_load_shader_code(&self, source: ShaderSource) -> Result<Bytes, Error> {
+    pub fn get_or_load_shader_code(&self, source: &ShaderSource) -> Result<Bytes, Error> {
         // Shaders are relatively small and fast to load. So we load all shaders at start of the
         // game and don't bother with it anymore.
         let shaders = self.shaders.upgradable_read();
-        if let Some(code) = shaders.get(&source) {
+        if let Some(code) = shaders.get(source) {
             Ok(code.clone())
         } else {
             let mut shaders = RwLockUpgradableReadGuard::upgrade(shaders);
-            if let Some(code) = shaders.get(&source) {
+            if let Some(code) = shaders.get(source) {
                 Ok(code.clone())
             } else {
                 let shader: ShaderAsset = load_cached_asset(source.get_ref())?;
-                shaders.insert(source, shader.code.clone());
+                shaders.insert(source.clone(), shader.code.clone());
                 Ok(shader.code)
+            }
+        }
+    }
+
+    pub fn get_or_load_program(&self, shaders: &[ShaderSource]) -> Result<ProgramHandle, Error> {
+        let key = shaders.iter().cloned().collect::<ProgramSource>();
+        let programs = self.programs.upgradable_read();
+        if let Some(program) = programs.get(&key) {
+            Ok(*program)
+        } else {
+            let mut programs = RwLockUpgradableReadGuard::upgrade(programs);
+            if let Some(program) = programs.get(&key) {
+                Ok(*program)
+            } else {
+                let mut loaded = ArrayVec::<_, MAX_SHADERS>::new();
+                for shader in shaders {
+                    loaded.push(self.get_or_load_shader_code(shader)?);
+                }
+                let shaders = shaders
+                    .iter()
+                    .zip(loaded.iter())
+                    .map(|(source, code)| ShaderDesc {
+                        stage: source.stage.into(),
+                        entry: "main",
+                        code,
+                    })
+                    .collect::<ArrayVec<_, MAX_SHADERS>>();
+                let program = self.device.create_program(&shaders)?;
+                programs.insert(key, program);
+                Ok(program)
             }
         }
     }
@@ -233,6 +280,17 @@ impl ResourceManager {
         )?;
         Ok(Arc::new(image))
     }
+
+    async fn load_material(
+        loader: Arc<ResourceManager>,
+        program: ProgramHandle,
+        material: MeshMaterial,
+        uniform: Bytes,
+    ) -> Result<Arc<Material>, Error> {
+        Ok(Arc::new(Material::new(
+            &loader, program, &material, uniform,
+        )))
+    }
 }
 
 impl ResourceLoader for Arc<ResourceManager> {
@@ -240,6 +298,24 @@ impl ResourceLoader for Arc<ResourceManager> {
         self.images.lock().request(
             asset,
             ResourceManager::load_image(self.device.clone(), asset),
+        )
+    }
+
+    fn request_material<CreateUniform: FnOnce(&MeshMaterial) -> Bytes>(
+        &self,
+        program: ProgramHandle,
+        material: &MeshMaterial,
+        create_unfiform: CreateUniform,
+    ) -> ResourceHandle<Material> {
+        let mut hasher = siphasher::sip128::SipHasher::default();
+        let uniform = create_unfiform(material);
+        program.hash(&mut hasher);
+        material.hash(&mut hasher);
+        uniform.hash(&mut hasher);
+        let asset = hasher.finish128().as_u128().into();
+        self.materials.lock().request(
+            asset,
+            ResourceManager::load_material(self.clone(), program, material.clone(), uniform),
         )
     }
 }

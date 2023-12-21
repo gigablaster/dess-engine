@@ -13,17 +13,20 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, fmt::Debug};
 
 use ash::vk;
+use bytes::Bytes;
+use dess_assets::MeshMaterial;
 use dess_backend::{
     vulkan::{DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
     BackendResultExt,
 };
 use smol_str::SmolStr;
 
-use crate::{Error, Resource, ResourceContext, ResourceHandle};
+use crate::{Error, Resource, ResourceContext, ResourceHandle, ResourceLoader};
 
+const MATERIAL_UNIFORM_NAME: &str = "material";
 /// Material contains effect and a per-material descriptor set
 /// for every effect technique.
 ///
@@ -32,6 +35,7 @@ use crate::{Error, Resource, ResourceContext, ResourceHandle};
 pub struct Material {
     program: ProgramHandle,
     images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
+    uniform: Bytes,
     ds: DescriptorHandle,
 }
 
@@ -53,11 +57,33 @@ impl Resource for Material {
                 ctx.bind_image_by_name(ds, name, *image, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .ignore_missing()?;
             }
+            ctx.bind_uniform_by_name(ds, MATERIAL_UNIFORM_NAME, &self.uniform)
+                .ignore_missing()?;
             self.ds = ds;
-
             Ok(())
         })?;
 
         Ok(())
+    }
+}
+
+impl Material {
+    pub fn new<T: ResourceLoader>(
+        loader: &T,
+        program: ProgramHandle,
+        mesh_material: &MeshMaterial,
+        uniform: Bytes,
+    ) -> Self {
+        let images = mesh_material
+            .images
+            .iter()
+            .map(|(name, asset)| (name.into(), loader.request_image(*asset)))
+            .collect::<HashMap<_, _>>();
+        Self {
+            program,
+            images,
+            uniform,
+            ds: DescriptorHandle::default(),
+        }
     }
 }
