@@ -363,7 +363,7 @@ impl Shader {
     }
 }
 
-const MAX_SHADERS: usize = 2;
+pub const MAX_SHADERS: usize = 2;
 
 /// Shader program similar to what we had in OpenGL.
 ///

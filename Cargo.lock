@@ -567,6 +567,7 @@ dependencies = [
  "arrayvec",
  "ash",
  "ash-window",
+ "bevy_tasks",
  "byte-slice-cast",
  "dess-common",
  "directories",

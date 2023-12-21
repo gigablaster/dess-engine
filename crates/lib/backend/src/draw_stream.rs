@@ -17,7 +17,7 @@ use arrayvec::ArrayVec;
 use ash::vk;
 
 use crate::vulkan::{
-    BufferHandle, BufferSlice, DescriptorHandle, ExecutionContext, PipelineHandle,
+    BufferHandle, BufferSlice, DescriptorHandle, ExecutionContext, RasterPipelineHandle,
 };
 
 pub(crate) const MAX_VERTEX_STREAMS: usize = 3;
@@ -26,7 +26,7 @@ pub(crate) const MAX_DYNAMIC_OFFSETS: usize = 4;
 
 #[derive(Debug, Clone, Copy)]
 struct Draw {
-    pipeline: PipelineHandle,
+    pipeline: RasterPipelineHandle,
     vertex_buffers: [BufferSlice; MAX_VERTEX_STREAMS],
     index_buffer: BufferSlice,
     descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
@@ -39,7 +39,7 @@ struct Draw {
 impl Default for Draw {
     fn default() -> Self {
         Self {
-            pipeline: PipelineHandle::default(),
+            pipeline: RasterPipelineHandle::default(),
             vertex_buffers: [BufferSlice::default(); MAX_VERTEX_STREAMS],
             index_buffer: BufferSlice::default(),
             descriptors: [DescriptorHandle::default(); MAX_DESCRIPTOR_SETS],
@@ -112,7 +112,7 @@ impl DrawStream {
         }
     }
 
-    pub fn bind_pipeline(&mut self, handle: PipelineHandle) {
+    pub fn bind_pipeline(&mut self, handle: RasterPipelineHandle) {
         if self.current.pipeline != handle {
             self.mask |= PIPELINE;
             self.current.pipeline = handle;
@@ -237,10 +237,10 @@ impl DrawStream {
                 .copied()
                 .ok_or(DrawStreamError::InvalidHandle)?;
             if mask & PIPELINE != 0 {
-                let handle: PipelineHandle = stream.read_u32()?.into();
+                let handle: RasterPipelineHandle = stream.read_u32()?.into();
                 let (pipeline, layout) = context
                     .pipelines
-                    .get(handle.index())
+                    .get(handle)
                     .copied()
                     .ok_or(DrawStreamError::InvalidHandle)?;
                 if current_layout != layout {

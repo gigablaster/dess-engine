@@ -94,6 +94,12 @@ impl From<gpu_descriptor::AllocationError> for BackendError {
     }
 }
 
+impl From<(Vec<vk::Pipeline>, vk::Result)> for BackendError {
+    fn from(value: (Vec<vk::Pipeline>, vk::Result)) -> Self {
+        value.1.into()
+    }
+}
+
 impl From<DrawStreamError> for BackendError {
     fn from(value: DrawStreamError) -> Self {
         match value {

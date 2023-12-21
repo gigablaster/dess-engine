@@ -38,13 +38,13 @@ use super::{
 };
 use super::{
     load_or_create_pipeline_cache, DescriptorHandle, DescriptorStorage, FrameContext, Index,
-    Program, Staging, Swapchain,
+    Program, RasterPipelineCreateDesc, Staging, Swapchain,
 };
 
 pub type ImageHandle = Handle<vk::Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type ProgramHandle = Index<Program>;
-pub type PipelineHandle = Index<(vk::Pipeline, vk::PipelineLayout)>;
+pub type RasterPipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
 
 pub enum FrameResult {
     Rendered,
@@ -86,7 +86,8 @@ impl BufferSlice {
 pub(crate) type ImageStorage = HotColdPool<vk::Image, Image, SentinelPoolStrategy<vk::Image>>;
 pub(crate) type BufferStorage = HotColdPool<vk::Buffer, Buffer, SentinelPoolStrategy<vk::Buffer>>;
 pub(crate) type ProgramStorage = Vec<Program>;
-pub(crate) type PipelineStorage = Vec<(vk::Pipeline, vk::PipelineLayout)>;
+pub(crate) type RasterPipelineStorage =
+    HotColdPool<(vk::Pipeline, vk::PipelineLayout), RasterPipelineCreateDesc>;
 
 pub struct CommandBuffer {
     pub raw: vk::CommandBuffer,
@@ -145,9 +146,9 @@ impl<'a> Drop for ScopedCommandBufferLabel<'a> {
 }
 
 pub struct Device {
+    pub(crate) raw: ash::Device,
     frames: [Mutex<Frame>; 2],
     pub(crate) instance: Instance,
-    pub(crate) raw: ash::Device,
     pub(crate) pdevice: PhysicalDevice,
     pub(crate) memory_allocator: Mutex<GpuAllocator>,
     pub(crate) descriptor_allocator: Mutex<DescriptorAllocator>,
@@ -161,7 +162,7 @@ pub struct Device {
     pub(crate) samplers: HashMap<SamplerDesc, vk::Sampler>,
     pub(crate) staging: Mutex<Staging>,
     pub(crate) universal_queue: Mutex<vk::Queue>,
-    pub(crate) pipelines: RwLock<PipelineStorage>,
+    pub(crate) pipelines: RwLock<RasterPipelineStorage>,
     pub(crate) pipeline_cache: vk::PipelineCache,
     pub queue_familt_index: u32,
     current_cpu_frame: AtomicUsize,
@@ -722,8 +723,9 @@ impl Drop for Device {
 
         self.pipelines
             .write()
-            .drain(..)
-            .for_each(|x| unsafe { self.raw.destroy_pipeline(x.0, None) });
+            .drain()
+            .filter_map(|((pipeline, _), _)| (pipeline != vk::Pipeline::null()).then_some(pipeline))
+            .for_each(|pipeline| unsafe { self.raw.destroy_pipeline(pipeline, None) });
 
         self.program_storage
             .write()

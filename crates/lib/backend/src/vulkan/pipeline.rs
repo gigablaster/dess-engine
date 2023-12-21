@@ -4,17 +4,22 @@ use std::{
     io, slice,
 };
 
-use ash::vk;
+use arrayvec::ArrayVec;
+use ash::vk::{self};
+use bevy_tasks::AsyncComputeTaskPool;
 use directories::ProjectDirs;
-use log::{debug, info};
+use log::{debug, error, info};
 use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
 use crate::{BackendError, BackendResult};
 
-use super::{Device, PhysicalDevice, PipelineHandle, ProgramHandle};
+use super::{
+    Device, PhysicalDevice, ProgramHandle, RasterPipelineHandle, Shader, MAX_COLOR_ATTACHMENTS,
+    MAX_SHADERS,
+};
 
-#[derive(Debug, Clone, Copy, Hash)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BlendDesc {
     pub src_blend: vk::BlendFactor,
     pub dst_blend: vk::BlendFactor,
@@ -27,11 +32,40 @@ pub struct VertexAttributeDesc {
     pub stride: usize,
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct InputVertexAttributeDesc {
+    pub format: vk::Format,
+    pub locaion: u32,
+    pub binding: u32,
+    pub offset: u32,
+}
+
+impl From<InputVertexAttributeDesc> for vk::VertexInputAttributeDescription {
+    fn from(value: InputVertexAttributeDesc) -> Self {
+        Self {
+            location: value.locaion,
+            binding: value.binding,
+            format: value.format,
+            offset: value.offset,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct InputVertexStreamDesc {
+    pub attributes: &'static [InputVertexAttributeDesc],
+    pub stride: u32,
+}
+
 /// Data to create pipeline.
 ///
 /// Contains all data to create new pipeline.
-#[derive(Debug, Clone, Hash)]
-pub struct PipelineCreateDesc {
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct RasterPipelineCreateDesc {
+    /// Associated program
+    pub program: ProgramHandle,
+    /// Render pass layout
+    pub pass_layout: RenderPassLayout,
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(BlendDesc, BlendDesc)>,
     /// Depth comparison op, None if no depth test is happening
@@ -40,24 +74,27 @@ pub struct PipelineCreateDesc {
     pub depth_write: bool,
     /// Culling information, None if we don't do culling
     pub cull: Option<(vk::CullModeFlags, vk::FrontFace)>,
+    /// Vertex streams layout
+    pub streams: &'static [InputVertexStreamDesc],
 }
 
 pub trait PipelineVertex: Sized {
-    fn attributes() -> &'static [vk::VertexInputAttributeDescription];
-    fn strides() -> &'static [(usize, vk::VertexInputRate)];
+    fn vertex_streams() -> &'static [InputVertexStreamDesc];
 }
 
-impl Default for PipelineCreateDesc {
-    fn default() -> Self {
+impl RasterPipelineCreateDesc {
+    pub fn new<T: PipelineVertex>(program: ProgramHandle, pass_layout: RenderPassLayout) -> Self {
         Self {
+            program,
+            pass_layout,
             blend: None,
             depth_test: Some(vk::CompareOp::LESS),
             depth_write: true,
             cull: Some((vk::CullModeFlags::BACK, vk::FrontFace::CLOCKWISE)),
+            streams: T::vertex_streams(),
         }
     }
-}
-impl PipelineCreateDesc {
+
     pub fn blend(mut self, color: BlendDesc, alpha: BlendDesc) -> Self {
         self.blend = Some((color, alpha));
 
@@ -83,21 +120,23 @@ impl PipelineCreateDesc {
     }
 }
 
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct RenderPassLayout {
+    pub color_attachments: ArrayVec<vk::Format, MAX_COLOR_ATTACHMENTS>,
+    pub depth_attachment: Option<vk::Format>,
+}
+
 impl Device {
-    pub fn create_pipeline<T: PipelineVertex>(
+    async fn compile_raster_pipeline(
         &self,
-        program: ProgramHandle,
-        desc: &PipelineCreateDesc,
-        color_attachments: &[vk::Format],
-        depth_attachment: Option<vk::Format>,
-    ) -> BackendResult<PipelineHandle> {
-        let programs = self.program_storage.read();
-        let program = programs
-            .get(program.index())
-            .ok_or(BackendError::InvalidHandle)?;
+        handle: RasterPipelineHandle,
+        shaders: ArrayVec<Shader, MAX_SHADERS>,
+        layout: vk::PipelineLayout,
+        desc: RasterPipelineCreateDesc,
+    ) -> BackendResult<(RasterPipelineHandle, vk::Pipeline, vk::PipelineLayout)> {
         debug!("Compile pipeline {:?}", desc);
-        let shader_create_info = program
-            .shaders
+
+        let shader_create_info = shaders
             .iter()
             .map(|shader| {
                 vk::PipelineShaderStageCreateInfo::builder()
@@ -118,23 +157,29 @@ impl Device {
             .dynamic_states(&dynamic_states)
             .build();
 
-        let strides = T::strides();
-        let attributes = T::attributes();
+        let strides = desc.streams.iter().map(|x| x.stride).collect::<Vec<_>>();
+        let attributes = desc
+            .streams
+            .iter()
+            .flat_map(|x| x.attributes)
+            .copied()
+            .map(|x| x.into())
+            .collect::<Vec<vk::VertexInputAttributeDescription>>();
         let vertex_binding_desc = strides
             .iter()
             .enumerate()
             .map(|(index, _)| {
                 vk::VertexInputBindingDescription::builder()
-                    .stride(strides[index].0 as _)
+                    .stride(strides[index] as _)
                     .binding(attributes[index].binding)
-                    .input_rate(strides[index].1)
+                    .input_rate(vk::VertexInputRate::VERTEX)
                     .build()
             })
             .collect::<Vec<_>>();
 
         let vertex_input = vk::PipelineVertexInputStateCreateInfo::builder()
             .vertex_binding_descriptions(&vertex_binding_desc)
-            .vertex_attribute_descriptions(attributes)
+            .vertex_attribute_descriptions(&attributes)
             .build();
 
         let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
@@ -201,16 +246,14 @@ impl Device {
             .logic_op_enable(false)
             .build();
 
-        let rendering_info =
-            vk::PipelineRenderingCreateInfo::builder().color_attachment_formats(color_attachments);
-        let mut rendering_info = if let Some(depth) = depth_attachment {
-            rendering_info.depth_attachment_format(depth)
-        } else {
-            rendering_info
-        };
+        let mut rendering_info = vk::PipelineRenderingCreateInfo::builder()
+            .color_attachment_formats(&desc.pass_layout.color_attachments);
+        if let Some(depth) = desc.pass_layout.depth_attachment {
+            rendering_info = rendering_info.depth_attachment_format(depth)
+        }
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .layout(program.pipeline_layout)
+            .layout(layout)
             .stages(&shader_create_info)
             .dynamic_state(&dynamic_state_create_info)
             .viewport_state(&viewport_state)
@@ -229,14 +272,61 @@ impl Device {
                 slice::from_ref(&pipeline_create_info),
                 None,
             )
+        };
+
+        Ok((handle, pipeline?[0], layout))
+    }
+
+    pub async fn compile_raster_pipelines(&self) {
+        let compiled = AsyncComputeTaskPool::get().scope(|s| {
+            let programs = self.program_storage.read();
+            self.pipelines
+                .read()
+                .enumerate()
+                .for_each(|(handle, (pipeline, _), desc)| {
+                    if *pipeline != vk::Pipeline::null() {
+                        let program = programs
+                            .get(desc.program.index())
+                            .ok_or(BackendError::InvalidHandle)
+                            .unwrap();
+                        let shaders = program
+                            .shaders
+                            .iter()
+                            .cloned()
+                            .collect::<ArrayVec<_, MAX_SHADERS>>();
+                        s.spawn(self.compile_raster_pipeline(
+                            handle,
+                            shaders,
+                            program.pipeline_layout,
+                            desc.clone(),
+                        ));
+                    }
+                })
+        });
+        let mut pipelines = self.pipelines.write();
+        for it in compiled {
+            match it {
+                Ok((handle, pipeline, layout)) => {
+                    pipelines.replace(handle, (pipeline, layout));
+                }
+                Err(err) => error!("Failed to compiled pipeline: {:?}", err),
+            }
         }
-        .map_err(|(_, error)| BackendError::from(error))?[0];
+    }
+
+    pub fn register_raster_pipeline(
+        &self,
+        desc: RasterPipelineCreateDesc,
+    ) -> BackendResult<RasterPipelineHandle> {
+        self.program_storage
+            .read()
+            .get(desc.program.index())
+            .ok_or(BackendError::InvalidHandle)?;
 
         let mut pipelines = self.pipelines.write();
-        let index = pipelines.len();
-        pipelines.push((pipeline, program.pipeline_layout));
+        let handle = pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()), desc);
 
-        Ok(PipelineHandle::new(index))
+        Ok(handle)
     }
 }
 

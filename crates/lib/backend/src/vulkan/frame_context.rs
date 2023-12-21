@@ -23,7 +23,7 @@ use crate::{barrier, BackendError, BackendResult, DeferedPass, DrawStream};
 
 use super::{
     frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
-    ImageStorage, PipelineStorage,
+    ImageStorage, RasterPipelineStorage,
 };
 
 #[derive(Clone, Copy)]
@@ -294,7 +294,7 @@ pub(crate) struct ExecutionContext<'a> {
     pub frame: &'a Frame,
     pub images: &'a ImageStorage,
     pub buffers: &'a BufferStorage,
-    pub pipelines: &'a PipelineStorage,
+    pub pipelines: &'a RasterPipelineStorage,
     pub descriptors: &'a DescriptorStorage,
 }
 
