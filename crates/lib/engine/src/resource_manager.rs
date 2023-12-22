@@ -3,7 +3,9 @@ use std::{cell::RefCell, collections::HashMap, fmt::Debug, future::Future, hash:
 use arrayvec::ArrayVec;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use bytes::Bytes;
-use dess_assets::{AssetRef, ContentSource, ImageAsset, MeshMaterial, ShaderAsset, ShaderSource};
+use dess_assets::{
+    AssetRef, ContentSource, ImageAsset, ModelCollectionAsset, ShaderAsset, ShaderSource,
+};
 use dess_backend::vulkan::{
     Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle, ShaderDesc,
     MAX_SHADERS,
@@ -12,14 +14,19 @@ use dess_common::{Handle, Pool};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use siphasher::sip128::Hasher128;
 
-use crate::{load_cached_asset, Error, Material};
+use crate::{
+    load_cached_asset, BasicPbrMaterialFactory, BasicUnlitMaterialFactory, BufferPool, Error,
+    Material, MaterialFactoryCollection, ModelCollection,
+};
 
-pub trait Resource: Send + Sync + Debug + 'static {
+pub trait ResourceDependencies: Send + Sync + Debug + 'static {
     fn is_finished(&self, ctx: &ResourceContext) -> bool;
     fn resolve(&mut self, ctx: &ResourceContext) -> Result<(), Error>;
 }
 
-impl Resource for ImageHandle {
+pub trait Resource: ResourceDependencies {}
+
+impl ResourceDependencies for ImageHandle {
     fn is_finished(&self, _ctx: &ResourceContext) -> bool {
         true
     }
@@ -29,9 +36,13 @@ impl Resource for ImageHandle {
     }
 }
 
+impl Resource for ImageHandle {}
+
 pub struct ResourceContext<'a> {
     pub device: &'a Device,
+    pub buffers: &'a BufferPool,
     images: &'a SingleTypeResourceCache<ImageHandle>,
+    materials: &'a SingleTypeResourceCache<Material>,
 }
 
 impl<'a> ResourceContext<'a> {
@@ -45,16 +56,29 @@ impl<'a> ResourceContext<'a> {
     pub fn is_image_finished(&self, handle: ResourceHandle<ImageHandle>) -> bool {
         self.images.is_finished(handle, self)
     }
+
+    pub fn resolve_material(
+        &self,
+        handle: ResourceHandle<Material>,
+    ) -> Result<Arc<Material>, Error> {
+        self.materials.resolve(handle, self)
+    }
+
+    pub fn is_material_finished(&self, handle: ResourceHandle<Material>) -> bool {
+        self.materials.is_finished(handle, self)
+    }
 }
 
 pub trait ResourceLoader {
     fn request_image(&self, asset: AssetRef) -> ResourceHandle<ImageHandle>;
-    fn request_material<CreateUniform: FnOnce(&MeshMaterial) -> Bytes>(
+    fn request_material(
         &self,
         program: ProgramHandle,
-        material: &MeshMaterial,
-        create_unfiform: CreateUniform,
+        images: &[(String, AssetRef)],
+        uniform: Bytes,
     ) -> ResourceHandle<Material>;
+    fn request_model(&self, asset: AssetRef) -> ResourceHandle<ModelCollection>;
+    fn get_or_load_program(&self, shaders: &[ShaderSource]) -> Result<ProgramHandle, Error>;
 }
 
 #[derive(Debug)]
@@ -189,30 +213,45 @@ type ProgramSource = ArrayVec<ShaderSource, MAX_SHADERS>;
 
 pub struct ResourceManager {
     device: Arc<Device>,
+    buffers: Arc<BufferPool>,
+    material_factory: Arc<MaterialFactoryCollection>,
     shaders: RwLock<HashMap<ShaderSource, Bytes>>,
     programs: RwLock<HashMap<ProgramSource, ProgramHandle>>,
     images: Mutex<SingleTypeResourceCache<ImageHandle>>,
     materials: Mutex<SingleTypeResourceCache<Material>>,
+    models: Mutex<SingleTypeResourceCache<ModelCollection>>,
 }
 
 impl ResourceManager {
-    pub fn new(device: &Arc<Device>) -> Arc<Self> {
+    pub fn new(device: &Arc<Device>, buffers: &Arc<BufferPool>) -> Arc<Self> {
+        let mut material_factory = MaterialFactoryCollection::default();
+        material_factory.register(Box::new(BasicUnlitMaterialFactory));
+        material_factory.register(Box::new(BasicPbrMaterialFactory));
         Arc::new(Self {
+            buffers: buffers.clone(),
             device: device.clone(),
             shaders: RwLock::default(),
             programs: RwLock::default(),
             images: Mutex::default(),
             materials: Mutex::default(),
+            models: Mutex::default(),
+            material_factory: Arc::new(material_factory),
         })
     }
 
     pub fn maintain(&self) {
         let images = self.images.lock();
+        let materials = self.materials.lock();
+        let models = self.models.lock();
         let context = ResourceContext {
             device: &self.device,
+            buffers: &self.buffers,
             images: &images,
+            materials: &materials,
         };
         images.maintain(&context);
+        materials.maintain(&context);
+        models.maintain(&context);
     }
 
     pub fn get_or_load_shader_code(&self, source: &ShaderSource) -> Result<Bytes, Error> {
@@ -233,7 +272,81 @@ impl ResourceManager {
         }
     }
 
-    pub fn get_or_load_program(&self, shaders: &[ShaderSource]) -> Result<ProgramHandle, Error> {
+    async fn load_image(device: Arc<Device>, asset: AssetRef) -> Result<Arc<ImageHandle>, Error> {
+        let asset: ImageAsset = load_cached_asset(asset)?;
+        let data = asset
+            .mips
+            .iter()
+            .map(|x| ImageSubresourceData {
+                data: x,
+                row_pitch: 0,
+            })
+            .collect::<Vec<_>>();
+        let image = device.create_image(
+            ImageCreateDesc::texture(asset.format, asset.dimensions)
+                .mip_levels(asset.mips.len())
+                .initial_data(&data),
+        )?;
+        Ok(Arc::new(image))
+    }
+
+    async fn load_material(
+        loader: Arc<ResourceManager>,
+        program: ProgramHandle,
+        images: Vec<(String, AssetRef)>,
+        uniform: Bytes,
+    ) -> Result<Arc<Material>, Error> {
+        Ok(Arc::new(Material::new(&loader, program, &images, uniform)))
+    }
+
+    async fn load_model(
+        loader: Arc<ResourceManager>,
+        asset: AssetRef,
+        material_factory: Arc<MaterialFactoryCollection>,
+    ) -> Result<Arc<ModelCollection>, Error> {
+        let asset: ModelCollectionAsset = load_cached_asset(asset)?;
+        Ok(Arc::new(ModelCollection::new(
+            &loader,
+            asset,
+            &loader.buffers,
+            material_factory.as_ref(),
+        )?))
+    }
+}
+
+impl ResourceLoader for Arc<ResourceManager> {
+    fn request_image(&self, asset: AssetRef) -> ResourceHandle<ImageHandle> {
+        self.images.lock().request(
+            asset,
+            ResourceManager::load_image(self.device.clone(), asset),
+        )
+    }
+
+    fn request_material(
+        &self,
+        program: ProgramHandle,
+        images: &[(String, AssetRef)],
+        uniform: Bytes,
+    ) -> ResourceHandle<Material> {
+        let mut hasher = siphasher::sip128::SipHasher::default();
+        program.hash(&mut hasher);
+        images.hash(&mut hasher);
+        uniform.hash(&mut hasher);
+        let asset = hasher.finish128().as_u128().into();
+        self.materials.lock().request(
+            asset,
+            ResourceManager::load_material(self.clone(), program, images.to_vec(), uniform),
+        )
+    }
+
+    fn request_model(&self, asset: AssetRef) -> ResourceHandle<ModelCollection> {
+        self.models.lock().request(
+            asset,
+            ResourceManager::load_model(self.clone(), asset, self.material_factory.clone()),
+        )
+    }
+
+    fn get_or_load_program(&self, shaders: &[ShaderSource]) -> Result<ProgramHandle, Error> {
         let key = shaders.iter().cloned().collect::<ProgramSource>();
         let programs = self.programs.upgradable_read();
         if let Some(program) = programs.get(&key) {
@@ -261,61 +374,5 @@ impl ResourceManager {
                 Ok(program)
             }
         }
-    }
-
-    async fn load_image(device: Arc<Device>, asset: AssetRef) -> Result<Arc<ImageHandle>, Error> {
-        let asset: ImageAsset = load_cached_asset(asset)?;
-        let data = asset
-            .mips
-            .iter()
-            .map(|x| ImageSubresourceData {
-                data: x,
-                row_pitch: 0,
-            })
-            .collect::<Vec<_>>();
-        let image = device.create_image(
-            ImageCreateDesc::texture(asset.format, asset.dimensions)
-                .mip_levels(asset.mips.len())
-                .initial_data(&data),
-        )?;
-        Ok(Arc::new(image))
-    }
-
-    async fn load_material(
-        loader: Arc<ResourceManager>,
-        program: ProgramHandle,
-        material: MeshMaterial,
-        uniform: Bytes,
-    ) -> Result<Arc<Material>, Error> {
-        Ok(Arc::new(Material::new(
-            &loader, program, &material, uniform,
-        )))
-    }
-}
-
-impl ResourceLoader for Arc<ResourceManager> {
-    fn request_image(&self, asset: AssetRef) -> ResourceHandle<ImageHandle> {
-        self.images.lock().request(
-            asset,
-            ResourceManager::load_image(self.device.clone(), asset),
-        )
-    }
-
-    fn request_material<CreateUniform: FnOnce(&MeshMaterial) -> Bytes>(
-        &self,
-        program: ProgramHandle,
-        material: &MeshMaterial,
-        create_unfiform: CreateUniform,
-    ) -> ResourceHandle<Material> {
-        let mut hasher = siphasher::sip128::SipHasher::default();
-        let uniform = create_unfiform(material);
-        program.hash(&mut hasher);
-        material.hash(&mut hasher);
-        uniform.hash(&mut hasher);
-        let asset = hasher.finish128().as_u128().into();
-        self.materials.lock().request(
-            asset,
-            ResourceManager::load_material(self.clone(), program, material.clone(), uniform),
-        )
     }
 }

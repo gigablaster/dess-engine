@@ -242,7 +242,7 @@ pub struct ModelAsset {
     pub static_meshes: Vec<MeshData>,
     pub mesh_names: HashMap<String, u32>,
     pub bones: Vec<Bone>,
-    pub names: HashMap<String, u32>,
+    pub bone_names: HashMap<String, u32>,
     pub node_to_mesh: Vec<(u32, u32)>,
 }
 

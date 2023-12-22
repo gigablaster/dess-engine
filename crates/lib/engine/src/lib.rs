@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod material;
-// mod model;
+mod model;
 mod pool;
 mod resource_manager;
 
@@ -31,7 +31,7 @@ use dess_backend::BackendError;
 use log::debug;
 pub use material::*;
 use memmap2::Mmap;
-// pub use model::*;
+pub use model::*;
 pub use pool::*;
 pub use resource_manager::*;
 

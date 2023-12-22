@@ -17,14 +17,16 @@ use std::{collections::HashMap, fmt::Debug};
 
 use ash::vk;
 use bytes::Bytes;
-use dess_assets::MeshMaterial;
+use dess_assets::AssetRef;
 use dess_backend::{
     vulkan::{DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
     BackendResultExt,
 };
 use smol_str::SmolStr;
 
-use crate::{Error, Resource, ResourceContext, ResourceHandle, ResourceLoader};
+use crate::{
+    Error, Resource, ResourceContext, ResourceDependencies, ResourceHandle, ResourceLoader,
+};
 
 const MATERIAL_UNIFORM_NAME: &str = "material";
 /// Material contains effect and a per-material descriptor set
@@ -39,7 +41,9 @@ pub struct Material {
     ds: DescriptorHandle,
 }
 
-impl Resource for Material {
+impl Resource for Material {}
+
+impl ResourceDependencies for Material {
     fn is_finished(&self, ctx: &ResourceContext) -> bool {
         self.images
             .iter()
@@ -57,8 +61,10 @@ impl Resource for Material {
                 ctx.bind_image_by_name(ds, name, *image, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .ignore_missing()?;
             }
-            ctx.bind_uniform_by_name(ds, MATERIAL_UNIFORM_NAME, &self.uniform)
-                .ignore_missing()?;
+            if !self.uniform.is_empty() {
+                ctx.bind_uniform_by_name(ds, MATERIAL_UNIFORM_NAME, &self.uniform)
+                    .ignore_missing()?;
+            }
             self.ds = ds;
             Ok(())
         })?;
@@ -71,11 +77,10 @@ impl Material {
     pub fn new<T: ResourceLoader>(
         loader: &T,
         program: ProgramHandle,
-        mesh_material: &MeshMaterial,
+        images: &[(String, AssetRef)],
         uniform: Bytes,
     ) -> Self {
-        let images = mesh_material
-            .images
+        let images = images
             .iter()
             .map(|(name, asset)| (name.into(), loader.request_image(*asset)))
             .collect::<HashMap<_, _>>();

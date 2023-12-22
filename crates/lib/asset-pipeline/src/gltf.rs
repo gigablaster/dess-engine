@@ -406,7 +406,7 @@ fn process_node(
     });
     let name = node.name().unwrap_or(&format!("{}", last)).to_owned();
     let node_name = format!("{}/{}", parent_name, name);
-    ctx.scene.names.insert(node_name.clone(), last as u32);
+    ctx.scene.bone_names.insert(node_name.clone(), last as u32);
     if let Some(mesh) = node.mesh() {
         if let Some(instance_index) = ctx.processed_meshes.get(&(mesh.index() as u32)) {
             ctx.scene.node_to_mesh.push((last as u32, *instance_index));

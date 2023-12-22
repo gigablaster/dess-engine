@@ -72,7 +72,7 @@ impl<T: Client> Runner<T> {
         let device = Device::new(instance, pdevice).unwrap();
         let resource_pool = TemporaryImagePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
-        let asset_cache = ResourceManager::new(&device);
+        let asset_cache = ResourceManager::new(&device, &buffer_pool);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
