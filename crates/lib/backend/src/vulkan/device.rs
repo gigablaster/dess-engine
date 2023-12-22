@@ -171,6 +171,12 @@ pub struct Device {
     temp_buffer_handle: BufferHandle,
 }
 
+impl Debug for Device {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Device({})", vk::Handle::as_raw(self.raw.handle()))
+    }
+}
+
 unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
