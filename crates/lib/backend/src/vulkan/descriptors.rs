@@ -24,7 +24,7 @@ use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use smol_str::SmolStr;
 
-use crate::{BackendError, BackendResult};
+use crate::{BackendError, BackendResult, BufferType};
 
 use super::{
     BufferHandle, BufferSlice, BufferStorage, DescriptorSet, DescriptorSetCreateInfo,
@@ -454,10 +454,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .buffers
             .get_cold(buffer.handle)
             .ok_or(BackendError::InvalidHandle)?;
-        debug_assert!(raw
-            .desc
-            .usage
-            .contains(vk::BufferUsageFlags::STORAGE_BUFFER));
+        debug_assert!(raw.desc.ty.contains(BufferType::Storage));
         let buffer_bind = desc
             .storage_buffers
             .iter_mut()

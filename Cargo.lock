@@ -566,6 +566,7 @@ dependencies = [
  "ash",
  "ash-window",
  "bevy_tasks",
+ "bitflags 2.4.1",
  "byte-slice-cast",
  "dess-common",
  "directories",

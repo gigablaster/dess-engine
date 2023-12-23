@@ -13,7 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use ash::vk;
+use ash::vk::{self};
+use bitflags::bitflags;
 use parking_lot::Mutex;
 
 use crate::{BackendError, BackendResult};
@@ -26,7 +27,7 @@ use super::{
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferDesc {
     pub size: usize,
-    pub usage: vk::BufferUsageFlags,
+    pub ty: BufferType,
 }
 
 #[derive(Debug)]
@@ -48,18 +49,18 @@ impl ToDrop for Buffer {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferCreateDesc<'a> {
     pub size: usize,
-    pub usage: vk::BufferUsageFlags,
-    pub memory_location: gpu_alloc::UsageFlags,
+    pub ty: BufferType,
     pub alignment: Option<u64>,
     pub dedicated: bool,
     pub name: Option<&'a str>,
+    memory_location: gpu_alloc::UsageFlags,
 }
 
 impl<'a> BufferCreateDesc<'a> {
-    pub fn gpu(size: usize, usage: vk::BufferUsageFlags) -> Self {
+    pub fn gpu(size: usize, ty: BufferType) -> Self {
         Self {
             size,
-            usage,
+            ty,
             memory_location: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
             dedicated: false,
@@ -67,10 +68,10 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn host(size: usize, usage: vk::BufferUsageFlags) -> Self {
+    pub fn host(size: usize, ty: BufferType) -> Self {
         Self {
             size,
-            usage,
+            ty,
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS,
             alignment: None,
             dedicated: false,
@@ -78,10 +79,10 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn upload(size: usize, usage: vk::BufferUsageFlags) -> Self {
+    pub fn upload(size: usize, ty: BufferType) -> Self {
         Self {
             size,
-            usage,
+            ty,
             memory_location: gpu_alloc::UsageFlags::UPLOAD,
             alignment: None,
             dedicated: false,
@@ -89,10 +90,10 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn shared(size: usize, usage: vk::BufferUsageFlags) -> Self {
+    pub fn shared(size: usize, ty: BufferType) -> Self {
         Self {
             size,
-            usage,
+            ty,
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
                 | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
@@ -116,9 +117,9 @@ impl<'a> BufferCreateDesc<'a> {
         self
     }
 
-    pub fn build(&self) -> vk::BufferCreateInfo {
+    fn build(&self) -> vk::BufferCreateInfo {
         vk::BufferCreateInfo::builder()
-            .usage(self.usage)
+            .usage(self.ty.into())
             .size(self.size as _)
             .build()
     }
@@ -187,9 +188,47 @@ impl Device {
             raw: buffer,
             desc: BufferDesc {
                 size: desc.size,
-                usage: desc.usage,
+                ty: desc.ty,
             },
             memory: Some(memory),
         })
+    }
+}
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+    pub struct BufferType: u32 {
+        const Vertex = 0x1;
+        const Index = 0x2;
+        const Uniform = 0x4;
+        const Storage = 0x8;
+        const Destination = 0x16;
+        const Source = 0x32;
+    }
+}
+
+impl From<BufferType> for vk::BufferUsageFlags {
+    fn from(value: BufferType) -> Self {
+        let mut result = vk::BufferUsageFlags::empty();
+        if value.contains(BufferType::Vertex) {
+            result |= vk::BufferUsageFlags::VERTEX_BUFFER;
+        }
+        if value.contains(BufferType::Index) {
+            result |= vk::BufferUsageFlags::INDEX_BUFFER;
+        }
+        if value.contains(BufferType::Storage) {
+            result |= vk::BufferUsageFlags::STORAGE_BUFFER;
+        }
+        if value.contains(BufferType::Uniform) {
+            result |= vk::BufferUsageFlags::UNIFORM_BUFFER;
+        }
+        if value.contains(BufferType::Destination) {
+            result |= vk::BufferUsageFlags::TRANSFER_DST;
+        }
+        if value.contains(BufferType::Source) {
+            result |= vk::BufferUsageFlags::TRANSFER_SRC;
+        }
+
+        result
     }
 }

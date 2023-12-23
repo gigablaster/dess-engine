@@ -17,8 +17,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
 use dess_backend::{
-    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, Device, Format,
-    ImageCreateDesc, ImageHandle, ImageViewDesc,
+    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, BufferType, Device,
+    Format, ImageCreateDesc, ImageHandle, ImageViewDesc,
 };
 use dess_common::DynamicAllocator;
 use parking_lot::Mutex;
@@ -267,9 +267,10 @@ impl BufferPool {
         } else {
             let buffer = self.device.create_buffer(BufferCreateDesc::gpu(
                 CHUNK_SIZE,
-                vk::BufferUsageFlags::VERTEX_BUFFER
-                    | vk::BufferUsageFlags::INDEX_BUFFER
-                    | vk::BufferUsageFlags::TRANSFER_DST,
+                BufferType::Vertex
+                    | BufferType::Index
+                    | BufferType::Storage
+                    | BufferType::Destination,
             ))?;
             let mut allocator = DynamicAllocator::new(CHUNK_SIZE, 1024);
             let offset = allocator.allocate(size).ok_or(BackendError::TooBig)?;
