@@ -132,7 +132,7 @@ fn process_rgba(image: &ImageRgba8Data, desc: ImageSourceDesc) -> Result<ImageAs
 
     let mut current_dimensions = dimensions;
     let mut mips = Vec::new();
-    if desc.generate_mips {
+    if desc.generate_mips && image.width() >= 4 && image.height() >= 4 {
         while current_dimensions[0] >= 4 && current_dimensions[1] >= 4 {
             mips.push(prepare_image(image.as_rgba8().unwrap(), format));
             current_dimensions[0] >>= 1;
