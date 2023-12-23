@@ -1,15 +1,18 @@
 use ash::vk::{self};
+use dess_assets::{ContentSource, GltfSource};
 use dess_backend::{
     vulkan::{Barrier, DescriptorHandle, RenderAttachment},
     DrawStream,
 };
 use dess_common::GameTime;
-use dess_engine::{PoolImageDesc, RelativeImageSize};
+use dess_engine::{
+    ModelCollection, PoolImageDesc, RelativeImageSize, ResourceHandle, ResourceLoader,
+};
 use dess_runner::{Client, RenderContext, Runner, UpdateContext};
 
 #[derive(Default)]
 struct ClearBackbuffer {
-    // model: AssetHandle<RenderModel>,
+    model: ResourceHandle<ModelCollection>,
 }
 
 impl Client for ClearBackbuffer {
@@ -72,10 +75,10 @@ impl Client for ClearBackbuffer {
 
     fn hidden(&mut self, _value: bool) {}
 
-    fn init(&mut self, _context: UpdateContext) {
-        // self.model = context
-        //     .resource_manager
-        //     .request_model("models/Avocado/Avocado.gltf");
+    fn init(&mut self, context: UpdateContext) {
+        self.model = context
+            .resource_manager
+            .request_model(GltfSource::new("models/Avocado/Avocado.gltf").get_ref());
     }
 }
 

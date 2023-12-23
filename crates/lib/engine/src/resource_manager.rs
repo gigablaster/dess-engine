@@ -1,4 +1,4 @@
-use std::{cell::RefCell, collections::HashMap, fmt::Debug, future::Future, hash::Hash, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, future::Future, hash::Hash, sync::Arc};
 
 use arrayvec::ArrayVec;
 use bevy_tasks::{block_on, IoTaskPool, Task};
@@ -11,6 +11,7 @@ use dess_backend::vulkan::{
     MAX_SHADERS,
 };
 use dess_common::{Handle, Pool};
+use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use siphasher::sip128::Hasher128;
 
@@ -141,7 +142,10 @@ impl<T: Resource> ResourceState<T> {
                 if task.is_finished() {
                     match block_on(task) {
                         Ok(resource) => *self = ResourceState::Resolving(resource),
-                        Err(err) => *self = ResourceState::Failed(err),
+                        Err(err) => {
+                            error!("Failed to load asset: {:?}", err);
+                            *self = ResourceState::Failed(err);
+                        }
                     }
                 }
             }
@@ -149,7 +153,10 @@ impl<T: Resource> ResourceState<T> {
                 if resource.is_finished(ctx) {
                     match Arc::get_mut(resource).unwrap().resolve(ctx) {
                         Ok(_) => *self = ResourceState::Loaded(resource.clone()),
-                        Err(err) => *self = ResourceState::Failed(err),
+                        Err(err) => {
+                            error!("Failed to resolve asset: {:?}", err);
+                            *self = ResourceState::Failed(err);
+                        }
                     }
                 }
             }
@@ -162,9 +169,8 @@ pub type ResourceHandle<T> = Handle<ResourceState<T>>;
 
 #[derive(Debug, Default)]
 struct SingleTypeResourceCache<T: Resource> {
-    // RefCell should work there unless we have some sort circular dependencies in resources
-    handles: RefCell<HashMap<AssetRef, ResourceHandle<T>>>,
-    assets: RefCell<Pool<ResourceState<T>>>,
+    handles: RwLock<HashMap<AssetRef, ResourceHandle<T>>>,
+    assets: Mutex<Pool<ResourceState<T>>>,
 }
 
 impl<T: Resource> SingleTypeResourceCache<T> {
@@ -172,18 +178,24 @@ impl<T: Resource> SingleTypeResourceCache<T> {
     where
         F: Future<Output = Result<Arc<T>, Error>> + Send + Sync + 'static,
     {
-        if let Some(handle) = self.handles.borrow().get(&asset) {
+        let handles = self.handles.upgradable_read();
+        if let Some(handle) = handles.get(&asset) {
             *handle
         } else {
-            let task = IoTaskPool::get().spawn(load);
-            let handle = self.assets.borrow_mut().push(ResourceState::Pending(task));
-            self.handles.borrow_mut().insert(asset, handle);
-            handle
+            let mut handles = RwLockUpgradableReadGuard::upgrade(handles);
+            if let Some(handle) = handles.get(&asset) {
+                *handle
+            } else {
+                let task = IoTaskPool::get().spawn(load);
+                let handle = self.assets.lock().push(ResourceState::Pending(task));
+                handles.insert(asset, handle);
+                handle
+            }
         }
     }
 
     pub fn is_finished(&self, handle: ResourceHandle<T>, ctx: &ResourceContext) -> bool {
-        if let Some(state) = self.assets.borrow().get(handle) {
+        if let Some(state) = self.assets.lock().get(handle) {
             state.is_finished(ctx)
         } else {
             false
@@ -195,7 +207,7 @@ impl<T: Resource> SingleTypeResourceCache<T> {
         handle: ResourceHandle<T>,
         ctx: &ResourceContext,
     ) -> Result<Arc<T>, Error> {
-        if let Some(state) = self.assets.borrow_mut().get_mut(handle) {
+        if let Some(state) = self.assets.lock().get_mut(handle) {
             state.resolve(ctx)
         } else {
             Err(Error::InvalidHandle)
@@ -203,9 +215,7 @@ impl<T: Resource> SingleTypeResourceCache<T> {
     }
 
     pub fn maintain(&self, ctx: &ResourceContext) {
-        self.assets
-            .borrow_mut()
-            .for_each_mut(|hot| hot.maintain(ctx))
+        self.assets.lock().for_each_mut(|hot| hot.maintain(ctx))
     }
 }
 
@@ -217,9 +227,9 @@ pub struct ResourceManager {
     material_factory: Arc<MaterialFactoryCollection>,
     shaders: RwLock<HashMap<ShaderSource, Bytes>>,
     programs: RwLock<HashMap<ProgramSource, ProgramHandle>>,
-    images: Mutex<SingleTypeResourceCache<ImageHandle>>,
-    materials: Mutex<SingleTypeResourceCache<Material>>,
-    models: Mutex<SingleTypeResourceCache<ModelCollection>>,
+    images: SingleTypeResourceCache<ImageHandle>,
+    materials: SingleTypeResourceCache<Material>,
+    models: SingleTypeResourceCache<ModelCollection>,
 }
 
 impl ResourceManager {
@@ -232,26 +242,23 @@ impl ResourceManager {
             device: device.clone(),
             shaders: RwLock::default(),
             programs: RwLock::default(),
-            images: Mutex::default(),
-            materials: Mutex::default(),
-            models: Mutex::default(),
+            images: SingleTypeResourceCache::default(),
+            materials: SingleTypeResourceCache::default(),
+            models: SingleTypeResourceCache::default(),
             material_factory: Arc::new(material_factory),
         })
     }
 
     pub fn maintain(&self) {
-        let images = self.images.lock();
-        let materials = self.materials.lock();
-        let models = self.models.lock();
         let context = ResourceContext {
             device: &self.device,
             buffers: &self.buffers,
-            images: &images,
-            materials: &materials,
+            images: &self.images,
+            materials: &self.materials,
         };
-        images.maintain(&context);
-        materials.maintain(&context);
-        models.maintain(&context);
+        self.images.maintain(&context);
+        self.materials.maintain(&context);
+        self.models.maintain(&context);
     }
 
     pub fn get_or_load_shader_code(&self, source: &ShaderSource) -> Result<Bytes, Error> {
@@ -266,6 +273,7 @@ impl ResourceManager {
                 Ok(code.clone())
             } else {
                 let shader: ShaderAsset = load_cached_asset(source.get_ref())?;
+                debug!("Loaded shader: {:?}", source);
                 shaders.insert(source.clone(), shader.code.clone());
                 Ok(shader.code)
             }
@@ -316,7 +324,7 @@ impl ResourceManager {
 
 impl ResourceLoader for Arc<ResourceManager> {
     fn request_image(&self, asset: AssetRef) -> ResourceHandle<ImageHandle> {
-        self.images.lock().request(
+        self.images.request(
             asset,
             ResourceManager::load_image(self.device.clone(), asset),
         )
@@ -333,14 +341,14 @@ impl ResourceLoader for Arc<ResourceManager> {
         images.hash(&mut hasher);
         uniform.hash(&mut hasher);
         let asset = hasher.finish128().as_u128().into();
-        self.materials.lock().request(
+        self.materials.request(
             asset,
             ResourceManager::load_material(self.clone(), program, images.to_vec(), uniform),
         )
     }
 
     fn request_model(&self, asset: AssetRef) -> ResourceHandle<ModelCollection> {
-        self.models.lock().request(
+        self.models.request(
             asset,
             ResourceManager::load_model(self.clone(), asset, self.material_factory.clone()),
         )

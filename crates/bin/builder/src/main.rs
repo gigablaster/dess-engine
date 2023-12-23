@@ -11,15 +11,15 @@ fn collect(processor: &ContentProcessor, root: &Path) -> io::Result<()> {
             collect(processor, &path.path())?
         } else {
             let path = path.path().strip_prefix(ROOT_DATA_PATH).unwrap().to_owned();
-            let path_str = path.to_str().unwrap();
+            let path_str = path.to_str().unwrap().replace('\\', "/");
             if path_str.ends_with(".gltf") {
-                processor.import(Box::new(GltfSource::new(path)));
+                processor.import(Box::new(GltfSource::new(path_str)));
             } else if path_str.ends_with("_ps.hlsl") {
-                processor.import(Box::new(ShaderSource::fragment(path)));
+                processor.import(Box::new(ShaderSource::fragment(path_str)));
             } else if path_str.ends_with("_vs.hlsl") {
-                processor.import(Box::new(ShaderSource::vertex(path)));
+                processor.import(Box::new(ShaderSource::vertex(path_str)));
             } else if path_str.ends_with("_cs.hlsl") {
-                processor.import(Box::new(ShaderSource::compute(path)));
+                processor.import(Box::new(ShaderSource::compute(path_str)));
             }
         }
     }

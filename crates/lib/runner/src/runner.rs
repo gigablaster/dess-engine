@@ -72,7 +72,7 @@ impl<T: Client> Runner<T> {
         let device = Device::new(instance, pdevice).unwrap();
         let resource_pool = TemporaryImagePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
-        let asset_cache = ResourceManager::new(&device, &buffer_pool);
+        let resource_manager = ResourceManager::new(&device, &buffer_pool);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
@@ -82,7 +82,7 @@ impl<T: Client> Runner<T> {
         ComputeTaskPool::get_or_init(TaskPool::default);
         info!("Init game");
         self.client.init(crate::UpdateContext {
-            resource_manager: asset_cache.clone(),
+            resource_manager: resource_manager.clone(),
         });
         info!("Main loop enter");
         let mut last_timestamp = Instant::now();
@@ -154,10 +154,10 @@ impl<T: Client> Runner<T> {
                         let dt =
                             time_filter.sample((current_timestamp - last_timestamp).as_secs_f64());
                         last_timestamp = current_timestamp;
-                        asset_cache.maintain();
+                        resource_manager.maintain();
                         if self.client.tick(
                             crate::UpdateContext {
-                                resource_manager: asset_cache.clone(),
+                                resource_manager: resource_manager.clone(),
                             },
                             dt,
                         ) == ClientState::Exit
