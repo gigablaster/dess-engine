@@ -6,8 +6,8 @@ use std::{
 
 use dess_assets::{
     get_absolute_asset_path, get_relative_asset_path, AssetRef, BlendMode, Bone, GltfSource,
-    ImageSource, ImageSourceDesc, LightingAttributes, MeshData, MeshMaterial, ModelAsset,
-    ModelCollectionAsset, StaticMeshGeometry, SubMesh, MATERIAL_TYPE_PBR, MATERIAL_TYPE_UNLIT,
+    ImageSource, ImageSourceDesc, MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset,
+    StaticMeshVertex, SubMesh, MATERIAL_TYPE_PBR, MATERIAL_TYPE_UNLIT,
 };
 use normalize_path::NormalizePath;
 use numquant::linear::quantize;
@@ -131,32 +131,44 @@ fn process_model(ctx: &mut SceneProcessingContext, root: gltf::Node) {
     process_node(ctx, "", None, root);
 }
 
-fn process_attributes(
-    normals: &[[f32; 3]],
-    uvs: &[[f32; 2]],
-    tangents: &[[f32; 3]],
-) -> (f32, Vec<LightingAttributes>) {
-    let mut result = Vec::with_capacity(uvs.len());
-    let (max_uv, uvs) = quantize_uvs(uvs);
-    let normals = quantize_normalized(normals);
-    let tangents = quantize_normalized(tangents);
-    for index in 0..uvs.len() {
-        let attr = LightingAttributes::new(normals[index], tangents[index], uvs[index]);
-        result.push(attr);
-    }
-
-    (max_uv, result)
+struct ProcessedGeometry {
+    pub vertices: Vec<StaticMeshVertex>,
+    pub max_position_value: f32,
+    pub max_uv1: f32,
+    pub max_uv2: f32,
 }
 
-fn process_static_geometry(positons: &[[f32; 3]]) -> (f32, Vec<StaticMeshGeometry>) {
+fn process_geometry(
+    positons: &[[f32; 3]],
+    normals: &[[f32; 3]],
+    tangents: &[[f32; 3]],
+    uv1: &[[f32; 2]],
+    uv2: &[[f32; 2]],
+) -> ProcessedGeometry {
+    let count = positons.len();
+    let mut vertices = Vec::with_capacity(count);
     let (max_position, positions) = quantize_positions(positons);
-    let positions = positions
-        .iter()
-        .copied()
-        .map(StaticMeshGeometry::new)
-        .collect::<Vec<_>>();
+    let uv1 = quantize_uvs(uv1);
+    let uv2 = quantize_uvs(uv2);
+    let normals = quantize_normalized(normals);
+    let tangents = quantize_normalized(tangents);
+    for index in 0..count {
+        let vertex = StaticMeshVertex::new(
+            positions[index],
+            normals[index],
+            tangents[index],
+            uv1.1[index],
+            uv2.1[index],
+        );
+        vertices.push(vertex);
+    }
 
-    (max_position, positions)
+    ProcessedGeometry {
+        vertices,
+        max_position_value: max_position,
+        max_uv1: uv1.0,
+        max_uv2: uv2.0,
+    }
 }
 
 fn process_texture(
@@ -294,8 +306,7 @@ fn process_material(ctx: &mut SceneProcessingContext, material: &gltf::Material)
 fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
     let mut target = MeshData::default();
     let mut mesh_indices = Vec::new();
-    let mut mesh_geometry = Vec::new();
-    let mut mesh_attributes = Vec::new();
+    let mut mesh_vertices = Vec::new();
     for prim in mesh.primitives() {
         let reader = prim.reader(|buffer| Some(&ctx.buffers[buffer.index()]));
         let positions = if let Some(positions) = reader.read_positions() {
@@ -303,12 +314,17 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
         } else {
             return;
         };
-        let (uvs, has_uvs) = if let Some(texcoord) = reader.read_tex_coords(0) {
+        let (uvs1, has_uvs) = if let Some(texcoord) = reader.read_tex_coords(0) {
             (texcoord.into_f32().collect::<Vec<_>>(), true)
         } else {
             (vec![[0.0, 0.0]; positions.len()], false)
         };
-        assert_eq!(positions.len(), uvs.len());
+        let uvs2 = if let Some(texcoord) = reader.read_tex_coords(1) {
+            texcoord.into_f32().collect::<Vec<_>>()
+        } else {
+            vec![[0.0, 0.0]; positions.len()]
+        };
+        assert_eq!(positions.len(), uvs1.len());
         let (normals, has_normals) = if let Some(normals) = reader.read_normals() {
             (normals.collect::<Vec<_>>(), true)
         } else {
@@ -333,7 +349,7 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
                 indices: &indices,
                 positions: &positions,
                 normals: &normals,
-                uvs: &uvs,
+                uvs: &uvs1,
                 tangents: &mut tangents,
             });
         };
@@ -345,47 +361,35 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
             .iter()
             .map(|x| [x[0], x[1], x[2]])
             .collect::<Vec<_>>();
-        let (max_position_value, geometry) = process_static_geometry(&positions);
-        let (max_uv_value, attributes) = process_attributes(&normals, &uvs, &tangents);
-        assert_eq!(positions.len(), attributes.len());
+        let processed = process_geometry(&positions, &normals, &tangents, &uvs1, &uvs2);
 
-        let (total_vertex_count, remap) = meshopt::generate_vertex_remap_multi::<u8>(
-            geometry.len(),
-            &[
-                meshopt::VertexStream::new(geometry.as_ptr()),
-                meshopt::VertexStream::new(attributes.as_ptr()),
-            ],
-            Some(&indices),
-        );
-        let mut geometry = meshopt::remap_vertex_buffer(&geometry, total_vertex_count, &remap);
-        let mut attributes = meshopt::remap_vertex_buffer(&attributes, total_vertex_count, &remap);
+        let (total_vertex_count, remap) =
+            meshopt::generate_vertex_remap(&processed.vertices, Some(&indices));
+        let mut vertices =
+            meshopt::remap_vertex_buffer(&processed.vertices, total_vertex_count, &remap);
         let mut indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
-        meshopt::optimize_vertex_cache_in_place(&indices, geometry.len());
+        meshopt::optimize_vertex_cache_in_place(&indices, vertices.len());
 
-        let first = mesh_indices.len() as u32;
-        let count = indices.len() as u32;
+        let first_index = mesh_indices.len() as u32;
+        let index_count = indices.len() as u32;
         let material = process_material(ctx, &prim.material());
         mesh_indices.append(&mut indices);
-        mesh_geometry.append(&mut geometry);
-        mesh_attributes.append(&mut attributes);
-        target.surfaces.push(SubMesh {
-            first,
-            count,
+        mesh_vertices.append(&mut vertices);
+        target.submeshes.push(SubMesh {
+            first_index,
+            index_count,
             bounds,
-            max_position_value,
-            max_uv_value,
+            max_position_value: processed.max_position_value,
+            max_uv_value: [processed.max_uv1, processed.max_uv2],
             material,
         });
     }
-    let remap = meshopt::optimize_vertex_fetch_remap(&mesh_indices, mesh_geometry.len());
-    mesh_geometry = meshopt::remap_vertex_buffer(&mesh_geometry, mesh_geometry.len(), &remap);
-    mesh_attributes = meshopt::remap_vertex_buffer(&mesh_attributes, mesh_attributes.len(), &remap);
+    let remap = meshopt::optimize_vertex_fetch_remap(&mesh_indices, mesh_vertices.len());
+    mesh_vertices = meshopt::remap_vertex_buffer(&mesh_vertices, mesh_vertices.len(), &remap);
     let mut mesh_indices = mesh_indices.iter().map(|x| *x as u16).collect::<Vec<_>>();
-    target.geometry = ctx.model.static_geometry.len() as u32;
-    target.attributes = ctx.model.attributes.len() as u32;
-    target.indices = ctx.model.indices.len() as u32;
-    ctx.model.static_geometry.append(&mut mesh_geometry);
-    ctx.model.attributes.append(&mut mesh_attributes);
+    target.vertex_offset = ctx.model.vertices.len() as u32;
+    target.index_offset = ctx.model.indices.len() as u32;
+    ctx.model.vertices.append(&mut mesh_vertices);
     ctx.model.indices.append(&mut mesh_indices);
     ctx.scene.static_meshes.push(target);
 }

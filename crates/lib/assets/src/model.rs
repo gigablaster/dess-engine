@@ -33,12 +33,7 @@ pub struct GltfSource {
 impl GltfSource {
     pub fn new<P: AsRef<Path>>(path: P) -> Self {
         Self {
-            path: path
-                .as_ref()
-                .to_str()
-                .unwrap()
-                .to_ascii_lowercase()
-                .to_owned(),
+            path: path.as_ref().to_str().unwrap().to_owned(),
         }
     }
 }
@@ -53,55 +48,57 @@ impl ContentSource for GltfSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(C)]
-pub struct LightingAttributes {
+pub struct StaticMeshVertex {
+    pub position: [i16; 3],
+    _pad: i16,
     pub normal: [i16; 2],
     pub tangent: [i16; 2],
-    pub uv: [i16; 2],
-    _pad: [i16; 2],
+    pub uv1: [i16; 2],
+    pub uv2: [i16; 2],
 }
 
-impl<'a, C: Context> Readable<'a, C> for LightingAttributes {
+impl<'a, C: Context> Readable<'a, C> for StaticMeshVertex {
     fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
         Ok(Self {
+            position: reader.read_value::<[i16; 3]>()?,
+            _pad: 0,
             normal: reader.read_value::<[i16; 2]>()?,
             tangent: reader.read_value::<[i16; 2]>()?,
-            uv: reader.read_value::<[i16; 2]>()?,
-            _pad: [0, 0],
+            uv1: reader.read_value::<[i16; 2]>()?,
+            uv2: reader.read_value::<[i16; 2]>()?,
         })
     }
 }
 
-impl<C: Context> Writable<C> for LightingAttributes {
+impl<C: Context> Writable<C> for StaticMeshVertex {
     fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
+        writer.write_value(&self.position)?;
         writer.write_value(&self.normal)?;
         writer.write_value(&self.tangent)?;
-        writer.write_value(&self.uv)?;
+        writer.write_value(&self.uv1)?;
+        writer.write_value(&self.uv2)?;
 
         Ok(())
     }
 }
 
-impl LightingAttributes {
-    pub fn new(normal: [i16; 2], tangent: [i16; 2], uv: [i16; 2]) -> Self {
+impl StaticMeshVertex {
+    pub fn new(
+        position: [i16; 3],
+        normal: [i16; 2],
+        tangent: [i16; 2],
+        uv1: [i16; 2],
+        uv2: [i16; 2],
+    ) -> Self {
         Self {
+            position,
+            _pad: 0,
             normal,
             tangent,
-            uv,
-            _pad: [0, 0],
+            uv1,
+            uv2,
         }
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-#[repr(C, align(16))]
-pub struct PbrMeshMaterialUniform {
-    pub emissive_power: f32,
-}
-
-#[repr(C, align(16))]
-pub struct MeshSurfaceUniform {
-    pub position_scale: f32,
-    pub uv_scale: f32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Readable, Writable)]
@@ -114,20 +111,19 @@ pub struct Bone {
 
 #[derive(Debug, Clone, PartialEq, Readable, Writable)]
 pub struct SubMesh {
-    pub first: u32,
-    pub count: u32,
+    pub first_index: u32,
+    pub index_count: u32,
     pub bounds: ([f32; 3], [f32; 3]),
     pub max_position_value: f32,
-    pub max_uv_value: f32,
+    pub max_uv_value: [f32; 2],
     pub material: u32,
 }
 
 #[derive(Debug, Default, Readable, Writable)]
 pub struct MeshData {
-    pub geometry: u32,
-    pub attributes: u32,
-    pub indices: u32,
-    pub surfaces: Vec<SubMesh>,
+    pub vertex_offset: u32,
+    pub index_offset: u32,
+    pub submeshes: Vec<SubMesh>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Readable, Writable)]
@@ -203,39 +199,6 @@ impl Hash for MeshMaterial {
         }
     }
 }
-#[derive(Debug, Clone, Copy, Default)]
-#[repr(C)]
-pub struct StaticMeshGeometry {
-    pub position: [i16; 3],
-    _padding: u16,
-}
-
-impl<'a, C: Context> Readable<'a, C> for StaticMeshGeometry {
-    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
-        Ok(Self {
-            position: reader.read_value()?,
-            _padding: 0,
-        })
-    }
-}
-
-impl<C: Context> Writable<C> for StaticMeshGeometry {
-    fn write_to<T: ?Sized + speedy::Writer<C>>(
-        &self,
-        writer: &mut T,
-    ) -> Result<(), <C as Context>::Error> {
-        writer.write_value(&self.position)
-    }
-}
-
-impl StaticMeshGeometry {
-    pub fn new(position: [i16; 3]) -> Self {
-        Self {
-            position,
-            _padding: 0,
-        }
-    }
-}
 
 #[derive(Debug, Default, Readable, Writable)]
 pub struct ModelAsset {
@@ -248,8 +211,7 @@ pub struct ModelAsset {
 
 #[derive(Debug, Default, Readable, Writable)]
 pub struct ModelCollectionAsset {
-    pub static_geometry: Vec<StaticMeshGeometry>,
-    pub attributes: Vec<LightingAttributes>,
+    pub vertices: Vec<StaticMeshVertex>,
     pub indices: Vec<u16>,
     pub materials: Vec<MeshMaterial>,
     pub models: HashMap<String, ModelAsset>,
