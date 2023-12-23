@@ -10,7 +10,6 @@ dess-common = { path = "../common" }
 dess-assets = { path = "../assets" }
 dess-backend = { path = "../backend" }
 bevy_tasks = { version = "0.12.1", features = ["multi-threaded"] }
-ash = "0.37.3"
 puffin = "0.17.0"
 parking_lot = "0.12.1"
 smol_str = "0.2.0"

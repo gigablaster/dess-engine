@@ -24,7 +24,7 @@ use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use smol_str::SmolStr;
 
-use crate::{BackendError, BackendResult, BufferUsage, ImageUsage};
+use crate::{BackendError, BackendResult, BufferUsage, ImageLayout, ImageUsage};
 
 use super::{
     BufferHandle, BufferSlice, BufferStorage, DescriptorSet, DescriptorSetCreateInfo,
@@ -256,7 +256,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         handle: DescriptorHandle,
         binding: usize,
         image: ImageHandle,
-        layout: vk::ImageLayout,
+        layout: ImageLayout,
     ) -> Result<(), BackendError> {
         let data = self
             .images
@@ -275,7 +275,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             point.data = Some((
                 image,
                 data.get_or_create_view(&self.device.raw, ImageViewDesc::color())?, // FIXME: even for depth?
-                layout,
+                layout.into(),
             ));
             self.dirty.insert(handle);
         }
@@ -288,7 +288,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         handle: DescriptorHandle,
         name: &str,
         image: ImageHandle,
-        layout: vk::ImageLayout,
+        layout: ImageLayout,
     ) -> Result<(), BackendError> {
         let binding = self
             .storage
@@ -307,7 +307,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         handle: DescriptorHandle,
         binding: usize,
         image: ImageHandle,
-        layout: vk::ImageLayout,
+        layout: ImageLayout,
     ) -> Result<(), BackendError> {
         let data = self
             .images
@@ -326,7 +326,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             point.data = Some((
                 image,
                 data.get_or_create_view(&self.device.raw, ImageViewDesc::color())?,
-                layout,
+                layout.into(),
             ));
             self.dirty.insert(handle);
         }
@@ -340,7 +340,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         handle: DescriptorHandle,
         name: &str,
         image: ImageHandle,
-        layout: vk::ImageLayout,
+        layout: ImageLayout,
     ) -> Result<(), BackendError> {
         let binding = self
             .storage

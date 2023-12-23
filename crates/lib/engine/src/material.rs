@@ -15,11 +15,11 @@
 
 use std::{collections::HashMap, fmt::Debug};
 
-use ash::vk;
 use bytes::Bytes;
 use dess_assets::AssetRef;
 use dess_backend::{
-    BackendResultExt, {DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
+    BackendResultExt, ImageLayout,
+    {DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
 };
 use smol_str::SmolStr;
 
@@ -57,7 +57,7 @@ impl ResourceDependencies for Material {
         ctx.device.with_descriptors(|ctx| {
             let ds = ctx.from_program(self.program, PER_MATERIAL_BINDING_SLOT)?;
             for (name, image) in images {
-                ctx.bind_image_by_name(ds, name, *image, vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                ctx.bind_image_by_name(ds, name, *image, ImageLayout::ShaderRead)
                     .ignore_missing()?;
             }
             if !self.uniform.is_empty() {

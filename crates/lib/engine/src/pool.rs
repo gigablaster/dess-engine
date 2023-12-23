@@ -15,10 +15,10 @@
 
 use std::{collections::HashMap, sync::Arc};
 
-use ash::vk;
 use dess_backend::{
     BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, BufferUsage, Device,
-    Format, ImageAspect, ImageCreateDesc, ImageHandle, ImageType, ImageUsage, ImageViewDesc,
+    Format, ImageAspect, ImageCreateDesc, ImageHandle, ImageType, ImageUsage, ImageView,
+    ImageViewDesc,
 };
 use dess_common::DynamicAllocator;
 use parking_lot::Mutex;
@@ -62,7 +62,7 @@ pub struct PoolImageDesc {
 pub struct PoolImage {
     pub handle: ImageHandle,
     pub desc: PoolImageDesc,
-    pub view: vk::ImageView,
+    pub view: ImageView,
 }
 
 /// Pool for render resources
@@ -92,7 +92,7 @@ pub struct TemporaryImage<'a> {
 }
 
 impl<'a> TemporaryImage<'a> {
-    pub fn view(&self) -> vk::ImageView {
+    pub fn view(&self) -> ImageView {
         self.image.view
     }
 

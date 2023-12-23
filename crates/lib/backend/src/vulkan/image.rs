@@ -24,6 +24,8 @@ use crate::{BackendError, BackendResult, Format};
 
 use super::{AsVulkan, Device, DropList, GpuMemory, ImageHandle, ImageSubresourceData, ToDrop};
 
+pub type ImageView = vk::ImageView;
+
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable)]
 pub enum ImageType {
     Type1D,
@@ -255,7 +257,7 @@ impl Image {
         &self,
         device: &ash::Device,
         desc: ImageViewDesc,
-    ) -> BackendResult<vk::ImageView> {
+    ) -> BackendResult<ImageView> {
         let views = self.views.upgradable_read();
         if let Some(view) = views.get(&desc) {
             Ok(*view)
@@ -577,5 +579,28 @@ impl Device {
         }
 
         Ok(image)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum ImageLayout {
+    ShaderRead,
+    ColorTarget,
+    DepthStencilTarget,
+    DepthStencilRead,
+    Destination,
+    Source,
+}
+
+impl From<ImageLayout> for vk::ImageLayout {
+    fn from(value: ImageLayout) -> Self {
+        match value {
+            ImageLayout::ShaderRead => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ImageLayout::ColorTarget => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            ImageLayout::DepthStencilTarget => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+            ImageLayout::DepthStencilRead => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            ImageLayout::Destination => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+            ImageLayout::Source => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
+        }
     }
 }
