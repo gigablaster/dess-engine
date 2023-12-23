@@ -37,8 +37,8 @@ use super::{
     PhysicalDevice, ToDrop, UniformStorage,
 };
 use super::{
-    load_or_create_pipeline_cache, DescriptorHandle, DescriptorStorage, FrameContext, Index,
-    Program, RasterPipelineCreateDesc, Staging, Swapchain,
+    load_or_create_pipeline_cache, DescriptorHandle, DescriptorSetCreateInfo, DescriptorSetInfo,
+    DescriptorStorage, FrameContext, Index, Program, RasterPipelineCreateDesc, Staging, Swapchain,
 };
 
 pub type ImageHandle = Handle<vk::Image>;
@@ -169,6 +169,7 @@ pub struct Device {
     pub(crate) temp_buffer: vk::Buffer,
     temp_buffer_memory: Option<GpuMemory>,
     temp_buffer_handle: BufferHandle,
+    pub(crate) descriptor_layouts: Mutex<HashMap<DescriptorSetCreateInfo, DescriptorSetInfo>>,
 }
 
 impl Debug for Device {
@@ -349,6 +350,7 @@ impl Device {
             temp_buffer,
             temp_buffer_memory: Some(temp_buffer_memory),
             temp_buffer_handle,
+            descriptor_layouts: Mutex::default(),
         }))
     }
 
@@ -762,6 +764,10 @@ impl Drop for Device {
 
         for (_, sampler) in self.samplers.drain() {
             unsafe { self.raw.destroy_sampler(sampler, None) };
+        }
+
+        for (_, layout) in self.descriptor_layouts.lock().drain() {
+            layout.free(&self.raw);
         }
 
         unsafe {

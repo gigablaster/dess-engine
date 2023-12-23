@@ -27,8 +27,9 @@ use smol_str::SmolStr;
 use crate::{BackendError, BackendResult};
 
 use super::{
-    BufferHandle, BufferSlice, BufferStorage, DescriptorSet, DescriptorSetInfo, Device,
-    ImageHandle, ImageStorage, ImageViewDesc, ProgramHandle, ProgramStorage, UniformStorage,
+    BufferHandle, BufferSlice, BufferStorage, DescriptorSet, DescriptorSetCreateInfo,
+    DescriptorSetInfo, Device, ImageHandle, ImageStorage, ImageViewDesc, ProgramHandle,
+    ProgramStorage, UniformStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -113,6 +114,20 @@ impl<'a> UpdateDescriptorContext<'a> {
             .sets[index];
         self.from_info(set)
     }
+
+    pub fn from_desc(&mut self, desc: DescriptorSetCreateInfo) -> BackendResult<DescriptorHandle> {
+        let mut layouts = self.device.descriptor_layouts.lock();
+        let layout = if let Some(desc) = layouts.get(&desc) {
+            desc
+        } else {
+            let layout_desc =
+                DescriptorSetInfo::from_desc(&self.device.raw, &desc, &self.device.samplers)?;
+            layouts.insert(desc.clone(), layout_desc);
+            layouts.get(&desc).unwrap()
+        };
+        Self::from_info(self, layout)
+    }
+
     /// Created descriptor set from descriptor set info
     ///
     /// Descriptor set info can be extracted from Program as an example.

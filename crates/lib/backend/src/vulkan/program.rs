@@ -16,6 +16,7 @@
 use std::{
     collections::{btree_map::Entry, BTreeMap, HashMap},
     ffi::CString,
+    mem::discriminant,
     slice,
 };
 
@@ -54,17 +55,26 @@ pub struct DescriptorSetInfo {
     pub names: HashMap<String, u32>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DescriptorSetCreateInfo {
     pub stage: vk::ShaderStageFlags,
+    pub expected_count: u32,
     pub set: HashMap<u32, DescriptorInfo>,
 }
 
-impl Default for DescriptorSetCreateInfo {
-    fn default() -> Self {
-        Self {
-            stage: vk::ShaderStageFlags::empty(),
-            set: HashMap::default(),
-        }
+impl std::hash::Hash for DescriptorSetCreateInfo {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.stage.hash(state);
+        self.expected_count.hash(state);
+        self.set.iter().for_each(|(index, info)| {
+            index.hash(state);
+            discriminant(&info.binding_count);
+            if let BindingCount::StaticSized(count) = info.binding_count {
+                count.hash(state);
+            }
+            info.name.hash(state);
+            info.ty.0.hash(state);
+        });
     }
 }
 
@@ -75,12 +85,28 @@ impl DescriptorSetCreateInfo {
         self
     }
 
-    pub fn descriptor(
-        mut self,
-        index: usize,
-        name: &str,
-        ty: rspirv_reflect::DescriptorType,
-    ) -> Self {
+    pub fn expected_count(mut self, count: u32) -> Self {
+        self.expected_count = count;
+        self
+    }
+
+    pub fn descriptor(mut self, index: usize, name: &str, ty: vk::DescriptorType) -> Self {
+        let ty = match ty {
+            vk::DescriptorType::UNIFORM_BUFFER => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
+            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
+                rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC
+            }
+            vk::DescriptorType::STORAGE_BUFFER => rspirv_reflect::DescriptorType::STORAGE_BUFFER,
+            vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
+                rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC
+            }
+            vk::DescriptorType::SAMPLED_IMAGE => rspirv_reflect::DescriptorType::SAMPLED_IMAGE,
+            vk::DescriptorType::STORAGE_IMAGE => rspirv_reflect::DescriptorType::STORAGE_IMAGE,
+            vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER
+            }
+            _ => panic!("Unsupported descriptor type {:?}", ty),
+        };
         self.set.insert(
             index as u32,
             rspirv_reflect::DescriptorInfo {
@@ -95,6 +121,21 @@ impl DescriptorSetCreateInfo {
 }
 
 impl DescriptorSetInfo {
+    pub(crate) fn from_desc(
+        device: &ash::Device,
+        desc: &DescriptorSetCreateInfo,
+        inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
+    ) -> BackendResult<Self> {
+        Self::new(
+            device,
+            desc.stage,
+            &desc.set,
+            desc.expected_count,
+            false,
+            inmuatable_samplers,
+        )
+    }
+
     pub(crate) fn new(
         device: &ash::Device,
         stage: vk::ShaderStageFlags,
@@ -116,7 +157,7 @@ impl DescriptorSetInfo {
                 | rspirv_reflect::DescriptorType::STORAGE_IMAGE
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER
                 | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    let binding = Self::create_uniform_binding(*index, stage, binding, dynamic);
+                    let binding = Self::create_buffer_binding(*index, stage, binding, dynamic);
 
                     bindings.insert(*index, binding);
                     if binding.descriptor_type == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
@@ -193,7 +234,7 @@ impl DescriptorSetInfo {
         })
     }
 
-    fn create_uniform_binding(
+    fn create_buffer_binding(
         index: u32,
         stage: vk::ShaderStageFlags,
         binding: &DescriptorInfo,
@@ -514,21 +555,5 @@ impl Device {
         let index = programs.len();
         programs.push(program);
         Ok(Index::new(index))
-    }
-
-    pub fn create_descriptor_set_info(
-        &self,
-        info: DescriptorSetCreateInfo,
-        expected_count: usize,
-        dynamic: bool,
-    ) -> BackendResult<DescriptorSetInfo> {
-        DescriptorSetInfo::new(
-            &self.raw,
-            info.stage,
-            &info.set,
-            expected_count as _,
-            dynamic,
-            &self.samplers,
-        )
     }
 }
