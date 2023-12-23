@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dess_backend::{vulkan::FrameContext, BackendError};
+use dess_backend::{BackendError, FrameContext};
 use dess_common::GameTime;
 
 mod runner;

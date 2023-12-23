@@ -19,8 +19,7 @@ use ash::vk;
 use bytes::Bytes;
 use dess_assets::AssetRef;
 use dess_backend::{
-    vulkan::{DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
-    BackendResultExt,
+    BackendResultExt, {DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
 };
 use smol_str::SmolStr;
 

@@ -1,8 +1,7 @@
 use ash::vk::{self};
 use dess_assets::{ContentSource, GltfSource};
 use dess_backend::{
-    vulkan::{Barrier, DescriptorHandle, RenderAttachment},
-    DrawStream,
+    DrawStream, {Barrier, DescriptorHandle, RenderAttachment},
 };
 use dess_common::GameTime;
 use dess_engine::{

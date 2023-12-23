@@ -2,7 +2,7 @@ use std::time::Instant;
 
 use ash::vk;
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
-use dess_backend::vulkan::{
+use dess_backend::{
     Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
 };
 use dess_common::TimeFilter;

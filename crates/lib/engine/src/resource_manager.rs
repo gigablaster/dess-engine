@@ -6,7 +6,7 @@ use bytes::Bytes;
 use dess_assets::{
     AssetRef, ContentSource, ImageAsset, ModelCollectionAsset, ShaderAsset, ShaderSource,
 };
-use dess_backend::vulkan::{
+use dess_backend::{
     Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle, ShaderDesc,
     MAX_SHADERS,
 };

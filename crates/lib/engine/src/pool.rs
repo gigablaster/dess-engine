@@ -17,11 +17,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
 use dess_backend::{
-    vulkan::{
-        BufferCreateDesc, BufferHandle, BufferSlice, Device, ImageCreateDesc, ImageHandle,
-        ImageViewDesc,
-    },
-    BackendError, BackendResult,
+    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, Device,
+    ImageCreateDesc, ImageHandle, ImageViewDesc,
 };
 use dess_common::DynamicAllocator;
 use parking_lot::Mutex;

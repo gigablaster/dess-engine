@@ -16,11 +16,12 @@
 pub mod barrier;
 mod draw_stream;
 mod error;
-pub mod vulkan;
+mod vulkan;
 
 pub use draw_stream::*;
 pub use error::*;
 use vulkan::ExecutionContext;
+pub use vulkan::*;
 
 pub type BackendResult<T> = Result<T, BackendError>;
 

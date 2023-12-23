@@ -17,7 +17,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dess_assets::{MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset, ShaderSource};
-use dess_backend::vulkan::{BufferSlice, DescriptorHandle};
+use dess_backend::{BufferSlice, DescriptorHandle};
 
 use smol_str::SmolStr;
 
