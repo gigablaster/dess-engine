@@ -1,7 +1,7 @@
 use ash::vk::{self};
 use dess_assets::{ContentSource, GltfSource};
 use dess_backend::{
-    DrawStream, {Barrier, DescriptorHandle, RenderAttachment},
+    DrawStream, Format, {Barrier, DescriptorHandle, RenderAttachment},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -29,7 +29,7 @@ impl Client for ClearBackbuffer {
                         context.frame.render_area.extent.height,
                     ],
                     PoolImageDesc {
-                        format: vk::Format::R16G16B16A16_SFLOAT,
+                        format: Format::RGBA16_SFLOAT,
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         usage: vk::ImageUsageFlags::COLOR_ATTACHMENT | vk::ImageUsageFlags::SAMPLED,
                         resolution: RelativeImageSize::Backbuffer,

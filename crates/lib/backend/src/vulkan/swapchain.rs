@@ -29,7 +29,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
     vulkan::{Image, ImageDesc},
-    BackendError, BackendResult,
+    BackendError, BackendResult, Format,
 };
 
 use super::{physical_device::PhysicalDevice, Device, Instance};
@@ -189,7 +189,7 @@ impl<'a> Swapchain<'a> {
                 desc: ImageDesc {
                     ty: vk::ImageType::TYPE_2D,
                     usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
-                    format: format.format,
+                    format: Format::BGRA8_UNORM,
                     extent: [surface_resolution.width, surface_resolution.height],
                     tiling: vk::ImageTiling::OPTIMAL,
                     mip_levels: 1,
@@ -303,16 +303,10 @@ impl<'a> Swapchain<'a> {
     }
 
     fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
-        let prefered = [
-            vk::SurfaceFormatKHR {
-                format: vk::Format::A2B10G10R10_UNORM_PACK32,
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            },
-            vk::SurfaceFormatKHR {
-                format: vk::Format::B8G8R8A8_UNORM,
-                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-            },
-        ];
+        let prefered = [vk::SurfaceFormatKHR {
+            format: vk::Format::B8G8R8A8_UNORM,
+            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+        }];
 
         prefered.into_iter().find(|format| formats.contains(format))
     }

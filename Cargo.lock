@@ -519,7 +519,6 @@ dependencies = [
 name = "dess-asset-pipeline"
 version = "0.1.0"
 dependencies = [
- "ash",
  "bevy_tasks",
  "bytes",
  "ddsfile",
@@ -548,7 +547,6 @@ dependencies = [
 name = "dess-assets"
 version = "0.1.0"
 dependencies = [
- "ash",
  "bytes",
  "dess-backend",
  "dess-common",

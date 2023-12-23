@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use ash::vk::{self};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{BackendError, BackendResult};
+use crate::{BackendError, BackendResult, Format};
 
 use super::{AsVulkan, Device, DropList, GpuMemory, ImageHandle, ImageSubresourceData, ToDrop};
 
@@ -27,7 +27,7 @@ pub struct ImageDesc {
     pub extent: [u32; 2],
     pub ty: vk::ImageType,
     pub usage: vk::ImageUsageFlags,
-    pub format: vk::Format,
+    pub format: Format,
     pub tiling: vk::ImageTiling,
     pub mip_levels: u32,
     pub array_elements: u32,
@@ -82,7 +82,7 @@ impl ImageViewDesc {
 
     fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::builder()
-            .format(self.format.unwrap_or(image.desc.format))
+            .format(self.format.unwrap_or(image.desc.format.into()))
             .components(vk::ComponentMapping {
                 r: vk::ComponentSwizzle::R,
                 g: vk::ComponentSwizzle::G,
@@ -189,7 +189,7 @@ pub struct ImageCreateDesc<'a> {
     pub ty: vk::ImageType,
     pub usage: vk::ImageUsageFlags,
     pub flags: vk::ImageCreateFlags,
-    pub format: vk::Format,
+    pub format: Format,
     pub tiling: vk::ImageTiling,
     pub samples: vk::SampleCountFlags,
     pub mip_levels: usize,
@@ -200,7 +200,7 @@ pub struct ImageCreateDesc<'a> {
 }
 
 impl<'a> ImageCreateDesc<'a> {
-    pub fn new(format: vk::Format, extent: [u32; 2]) -> Self {
+    pub fn new(format: Format, extent: [u32; 2]) -> Self {
         Self {
             extent,
             ty: vk::ImageType::TYPE_2D,
@@ -217,7 +217,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn texture(format: vk::Format, extent: [u32; 2]) -> Self {
+    pub fn texture(format: Format, extent: [u32; 2]) -> Self {
         Self {
             extent,
             ty: vk::ImageType::TYPE_2D,
@@ -234,7 +234,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn cubemap(format: vk::Format, extent: [u32; 2]) -> Self {
+    pub fn cubemap(format: Format, extent: [u32; 2]) -> Self {
         Self {
             extent,
             ty: vk::ImageType::TYPE_2D,
@@ -251,7 +251,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn color_attachment(format: vk::Format, extent: [u32; 2]) -> Self {
+    pub fn color_attachment(format: Format, extent: [u32; 2]) -> Self {
         Self {
             extent,
             ty: vk::ImageType::TYPE_2D,
@@ -268,7 +268,7 @@ impl<'a> ImageCreateDesc<'a> {
         }
     }
 
-    pub fn depth_stencil_attachment(format: vk::Format, extent: [u32; 2]) -> Self {
+    pub fn depth_stencil_attachment(format: Format, extent: [u32; 2]) -> Self {
         Self {
             extent,
             ty: vk::ImageType::TYPE_2D,
@@ -340,7 +340,7 @@ impl<'a> ImageCreateDesc<'a> {
             .mip_levels(self.mip_levels as _)
             .usage(usage)
             .flags(self.flags)
-            .format(self.format)
+            .format(self.format.into())
             .samples(self.samples)
             .image_type(self.ty)
             .tiling(self.tiling)

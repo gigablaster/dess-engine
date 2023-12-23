@@ -15,8 +15,8 @@
 
 use std::{hash::Hash, io, path::Path};
 
-use ash::vk;
 use bytes::Bytes;
+use dess_backend::Format;
 use siphasher::sip128::Hasher128;
 use speedy::{Context, Readable, Writable};
 
@@ -124,34 +124,11 @@ fn color_to_pixles(color: [f32; 4]) -> [u8; 4] {
     ]
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Readable, Writable)]
 pub struct ImageAsset {
-    pub format: vk::Format,
+    pub format: Format,
     pub dimensions: [u32; 2],
     pub mips: Vec<Vec<u8>>,
-}
-
-impl<'a, C: Context> Readable<'a, C> for ImageAsset {
-    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, <C as Context>::Error> {
-        Ok(Self {
-            format: vk::Format::from_raw(reader.read_i32()?),
-            dimensions: reader.read_value()?,
-            mips: reader.read_value()?,
-        })
-    }
-}
-
-impl<C: Context> Writable<C> for ImageAsset {
-    fn write_to<T: ?Sized + speedy::Writer<C>>(
-        &self,
-        writer: &mut T,
-    ) -> Result<(), <C as Context>::Error> {
-        writer.write_i32(self.format.as_raw())?;
-        writer.write_value(&self.dimensions)?;
-        writer.write_value(&self.mips)?;
-
-        Ok(())
-    }
 }
 
 impl Asset for ImageAsset {

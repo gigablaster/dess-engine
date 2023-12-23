@@ -1,12 +1,12 @@
 use std::{io::Cursor, path::Path, sync::Arc};
 
-use ash::vk;
 use bytes::Bytes;
 use ddsfile::{Dds, DxgiFormat};
 use dess_assets::{
     get_absolute_asset_path, Asset, ImageAsset, ImageDataSource, ImageRgba8Data, ImageSource,
     ImageSourceDesc, ImageType,
 };
+use dess_backend::Format;
 use image::{imageops::FilterType, DynamicImage, ImageBuffer, Rgba};
 use intel_tex_2::{bc5, bc7};
 
@@ -74,7 +74,7 @@ impl BcMode {
 }
 
 fn process_dds(image: &Dds) -> Result<ImageAsset, Error> {
-    if let Some(format) = get_vk_format(image) {
+    if let Some(format) = get_backend_format(image) {
         let data = image
             .get_data(0)
             .map_err(|err| Error::ProcessingFailed(err.to_string()))?;
@@ -114,11 +114,11 @@ fn process_rgba(image: &ImageRgba8Data, desc: ImageSourceDesc) -> Result<ImageAs
         && is_pow2(dimensions[1]);
 
     let format = match desc.ty {
-        ImageType::Rgba if need_compression && desc.srgb => vk::Format::BC7_SRGB_BLOCK,
-        ImageType::Rgba if need_compression => vk::Format::BC7_UNORM_BLOCK,
-        ImageType::Rg if need_compression => vk::Format::BC5_UNORM_BLOCK,
-        _ if desc.srgb => vk::Format::R8G8B8A8_SRGB,
-        _ => vk::Format::R8G8B8A8_UNORM,
+        ImageType::Rgba if need_compression && desc.srgb => Format::BC7_SRGB,
+        ImageType::Rgba if need_compression => Format::BC7_UNORM,
+        ImageType::Rg if need_compression => Format::BC5_UNORM,
+        _ if desc.srgb => Format::RGBA8_SRGB,
+        _ => Format::RGBA8_UNORM,
     };
 
     let mut image = DynamicImage::ImageRgba8(
@@ -185,36 +185,34 @@ fn block_compress(image: &ImageBuffer<Rgba<u8>, Vec<u8>>, bc: BcMode) -> Vec<u8>
     compressed_bytes
 }
 
-fn prepare_image(image: &ImageBuffer<Rgba<u8>, Vec<u8>>, format: vk::Format) -> Vec<u8> {
+fn prepare_image(image: &ImageBuffer<Rgba<u8>, Vec<u8>>, format: Format) -> Vec<u8> {
     match format {
-        vk::Format::BC5_UNORM_BLOCK => block_compress(image, BcMode::Bc5),
-        vk::Format::BC7_SRGB_BLOCK | vk::Format::BC7_UNORM_BLOCK => {
-            block_compress(image, BcMode::Bc7)
-        }
-        vk::Format::R8G8B8A8_SRGB | vk::Format::R8G8B8A8_UNORM => image.to_vec(),
+        Format::BC5_UNORM => block_compress(image, BcMode::Bc5),
+        Format::BC7_SRGB | Format::BC7_UNORM => block_compress(image, BcMode::Bc7),
+        Format::RGBA8_SRGB | Format::RGBA8_UNORM => image.to_vec(),
         _ => panic!("Unknow format: {:?}", format),
     }
 }
 
-fn get_vk_format(image: &Dds) -> Option<vk::Format> {
+fn get_backend_format(image: &Dds) -> Option<Format> {
     if let Some(format) = image.get_dxgi_format() {
         match format {
-            DxgiFormat::R8G8B8A8_UNorm => return Some(vk::Format::R8G8B8A8_UNORM),
-            DxgiFormat::R8G8B8A8_UNorm_sRGB => return Some(vk::Format::R8G8B8A8_SRGB),
-            DxgiFormat::BC1_UNorm => return Some(vk::Format::BC1_RGB_UNORM_BLOCK),
-            DxgiFormat::BC1_UNorm_sRGB => return Some(vk::Format::BC1_RGB_SRGB_BLOCK),
-            DxgiFormat::BC2_UNorm => return Some(vk::Format::BC2_UNORM_BLOCK),
-            DxgiFormat::BC2_UNorm_sRGB => return Some(vk::Format::BC2_SRGB_BLOCK),
-            DxgiFormat::BC3_UNorm => return Some(vk::Format::BC3_SRGB_BLOCK),
-            DxgiFormat::BC3_UNorm_sRGB => return Some(vk::Format::BC3_SRGB_BLOCK),
-            DxgiFormat::BC4_UNorm => return Some(vk::Format::BC4_UNORM_BLOCK),
-            DxgiFormat::BC4_SNorm => return Some(vk::Format::BC4_SNORM_BLOCK),
-            DxgiFormat::BC5_UNorm => return Some(vk::Format::BC5_UNORM_BLOCK),
-            DxgiFormat::BC5_SNorm => return Some(vk::Format::BC5_SNORM_BLOCK),
-            DxgiFormat::BC6H_SF16 => return Some(vk::Format::BC6H_SFLOAT_BLOCK),
-            DxgiFormat::BC6H_UF16 => return Some(vk::Format::BC6H_UFLOAT_BLOCK),
-            DxgiFormat::BC7_UNorm => return Some(vk::Format::BC7_UNORM_BLOCK),
-            DxgiFormat::BC7_UNorm_sRGB => return Some(vk::Format::BC7_UNORM_BLOCK),
+            DxgiFormat::R8G8B8A8_UNorm => return Some(Format::RGBA8_UNORM),
+            DxgiFormat::R8G8B8A8_UNorm_sRGB => return Some(Format::RGBA8_SRGB),
+            DxgiFormat::BC1_UNorm => return Some(Format::BC1_RGB_UNORM),
+            DxgiFormat::BC1_UNorm_sRGB => return Some(Format::BC1_RGBA_SRGB),
+            DxgiFormat::BC2_UNorm => return Some(Format::BC2_UNORM),
+            DxgiFormat::BC2_UNorm_sRGB => return Some(Format::BC2_SRGB),
+            DxgiFormat::BC3_UNorm => return Some(Format::BC3_SRGB),
+            DxgiFormat::BC3_UNorm_sRGB => return Some(Format::BC3_SRGB),
+            DxgiFormat::BC4_UNorm => return Some(Format::BC4_UNORM),
+            DxgiFormat::BC4_SNorm => return Some(Format::BC4_SNORM),
+            DxgiFormat::BC5_UNorm => return Some(Format::BC5_UNORM),
+            DxgiFormat::BC5_SNorm => return Some(Format::BC5_SNORM),
+            DxgiFormat::BC6H_SF16 => return Some(Format::BC6_SFLOAT),
+            DxgiFormat::BC6H_UF16 => return Some(Format::BC6_UFLOAT),
+            DxgiFormat::BC7_UNorm => return Some(Format::BC7_UNORM),
+            DxgiFormat::BC7_UNorm_sRGB => return Some(Format::BC7_UNORM),
             _ => return None,
         }
     }

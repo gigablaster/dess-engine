@@ -17,7 +17,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
 use dess_backend::{
-    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, Device,
+    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, Device, Format,
     ImageCreateDesc, ImageHandle, ImageViewDesc,
 };
 use dess_common::DynamicAllocator;
@@ -51,7 +51,7 @@ impl RelativeImageSize {
 /// Pool resource descriptor
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct PoolImageDesc {
-    pub format: vk::Format,
+    pub format: Format,
     pub aspect_mask: vk::ImageAspectFlags,
     pub usage: vk::ImageUsageFlags,
     pub resolution: RelativeImageSize,

@@ -15,28 +15,11 @@
 
 use std::{hash::Hash, path::Path};
 
-use ash::vk;
 use bytes::Bytes;
+use dess_backend::ShaderStage;
 use siphasher::sip128::Hasher128;
 
 use crate::{Asset, AssetLoad, ContentSource};
-
-#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
-pub enum ShaderStage {
-    Vertex,
-    Fragment,
-    Compute,
-}
-
-impl From<ShaderStage> for vk::ShaderStageFlags {
-    fn from(value: ShaderStage) -> Self {
-        match value {
-            ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
-            ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
-            ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
-        }
-    }
-}
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub struct ShaderSource {

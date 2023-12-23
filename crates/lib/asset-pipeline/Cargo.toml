@@ -10,7 +10,6 @@ dess-common = { path = "../common" }
 dess-backend = { path = "../backend" }
 dess-assets = { path = "../assets" }
 uuid = "1.5.0"
-ash = "0.37.3"
 bytes = "1.5.0"
 speedy = { version = "0.8.6", features = ["speedy-derive", "uuid"] }
 normalize-path = "0.2.1"

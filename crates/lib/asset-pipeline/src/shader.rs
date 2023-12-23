@@ -3,9 +3,8 @@ use std::{
     sync::Arc,
 };
 
-use dess_assets::{
-    get_absolute_asset_path, get_relative_asset_path, ShaderAsset, ShaderSource, ShaderStage,
-};
+use dess_assets::{get_absolute_asset_path, get_relative_asset_path, ShaderAsset, ShaderSource};
+use dess_backend::ShaderStage;
 use shader_prepper::SourceChunk;
 
 use crate::{is_asset_changed, read_to_end, AssetImporter, Error};
