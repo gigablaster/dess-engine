@@ -138,7 +138,6 @@ impl<'a> TemporaryImagePool<'a> {
                 .array_elements(1)
                 .mip_levels(1)
                 .usage(desc.usage)
-                .tiling(vk::ImageTiling::OPTIMAL)
                 .ty(ImageType::Type2D)
                 .name(&name);
             let image = self.device.create_image(create_desc)?;

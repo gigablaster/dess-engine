@@ -92,7 +92,7 @@ pub struct ImageDesc {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageViewDesc {
-    pub ty: Option<vk::ImageViewType>,
+    pub ty: Option<ImageViewType>,
     pub format: Option<Format>,
     pub aspect: ImageAspect,
     pub base_mip_level: u32,
@@ -123,6 +123,28 @@ impl From<ImageAspect> for vk::ImageAspectFlags {
         }
 
         result
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable)]
+pub enum ImageViewType {
+    Type1D,
+    Type1DArray,
+    #[default]
+    Type2D,
+    Type2DArray,
+    Type3D,
+}
+
+impl From<ImageViewType> for vk::ImageViewType {
+    fn from(value: ImageViewType) -> Self {
+        match value {
+            ImageViewType::Type1D => vk::ImageViewType::TYPE_1D,
+            ImageViewType::Type1DArray => vk::ImageViewType::TYPE_1D_ARRAY,
+            ImageViewType::Type2D => vk::ImageViewType::TYPE_2D,
+            ImageViewType::Type2DArray => vk::ImageViewType::TYPE_2D_ARRAY,
+            ImageViewType::Type3D => vk::ImageViewType::TYPE_3D,
+        }
     }
 }
 
@@ -159,7 +181,7 @@ impl ImageViewDesc {
         }
     }
 
-    pub fn view_type(mut self, view_type: vk::ImageViewType) -> Self {
+    pub fn view_type(mut self, view_type: ImageViewType) -> Self {
         self.ty = Some(view_type);
         self
     }
@@ -195,7 +217,8 @@ impl ImageViewDesc {
             })
             .view_type(
                 self.ty
-                    .unwrap_or_else(|| Self::convert_image_type_to_view_type(image)),
+                    .unwrap_or_else(|| Self::convert_image_type_to_view_type(image))
+                    .into(),
             )
             .subresource_range(vk::ImageSubresourceRange {
                 aspect_mask: self.aspect.into(),
@@ -208,13 +231,13 @@ impl ImageViewDesc {
             .build()
     }
 
-    fn convert_image_type_to_view_type(image: &Image) -> vk::ImageViewType {
+    fn convert_image_type_to_view_type(image: &Image) -> ImageViewType {
         match image.desc.ty {
-            ImageType::Type1D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_1D,
-            ImageType::Type1D => vk::ImageViewType::TYPE_1D_ARRAY,
-            ImageType::Type2D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_2D,
-            ImageType::Type2D => vk::ImageViewType::TYPE_2D_ARRAY,
-            ImageType::Type3D => vk::ImageViewType::TYPE_3D,
+            ImageType::Type1D if image.desc.array_elements == 1 => ImageViewType::Type1D,
+            ImageType::Type1D => ImageViewType::Type1DArray,
+            ImageType::Type2D if image.desc.array_elements == 1 => ImageViewType::Type2D,
+            ImageType::Type2D => ImageViewType::Type2DArray,
+            ImageType::Type3D => ImageViewType::Type3D,
         }
     }
 }
@@ -286,19 +309,39 @@ impl AsVulkan<vk::Image> for Image {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable)]
+pub enum ImageMultisampling {
+    #[default]
+    None,
+    MSAA2,
+    MSAA4,
+    MSAA8,
+}
+
+impl From<ImageMultisampling> for vk::SampleCountFlags {
+    fn from(value: ImageMultisampling) -> Self {
+        match value {
+            ImageMultisampling::None => vk::SampleCountFlags::TYPE_1,
+            ImageMultisampling::MSAA2 => vk::SampleCountFlags::TYPE_2,
+            ImageMultisampling::MSAA4 => vk::SampleCountFlags::TYPE_4,
+            ImageMultisampling::MSAA8 => vk::SampleCountFlags::TYPE_8,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageCreateDesc<'a> {
     pub extent: [u32; 2],
     pub ty: ImageType,
     pub usage: ImageUsage,
-    pub flags: vk::ImageCreateFlags,
     pub format: Format,
-    pub tiling: vk::ImageTiling,
-    pub samples: vk::SampleCountFlags,
+    pub samples: ImageMultisampling,
     pub mip_levels: usize,
     pub array_elements: usize,
     pub dedicated: bool,
     pub name: Option<&'a str>,
+    pub(crate) flags: vk::ImageCreateFlags,
+    pub(crate) tiling: vk::ImageTiling,
     pub initial_data: Option<&'a [ImageSubresourceData<'a>]>,
 }
 
@@ -311,7 +354,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::default(),
             mip_levels: 0,
             array_elements: 0,
             dedicated: false,
@@ -328,7 +371,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::default(),
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -345,7 +388,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::CUBE_COMPATIBLE,
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::default(),
             mip_levels: 1,
             array_elements: 6,
             dedicated: false,
@@ -362,7 +405,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::default(),
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -379,7 +422,7 @@ impl<'a> ImageCreateDesc<'a> {
             flags: vk::ImageCreateFlags::empty(),
             format,
             tiling: vk::ImageTiling::OPTIMAL,
-            samples: vk::SampleCountFlags::TYPE_1,
+            samples: ImageMultisampling::default(),
             mip_levels: 1,
             array_elements: 1,
             dedicated: false,
@@ -403,17 +446,7 @@ impl<'a> ImageCreateDesc<'a> {
         self
     }
 
-    pub fn flags(mut self, value: vk::ImageCreateFlags) -> Self {
-        self.flags = value;
-        self
-    }
-
-    pub fn tiling(mut self, value: vk::ImageTiling) -> Self {
-        self.tiling = value;
-        self
-    }
-
-    pub fn samples(mut self, value: vk::SampleCountFlags) -> Self {
+    pub fn samples(mut self, value: ImageMultisampling) -> Self {
         self.samples = value;
         self
     }
@@ -449,7 +482,7 @@ impl<'a> ImageCreateDesc<'a> {
             .usage(usage.into())
             .flags(self.flags)
             .format(self.format.into())
-            .samples(self.samples)
+            .samples(self.samples.into())
             .image_type(self.ty.into())
             .tiling(self.tiling)
             .extent(self.create_extents())
