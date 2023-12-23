@@ -441,7 +441,7 @@ impl Device {
             render_area: swapchain.render_area(),
             target_view: backbuffer
                 .image
-                .get_or_create_view(&self.raw, ImageViewDesc::default())?,
+                .get_or_create_view(&self.raw, ImageViewDesc::color())?,
             target_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             temp_buffer_handle: self.temp_buffer_handle,
             passes: Mutex::default(),

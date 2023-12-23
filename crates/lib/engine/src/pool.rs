@@ -18,7 +18,7 @@ use std::{collections::HashMap, sync::Arc};
 use ash::vk;
 use dess_backend::{
     BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, BufferUsage, Device,
-    Format, ImageCreateDesc, ImageHandle, ImageType, ImageUsage, ImageViewDesc,
+    Format, ImageAspect, ImageCreateDesc, ImageHandle, ImageType, ImageUsage, ImageViewDesc,
 };
 use dess_common::DynamicAllocator;
 use parking_lot::Mutex;
@@ -52,7 +52,7 @@ impl RelativeImageSize {
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct PoolImageDesc {
     pub format: Format,
-    pub aspect_mask: vk::ImageAspectFlags,
+    pub aspect: ImageAspect,
     pub usage: ImageUsage,
     pub resolution: RelativeImageSize,
 }
@@ -144,7 +144,7 @@ impl<'a> TemporaryImagePool<'a> {
             let image = self.device.create_image(create_desc)?;
             let view = self
                 .device
-                .get_or_create_view(image, ImageViewDesc::default())?;
+                .get_or_create_view(image, ImageViewDesc::default().aspect(desc.aspect))?;
 
             PoolImage {
                 handle: image,

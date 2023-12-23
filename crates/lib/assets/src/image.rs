@@ -18,7 +18,7 @@ use std::{hash::Hash, io, path::Path};
 use bytes::Bytes;
 use dess_backend::Format;
 use siphasher::sip128::Hasher128;
-use speedy::{Context, Readable, Writable};
+use speedy::{Readable, Writable};
 
 use crate::{Asset, AssetLoad, AssetRef, ContentSource};
 

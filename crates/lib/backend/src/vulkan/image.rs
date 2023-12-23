@@ -85,26 +85,53 @@ pub struct ImageDesc {
     pub ty: ImageType,
     pub usage: ImageUsage,
     pub format: Format,
-    pub tiling: vk::ImageTiling,
     pub mip_levels: u32,
     pub array_elements: u32,
+    pub(crate) tiling: vk::ImageTiling,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageViewDesc {
-    pub view_type: Option<vk::ImageViewType>,
+    pub ty: Option<vk::ImageViewType>,
     pub format: Option<Format>,
-    pub aspect_mask: vk::ImageAspectFlags,
+    pub aspect: ImageAspect,
     pub base_mip_level: u32,
     pub level_count: Option<u32>,
+}
+
+bitflags! {
+    #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq, Readable, Writable)]
+    pub struct ImageAspect: u32 {
+        const None = 0;
+        const Color = 1;
+        const Depth = 2;
+        const Stencil = 4;
+    }
+}
+
+impl From<ImageAspect> for vk::ImageAspectFlags {
+    fn from(value: ImageAspect) -> Self {
+        let mut result = vk::ImageAspectFlags::empty();
+        if value.contains(ImageAspect::Color) {
+            result |= vk::ImageAspectFlags::COLOR;
+        }
+        if value.contains(ImageAspect::Depth) {
+            result |= vk::ImageAspectFlags::DEPTH;
+        }
+        if value.contains(ImageAspect::Stencil) {
+            result |= vk::ImageAspectFlags::STENCIL;
+        }
+
+        result
+    }
 }
 
 impl Default for ImageViewDesc {
     fn default() -> Self {
         Self {
-            view_type: None,
+            ty: None,
             format: None,
-            aspect_mask: vk::ImageAspectFlags::COLOR,
+            aspect: ImageAspect::None,
             base_mip_level: 0,
             level_count: None,
         }
@@ -112,8 +139,28 @@ impl Default for ImageViewDesc {
 }
 
 impl ImageViewDesc {
+    pub fn color() -> Self {
+        Self {
+            ty: None,
+            format: None,
+            aspect: ImageAspect::Color,
+            base_mip_level: 0,
+            level_count: None,
+        }
+    }
+
+    pub fn depth() -> Self {
+        Self {
+            ty: None,
+            format: None,
+            aspect: ImageAspect::Depth,
+            base_mip_level: 0,
+            level_count: None,
+        }
+    }
+
     pub fn view_type(mut self, view_type: vk::ImageViewType) -> Self {
-        self.view_type = Some(view_type);
+        self.ty = Some(view_type);
         self
     }
 
@@ -122,8 +169,8 @@ impl ImageViewDesc {
         self
     }
 
-    pub fn aspect_mask(mut self, aspect_mask: vk::ImageAspectFlags) -> Self {
-        self.aspect_mask = aspect_mask;
+    pub fn aspect(mut self, aspect: ImageAspect) -> Self {
+        self.aspect = aspect;
         self
     }
 
@@ -147,11 +194,11 @@ impl ImageViewDesc {
                 a: vk::ComponentSwizzle::A,
             })
             .view_type(
-                self.view_type
+                self.ty
                     .unwrap_or_else(|| Self::convert_image_type_to_view_type(image)),
             )
             .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: self.aspect_mask,
+                aspect_mask: self.aspect.into(),
                 base_mip_level: self.base_mip_level,
                 level_count: self.level_count.unwrap_or(image.desc.mip_levels),
                 base_array_layer: 0,
@@ -165,7 +212,7 @@ impl ImageViewDesc {
         match image.desc.ty {
             ImageType::Type1D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_1D,
             ImageType::Type1D => vk::ImageViewType::TYPE_1D_ARRAY,
-            ImageType::Type2D if image.desc.array_elements == 2 => vk::ImageViewType::TYPE_2D,
+            ImageType::Type2D if image.desc.array_elements == 1 => vk::ImageViewType::TYPE_2D,
             ImageType::Type2D => vk::ImageViewType::TYPE_2D_ARRAY,
             ImageType::Type3D => vk::ImageViewType::TYPE_3D,
         }

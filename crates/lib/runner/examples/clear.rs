@@ -1,7 +1,7 @@
 use ash::vk::{self};
 use dess_assets::{ContentSource, GltfSource};
 use dess_backend::{
-    DrawStream, Format, ImageUsage, {Barrier, DescriptorHandle, RenderAttachment},
+    DrawStream, Format, ImageAspect, ImageUsage, {Barrier, DescriptorHandle, RenderAttachment},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -30,7 +30,7 @@ impl Client for ClearBackbuffer {
                     ],
                     PoolImageDesc {
                         format: Format::RGBA16_SFLOAT,
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        aspect: ImageAspect::Color,
                         usage: ImageUsage::Sampled | ImageUsage::ColorTarget,
                         resolution: RelativeImageSize::Backbuffer,
                     },

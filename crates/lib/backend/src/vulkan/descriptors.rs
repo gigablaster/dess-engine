@@ -274,7 +274,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         if let Some(point) = image_bind {
             point.data = Some((
                 image,
-                data.get_or_create_view(&self.device.raw, ImageViewDesc::default())?,
+                data.get_or_create_view(&self.device.raw, ImageViewDesc::color())?, // FIXME: even for depth?
                 layout,
             ));
             self.dirty.insert(handle);
@@ -325,7 +325,7 @@ impl<'a> UpdateDescriptorContext<'a> {
         if let Some(point) = image_bind {
             point.data = Some((
                 image,
-                data.get_or_create_view(&self.device.raw, ImageViewDesc::default())?,
+                data.get_or_create_view(&self.device.raw, ImageViewDesc::color())?,
                 layout,
             ));
             self.dirty.insert(handle);
