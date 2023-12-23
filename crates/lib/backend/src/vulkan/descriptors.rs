@@ -24,7 +24,7 @@ use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
 use smol_str::SmolStr;
 
-use crate::{BackendError, BackendResult, BufferType};
+use crate::{BackendError, BackendResult, BufferUsage, ImageUsage};
 
 use super::{
     BufferHandle, BufferSlice, BufferStorage, DescriptorSet, DescriptorSetCreateInfo,
@@ -262,7 +262,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .images
             .get_cold(image)
             .ok_or(BackendError::InvalidHandle)?;
-        debug_assert!(data.desc.usage.contains(vk::ImageUsageFlags::STORAGE));
+        debug_assert!(data.desc.usage.contains(ImageUsage::Storage));
         let desc = self
             .storage
             .get_cold_mut(handle)
@@ -313,7 +313,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .images
             .get_cold(image)
             .ok_or(BackendError::InvalidHandle)?;
-        debug_assert!(data.desc.usage.contains(vk::ImageUsageFlags::SAMPLED));
+        debug_assert!(data.desc.usage.contains(ImageUsage::Sampled));
         let desc = self
             .storage
             .get_cold_mut(handle)
@@ -454,7 +454,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .buffers
             .get_cold(buffer.handle)
             .ok_or(BackendError::InvalidHandle)?;
-        debug_assert!(raw.desc.ty.contains(BufferType::Storage));
+        debug_assert!(raw.desc.ty.contains(BufferUsage::Storage));
         let buffer_bind = desc
             .storage_buffers
             .iter_mut()

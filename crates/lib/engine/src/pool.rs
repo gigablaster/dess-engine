@@ -17,8 +17,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use ash::vk;
 use dess_backend::{
-    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, BufferType, Device,
-    Format, ImageCreateDesc, ImageHandle, ImageViewDesc,
+    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, BufferUsage, Device,
+    Format, ImageCreateDesc, ImageHandle, ImageType, ImageUsage, ImageViewDesc,
 };
 use dess_common::DynamicAllocator;
 use parking_lot::Mutex;
@@ -53,7 +53,7 @@ impl RelativeImageSize {
 pub struct PoolImageDesc {
     pub format: Format,
     pub aspect_mask: vk::ImageAspectFlags,
-    pub usage: vk::ImageUsageFlags,
+    pub usage: ImageUsage,
     pub resolution: RelativeImageSize,
 }
 
@@ -139,7 +139,7 @@ impl<'a> TemporaryImagePool<'a> {
                 .mip_levels(1)
                 .usage(desc.usage)
                 .tiling(vk::ImageTiling::OPTIMAL)
-                .ty(vk::ImageType::TYPE_2D)
+                .ty(ImageType::Type2D)
                 .name(&name);
             let image = self.device.create_image(create_desc)?;
             let view = self
@@ -267,10 +267,10 @@ impl BufferPool {
         } else {
             let buffer = self.device.create_buffer(BufferCreateDesc::gpu(
                 CHUNK_SIZE,
-                BufferType::Vertex
-                    | BufferType::Index
-                    | BufferType::Storage
-                    | BufferType::Destination,
+                BufferUsage::Vertex
+                    | BufferUsage::Index
+                    | BufferUsage::Storage
+                    | BufferUsage::Destination,
             ))?;
             let mut allocator = DynamicAllocator::new(CHUNK_SIZE, 1024);
             let offset = allocator.allocate(size).ok_or(BackendError::TooBig)?;

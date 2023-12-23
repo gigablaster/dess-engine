@@ -30,7 +30,7 @@ use std::{mem, slice};
 
 use crate::vulkan::frame::MAX_TEMP_MEMORY;
 use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};
-use crate::{BackendError, BackendResult, BufferType};
+use crate::{BackendError, BackendResult, BufferUsage};
 
 use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
@@ -262,7 +262,7 @@ impl Device {
         let descriptor_allocator = DescriptorAllocator::new(0);
 
         let temp_buffer_type =
-            BufferType::Index | BufferType::Vertex | BufferType::Uniform | BufferType::Storage;
+            BufferUsage::Index | BufferUsage::Vertex | BufferUsage::Uniform | BufferUsage::Storage;
         let temp_buffer_desc = vk::BufferCreateInfo::builder()
             .size((MAX_TEMP_MEMORY * 2) as u64)
             .usage(temp_buffer_type.into())

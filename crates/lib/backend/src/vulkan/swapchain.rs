@@ -29,7 +29,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
     vulkan::{Image, ImageDesc},
-    BackendError, BackendResult, Format,
+    BackendError, BackendResult, Format, ImageType, ImageUsage,
 };
 
 use super::{physical_device::PhysicalDevice, Device, Instance};
@@ -187,8 +187,8 @@ impl<'a> Swapchain<'a> {
             .map(|image| Image {
                 raw: *image,
                 desc: ImageDesc {
-                    ty: vk::ImageType::TYPE_2D,
-                    usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                    ty: ImageType::Type2D,
+                    usage: ImageUsage::ColorTarget,
                     format: Format::BGRA8_UNORM,
                     extent: [surface_resolution.width, surface_resolution.height],
                     tiling: vk::ImageTiling::OPTIMAL,

@@ -27,7 +27,7 @@ use super::{
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferDesc {
     pub size: usize,
-    pub ty: BufferType,
+    pub ty: BufferUsage,
 }
 
 #[derive(Debug)]
@@ -49,7 +49,7 @@ impl ToDrop for Buffer {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferCreateDesc<'a> {
     pub size: usize,
-    pub ty: BufferType,
+    pub ty: BufferUsage,
     pub alignment: Option<u64>,
     pub dedicated: bool,
     pub name: Option<&'a str>,
@@ -57,7 +57,7 @@ pub struct BufferCreateDesc<'a> {
 }
 
 impl<'a> BufferCreateDesc<'a> {
-    pub fn gpu(size: usize, ty: BufferType) -> Self {
+    pub fn gpu(size: usize, ty: BufferUsage) -> Self {
         Self {
             size,
             ty,
@@ -68,7 +68,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn host(size: usize, ty: BufferType) -> Self {
+    pub fn host(size: usize, ty: BufferUsage) -> Self {
         Self {
             size,
             ty,
@@ -79,7 +79,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn upload(size: usize, ty: BufferType) -> Self {
+    pub fn upload(size: usize, ty: BufferUsage) -> Self {
         Self {
             size,
             ty,
@@ -90,7 +90,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn shared(size: usize, ty: BufferType) -> Self {
+    pub fn shared(size: usize, ty: BufferUsage) -> Self {
         Self {
             size,
             ty,
@@ -197,35 +197,35 @@ impl Device {
 
 bitflags! {
     #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-    pub struct BufferType: u32 {
-        const Vertex = 0x1;
-        const Index = 0x2;
-        const Uniform = 0x4;
-        const Storage = 0x8;
-        const Destination = 0x16;
-        const Source = 0x32;
+    pub struct BufferUsage: u32 {
+        const Vertex = 1;
+        const Index = 2;
+        const Uniform = 4;
+        const Storage = 8;
+        const Destination = 16;
+        const Source = 32;
     }
 }
 
-impl From<BufferType> for vk::BufferUsageFlags {
-    fn from(value: BufferType) -> Self {
+impl From<BufferUsage> for vk::BufferUsageFlags {
+    fn from(value: BufferUsage) -> Self {
         let mut result = vk::BufferUsageFlags::empty();
-        if value.contains(BufferType::Vertex) {
+        if value.contains(BufferUsage::Vertex) {
             result |= vk::BufferUsageFlags::VERTEX_BUFFER;
         }
-        if value.contains(BufferType::Index) {
+        if value.contains(BufferUsage::Index) {
             result |= vk::BufferUsageFlags::INDEX_BUFFER;
         }
-        if value.contains(BufferType::Storage) {
+        if value.contains(BufferUsage::Storage) {
             result |= vk::BufferUsageFlags::STORAGE_BUFFER;
         }
-        if value.contains(BufferType::Uniform) {
+        if value.contains(BufferUsage::Uniform) {
             result |= vk::BufferUsageFlags::UNIFORM_BUFFER;
         }
-        if value.contains(BufferType::Destination) {
+        if value.contains(BufferUsage::Destination) {
             result |= vk::BufferUsageFlags::TRANSFER_DST;
         }
-        if value.contains(BufferType::Source) {
+        if value.contains(BufferUsage::Source) {
             result |= vk::BufferUsageFlags::TRANSFER_SRC;
         }
 

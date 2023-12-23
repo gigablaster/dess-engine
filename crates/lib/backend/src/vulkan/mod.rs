@@ -34,7 +34,7 @@ use ash::vk::{self};
 pub use buffer::*;
 pub use descriptors::*;
 pub use device::*;
-pub use drop_list::*;
+use drop_list::*;
 pub use frame_context::*;
 pub use image::*;
 pub use instance::*;
@@ -116,7 +116,7 @@ impl<T> std::hash::Hash for Index<T> {
     }
 }
 
-pub trait AsVulkan<T> {
+pub(crate) trait AsVulkan<T> {
     fn as_vk(&self) -> T;
 }
 
