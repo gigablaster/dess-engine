@@ -1,7 +1,7 @@
-use ash::vk::{self};
 use dess_assets::{ContentSource, GltfSource};
 use dess_backend::{
-    DrawStream, Format, ImageAspect, ImageUsage, {Barrier, DescriptorHandle, RenderAttachment},
+    ClearRenderTarget, DrawStream, Format, ImageAspect, ImageLayout, ImageUsage,
+    {DescriptorHandle, ImageBarrier, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -25,8 +25,8 @@ impl Client for ClearBackbuffer {
                 .resource_pool
                 .temp_image(
                     [
-                        context.frame.render_area.extent.width,
-                        context.frame.render_area.extent.height,
+                        context.frame.render_area.width,
+                        context.frame.render_area.height,
                     ],
                     PoolImageDesc {
                         format: Format::RGBA16_SFLOAT,
@@ -36,31 +36,22 @@ impl Client for ClearBackbuffer {
                     },
                 )
                 .unwrap();
-            let color_attachment =
-                RenderAttachment::new(temp.view(), vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .store_output()
-                    .clear_input(vk::ClearValue {
-                        color: vk::ClearColorValue {
-                            float32: [100.0, 200.0, 400.0, 1.0],
-                        },
-                    });
+            let color_attachment = RenderTarget::new(temp.view(), ImageLayout::ColorTarget)
+                .store_output()
+                .clear_input(ClearRenderTarget::Color([0.5, 0.5, 0.5, 1.0]));
             context.frame.execute(
                 context.frame.render_area,
                 &[color_attachment],
                 None,
                 [DrawStream::new(DescriptorHandle::invalid())].into_iter(),
-                &[Barrier::color_to_attachment(temp.image())],
+                &[ImageBarrier::color_to_attachment(temp.image())],
             );
         }
 
         let color_attachment =
-            RenderAttachment::new(context.frame.target_view, context.frame.target_layout)
+            RenderTarget::new(context.frame.target_view, ImageLayout::ColorTarget)
                 .store_output()
-                .clear_input(vk::ClearValue {
-                    color: vk::ClearColorValue {
-                        float32: [0.125, 0.25, 0.6, 1.0],
-                    },
-                });
+                .clear_input(ClearRenderTarget::Color([0.125, 0.25, 0.5, 1.0]));
         context.frame.execute(
             context.frame.render_area,
             &[color_attachment],

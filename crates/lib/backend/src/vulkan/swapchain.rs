@@ -29,7 +29,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
     vulkan::{Image, ImageDesc},
-    BackendError, BackendResult, Format, ImageType, ImageUsage,
+    BackendError, BackendResult, Format, ImageType, ImageUsage, RenderArea,
 };
 
 use super::{physical_device::PhysicalDevice, Device, Instance};
@@ -72,16 +72,16 @@ impl Drop for Surface {
 }
 
 pub struct Swapchain<'a> {
-    pub surface: &'a Surface,
-    pub device: &'a Device,
-    pub raw: vk::SwapchainKHR,
-    pub images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
-    pub loader: khr::Swapchain,
-    pub acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
-    pub rendering_finished_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
-    pub next_semaphore: AtomicUsize,
-    pub dims: [u32; 2],
-    pub format: vk::Format,
+    surface: &'a Surface,
+    device: &'a Device,
+    raw: vk::SwapchainKHR,
+    images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
+    loader: khr::Swapchain,
+    acquire_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
+    rendering_finished_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
+    next_semaphore: AtomicUsize,
+    dims: [u32; 2],
+    format: vk::Format,
 }
 
 pub struct SwapchainImage<'a> {
@@ -311,14 +311,8 @@ impl<'a> Swapchain<'a> {
         prefered.into_iter().find(|format| formats.contains(format))
     }
 
-    pub fn render_area(&self) -> vk::Rect2D {
-        vk::Rect2D {
-            offset: vk::Offset2D { x: 0, y: 0 },
-            extent: vk::Extent2D {
-                width: self.dims[0],
-                height: self.dims[1],
-            },
-        }
+    pub fn render_area(&self) -> RenderArea {
+        RenderArea::new(0, 0, self.dims[0] as _, self.dims[1] as _)
     }
 
     fn free(&mut self, device: &ash::Device) {

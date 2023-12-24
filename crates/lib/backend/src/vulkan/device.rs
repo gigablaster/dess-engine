@@ -89,7 +89,7 @@ pub(crate) type ProgramStorage = Vec<Program>;
 pub(crate) type RasterPipelineStorage =
     HotColdPool<(vk::Pipeline, vk::PipelineLayout), RasterPipelineCreateDesc>;
 
-pub struct CommandBuffer {
+pub(crate) struct CommandBuffer {
     pub raw: vk::CommandBuffer,
     pub fence: vk::Fence,
 }
@@ -195,6 +195,7 @@ impl Device {
             vk::KhrSynchronization2Fn::name().as_ptr(),
             vk::KhrCopyCommands2Fn::name().as_ptr(),
             vk::KhrBufferDeviceAddressFn::name().as_ptr(),
+            vk::KhrMaintenance4Fn::name().as_ptr(),
         ];
 
         for ext in &device_extension_names {
@@ -214,11 +215,13 @@ impl Device {
         let mut dynamic_rendering = vk::PhysicalDeviceDynamicRenderingFeatures::default();
         let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
         let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default();
 
         let mut features = vk::PhysicalDeviceFeatures2::builder()
             .push_next(&mut dynamic_rendering)
             .push_next(&mut synchronization2)
             .push_next(&mut buffer_device_address)
+            .push_next(&mut maintenance4)
             .build();
 
         unsafe {
@@ -442,7 +445,6 @@ impl Device {
             target_view: backbuffer
                 .image
                 .get_or_create_view(&self.raw, ImageViewDesc::color())?,
-            target_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             temp_buffer_handle: self.temp_buffer_handle,
             passes: Mutex::default(),
         };
@@ -571,7 +573,7 @@ impl Device {
         Ok(FrameResult::Rendered)
     }
 
-    pub fn submit(
+    pub(crate) fn submit(
         &self,
         cb: &CommandBuffer,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],

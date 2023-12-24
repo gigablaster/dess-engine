@@ -19,61 +19,120 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{barrier, BackendError, BackendResult, DeferedPass, DrawStream};
+use crate::{
+    barrier, BackendError, BackendResult, DeferedPass, DrawStream, ImageLayout, ImageView,
+    RenderArea,
+};
 
 use super::{
     frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
     ImageStorage, RasterPipelineStorage,
 };
 
-#[derive(Clone, Copy)]
-pub struct RenderAttachment {
-    pub target: vk::ImageView,
-    pub layout: vk::ImageLayout,
-    pub load: vk::AttachmentLoadOp,
-    pub store: vk::AttachmentStoreOp,
-    pub clear: Option<vk::ClearValue>,
+#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
+pub enum RenderTargetLoadOp {
+    Clear,
+    Load,
+    #[default]
+    Discard,
 }
 
-impl RenderAttachment {
-    pub fn new(target: vk::ImageView, layout: vk::ImageLayout) -> Self {
+#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
+pub enum RenderTargetStoreOp {
+    Store,
+    #[default]
+    Discard,
+}
+
+impl From<RenderTargetLoadOp> for vk::AttachmentLoadOp {
+    fn from(value: RenderTargetLoadOp) -> Self {
+        match value {
+            RenderTargetLoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
+            RenderTargetLoadOp::Load => vk::AttachmentLoadOp::LOAD,
+            RenderTargetLoadOp::Discard => vk::AttachmentLoadOp::DONT_CARE,
+        }
+    }
+}
+
+impl From<RenderTargetStoreOp> for vk::AttachmentStoreOp {
+    fn from(value: RenderTargetStoreOp) -> Self {
+        match value {
+            RenderTargetStoreOp::Store => vk::AttachmentStoreOp::STORE,
+            RenderTargetStoreOp::Discard => vk::AttachmentStoreOp::DONT_CARE,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ClearRenderTarget {
+    Color([f32; 4]),
+    DepthStencil(f32, u32),
+}
+
+impl From<ClearRenderTarget> for vk::ClearValue {
+    fn from(value: ClearRenderTarget) -> Self {
+        match value {
+            ClearRenderTarget::Color(color) => vk::ClearValue {
+                color: vk::ClearColorValue { float32: color },
+            },
+            ClearRenderTarget::DepthStencil(depth, stencil) => vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct RenderTarget {
+    pub target: ImageView,
+    pub layout: ImageLayout,
+    pub load: RenderTargetLoadOp,
+    pub store: RenderTargetStoreOp,
+    pub clear: Option<ClearRenderTarget>,
+}
+
+impl RenderTarget {
+    pub fn new(target: ImageView, layout: ImageLayout) -> Self {
         Self {
             target,
             layout,
-            load: vk::AttachmentLoadOp::DONT_CARE,
-            store: vk::AttachmentStoreOp::DONT_CARE,
+            load: RenderTargetLoadOp::default(),
+            store: RenderTargetStoreOp::default(),
             clear: None,
         }
     }
 
-    pub fn clear_input(mut self, color: vk::ClearValue) -> Self {
-        self.load = vk::AttachmentLoadOp::CLEAR;
+    pub fn clear_input(mut self, color: ClearRenderTarget) -> Self {
+        self.load = RenderTargetLoadOp::Clear;
         self.clear = Some(color);
 
         self
     }
 
     pub fn load_input(mut self) -> Self {
-        self.load = vk::AttachmentLoadOp::LOAD;
+        self.load = RenderTargetLoadOp::Load;
         self.clear = None;
 
         self
     }
 
     pub fn store_output(mut self) -> Self {
-        self.store = vk::AttachmentStoreOp::STORE;
+        self.store = RenderTargetStoreOp::Store;
 
         self
     }
 
     fn build(&self) -> vk::RenderingAttachmentInfo {
-        vk::RenderingAttachmentInfo::builder()
-            .clear_value(self.clear.unwrap_or_default())
-            .load_op(self.load)
-            .store_op(self.store)
+        let mut builder = vk::RenderingAttachmentInfo::builder()
+            .load_op(self.load.into())
+            .store_op(self.store.into())
             .image_view(self.target)
-            .image_layout(self.layout)
-            .build()
+            .image_layout(self.layout.into());
+        if let Some(clear) = self.clear {
+            builder = builder.clear_value(clear.into());
+        }
+
+        builder.build()
     }
 }
 
@@ -81,11 +140,11 @@ const MAX_BARRIERS: usize = 32;
 pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 
 pub(crate) struct Pass {
-    color_attachments: ArrayVec<RenderAttachment, MAX_COLOR_ATTACHMENTS>,
-    depth_attachment: Option<RenderAttachment>,
-    rende_area: vk::Rect2D,
+    color_attachments: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
+    depth_attachment: Option<RenderTarget>,
+    rende_area: RenderArea,
     streams: Vec<DrawStream>,
-    barriers: ArrayVec<Barrier, MAX_BARRIERS>,
+    barriers: ArrayVec<ImageBarrier, MAX_BARRIERS>,
 }
 
 impl DeferedPass for Pass {
@@ -94,7 +153,7 @@ impl DeferedPass for Pass {
         let color_attachments = self
             .color_attachments
             .iter()
-            .map(RenderAttachment::build)
+            .map(RenderTarget::build)
             .collect::<ArrayVec<_, 8>>();
         let depth_attachment = self.depth_attachment.map(|x| x.build());
         let mut image_barriers = ArrayVec::<_, MAX_BARRIERS>::new();
@@ -115,7 +174,7 @@ impl DeferedPass for Pass {
         };
 
         let info = vk::RenderingInfo::builder()
-            .render_area(self.rende_area)
+            .render_area(self.rende_area.into())
             .color_attachments(&color_attachments)
             .layer_count(1);
         let info = if let Some(depth_attachment) = depth_attachment.as_ref() {
@@ -146,9 +205,8 @@ impl DeferedPass for Pass {
 }
 
 pub struct FrameContext<'a> {
-    pub render_area: vk::Rect2D,
-    pub target_view: vk::ImageView,
-    pub target_layout: vk::ImageLayout,
+    pub render_area: RenderArea,
+    pub target_view: ImageView,
     pub(crate) frame: &'a Frame,
     pub(crate) temp_buffer_handle: BufferHandle,
     pub(crate) passes: Mutex<Vec<Box<dyn DeferedPass>>>,
@@ -165,12 +223,12 @@ pub enum BarrierType {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub struct Barrier {
+pub struct ImageBarrier {
     pub image: ImageHandle,
     pub ty: BarrierType,
 }
 
-impl Barrier {
+impl ImageBarrier {
     pub fn depth_to_attachment(image: ImageHandle) -> Self {
         Self {
             image,
@@ -265,11 +323,11 @@ impl<'a> FrameContext<'a> {
     /// Actual recording is done later, might be multithreaded.
     pub fn execute(
         &self,
-        area: vk::Rect2D,
-        color_attachments: &[RenderAttachment],
-        depth_attachment: Option<RenderAttachment>,
+        area: RenderArea,
+        color_attachments: &[RenderTarget],
+        depth_attachment: Option<RenderTarget>,
         streams: impl Iterator<Item = DrawStream>,
-        barriers: &[Barrier],
+        barriers: &[ImageBarrier],
     ) {
         let pass = Pass {
             color_attachments: color_attachments

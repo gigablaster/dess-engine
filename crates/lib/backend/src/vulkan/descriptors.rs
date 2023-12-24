@@ -54,10 +54,9 @@ pub struct DescriptorData {
 }
 
 pub type DescriptorHandle = Handle<vk::DescriptorSet>;
-pub(crate) type DescriptorStorage =
-    HotColdPool<vk::DescriptorSet, Box<DescriptorData>, SentinelPoolStrategy<vk::DescriptorSet>>;
+pub(crate) type DescriptorStorage = HotColdPool<vk::DescriptorSet, Box<DescriptorData>>;
 
-pub trait PushAndGetRef<T> {
+trait PushAndGetRef<T> {
     fn push_get_ref(&mut self, data: T) -> &T;
 }
 
@@ -685,11 +684,7 @@ impl Device {
     }
 
     fn is_valid_descriptor_impl(
-        container: &HotColdPool<
-            vk::DescriptorSet,
-            Box<DescriptorData>,
-            SentinelPoolStrategy<vk::DescriptorSet>,
-        >,
+        container: &HotColdPool<vk::DescriptorSet, Box<DescriptorData>>,
         handle: DescriptorHandle,
     ) -> bool {
         if let Some(desc) = container.get_cold(handle) {

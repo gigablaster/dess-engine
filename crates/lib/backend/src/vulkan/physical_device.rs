@@ -35,21 +35,21 @@ impl QueueFamily {
 
 #[derive(Clone)]
 pub struct PhysicalDevice {
-    pub raw: vk::PhysicalDevice,
-    pub queue_families: Vec<QueueFamily>,
-    pub properties: vk::PhysicalDeviceProperties,
-    pub memory_properties: vk::PhysicalDeviceMemoryProperties,
-    pub supported_extensions: HashSet<String>,
+    pub(crate) raw: vk::PhysicalDevice,
+    pub(crate) queue_families: Vec<QueueFamily>,
+    pub(crate) properties: vk::PhysicalDeviceProperties,
+    pub(crate) memory_properties: vk::PhysicalDeviceMemoryProperties,
+    pub(crate) supported_extensions: HashSet<String>,
 }
 
 impl PhysicalDevice {
-    pub fn is_queue_flag_supported(&self, flags: vk::QueueFlags) -> bool {
+    pub(crate) fn is_queue_flag_supported(&self, flags: vk::QueueFlags) -> bool {
         self.queue_families
             .iter()
             .any(|queue_family| queue_family.is_supported(flags))
     }
 
-    pub fn get_queue(&self, flags: vk::QueueFlags) -> Option<QueueFamily> {
+    pub(crate) fn get_queue(&self, flags: vk::QueueFlags) -> Option<QueueFamily> {
         self.queue_families
             .iter()
             .filter(|x| x.is_supported(flags))
@@ -57,7 +57,7 @@ impl PhysicalDevice {
             .next()
     }
 
-    pub fn is_extensions_sipported(&self, ext: &str) -> bool {
+    pub(crate) fn is_extensions_sipported(&self, ext: &str) -> bool {
         self.supported_extensions.contains(ext)
     }
 }
@@ -143,10 +143,28 @@ impl Instance {
 pub trait PhysicalDeviceList {
     fn with_support(&self, surface: &Surface, flags: vk::QueueFlags) -> Vec<PhysicalDevice>;
     fn with_device_type(&self, device_type: vk::PhysicalDeviceType) -> Vec<PhysicalDevice>;
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum PhysicalDeviceType {
+    Discrete,
+    Integrated,
+}
+
+impl From<PhysicalDeviceType> for vk::PhysicalDeviceType {
+    fn from(value: PhysicalDeviceType) -> Self {
+        match value {
+            PhysicalDeviceType::Discrete => vk::PhysicalDeviceType::DISCRETE_GPU,
+            PhysicalDeviceType::Integrated => vk::PhysicalDeviceType::INTEGRATED_GPU,
+        }
+    }
+}
+
+pub trait FindSuitableDevice: PhysicalDeviceList {
     fn find_suitable_device(
         &self,
         surface: &Surface,
-        device_types: &[vk::PhysicalDeviceType],
+        device_types: &[PhysicalDeviceType],
     ) -> Option<PhysicalDevice>;
 }
 
@@ -188,18 +206,20 @@ impl PhysicalDeviceList for Vec<PhysicalDevice> {
             .cloned()
             .collect()
     }
+}
 
+impl FindSuitableDevice for Vec<PhysicalDevice> {
     fn find_suitable_device(
         &self,
         surface: &Surface,
-        device_types: &[vk::PhysicalDeviceType],
+        device_types: &[PhysicalDeviceType],
     ) -> Option<PhysicalDevice> {
         let all_needed_support = self.with_support(
             surface,
             vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
         );
         device_types.iter().find_map(|device_type| {
-            let suitable = all_needed_support.with_device_type(*device_type);
+            let suitable = all_needed_support.with_device_type((*device_type).into());
             suitable.into_iter().next()
         })
     }

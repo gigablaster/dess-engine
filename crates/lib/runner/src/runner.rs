@@ -1,9 +1,9 @@
 use std::time::Instant;
 
-use ash::vk;
 use bevy_tasks::{AsyncComputeTaskPool, ComputeTaskPool, IoTaskPool, TaskPool};
 use dess_backend::{
-    Device, FrameResult, Instance, InstanceBuilder, PhysicalDeviceList, Surface, Swapchain,
+    Device, FindSuitableDevice, FrameResult, Instance, InstanceBuilder, PhysicalDeviceType,
+    Surface, Swapchain,
 };
 use dess_common::TimeFilter;
 use dess_engine::{BufferPool, ResourceManager, TemporaryImagePool};
@@ -63,10 +63,7 @@ impl<T: Client> Runner<T> {
             .unwrap()
             .find_suitable_device(
                 &surface,
-                &[
-                    vk::PhysicalDeviceType::DISCRETE_GPU,
-                    vk::PhysicalDeviceType::INTEGRATED_GPU,
-                ],
+                &[PhysicalDeviceType::Discrete, PhysicalDeviceType::Integrated],
             )
             .unwrap();
         let device = Device::new(instance, pdevice).unwrap();

@@ -13,7 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::ffi::{c_void, CStr, CString};
+use std::{
+    ffi::{c_void, CStr, CString},
+    sync::Arc,
+};
 
 use ash::{
     extensions::ext::DebugUtils,
@@ -87,7 +90,7 @@ impl Instance {
         names
     }
 
-    pub fn vulkan_version() -> u32 {
+    pub(crate) fn vulkan_version() -> u32 {
         vk::make_api_version(0, 1, 3, 0)
     }
 

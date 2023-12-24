@@ -369,3 +369,37 @@ impl From<ShaderStage> for vk::ShaderStageFlags {
         }
     }
 }
+
+#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
+pub struct RenderArea {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl From<RenderArea> for vk::Rect2D {
+    fn from(value: RenderArea) -> Self {
+        Self {
+            offset: vk::Offset2D {
+                x: value.x as i32,
+                y: value.y as i32,
+            },
+            extent: vk::Extent2D {
+                width: value.width,
+                height: value.height,
+            },
+        }
+    }
+}
+
+impl RenderArea {
+    pub fn new(x: u32, y: u32, width: u32, height: u32) -> Self {
+        Self {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+}

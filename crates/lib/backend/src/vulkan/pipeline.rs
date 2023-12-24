@@ -12,7 +12,7 @@ use log::{debug, error, info};
 use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
-use crate::{BackendError, BackendResult};
+use crate::{BackendError, BackendResult, Format};
 
 use super::{
     Device, PhysicalDevice, ProgramHandle, RasterPipelineHandle, Shader, MAX_COLOR_ATTACHMENTS,
@@ -20,21 +20,76 @@ use super::{
 };
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct BlendDesc {
-    pub src_blend: vk::BlendFactor,
-    pub dst_blend: vk::BlendFactor,
-    pub op: vk::BlendOp,
+pub enum BlendFactor {
+    Zero,
+    One,
+    SrcColor,
+    OneMinusSrcColor,
+    DstColor,
+    OneMinusDstColor,
+    SrcAlpha,
+    OneMinusSrcAlpha,
+    DstAlpha,
+    OneMinusDstAlpha,
 }
 
-#[derive(Debug)]
-pub struct VertexAttributeDesc {
-    pub attributes: &'static [vk::VertexInputAttributeDescription],
-    pub stride: usize,
+impl From<BlendFactor> for vk::BlendFactor {
+    fn from(value: BlendFactor) -> Self {
+        match value {
+            BlendFactor::Zero => vk::BlendFactor::ZERO,
+            BlendFactor::One => vk::BlendFactor::ONE,
+            BlendFactor::SrcColor => vk::BlendFactor::SRC_COLOR,
+            BlendFactor::OneMinusSrcColor => vk::BlendFactor::ONE_MINUS_SRC_COLOR,
+            BlendFactor::DstColor => vk::BlendFactor::DST_COLOR,
+            BlendFactor::OneMinusDstColor => vk::BlendFactor::ONE_MINUS_DST_COLOR,
+            BlendFactor::SrcAlpha => vk::BlendFactor::SRC_ALPHA,
+            BlendFactor::OneMinusSrcAlpha => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            BlendFactor::DstAlpha => vk::BlendFactor::DST_ALPHA,
+            BlendFactor::OneMinusDstAlpha => vk::BlendFactor::ONE_MINUS_DST_ALPHA,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum BlendOp {
+    Add,
+    Subtract,
+    ReverseSubtract,
+    Min,
+    Max,
+}
+
+impl From<BlendOp> for vk::BlendOp {
+    fn from(value: BlendOp) -> Self {
+        match value {
+            BlendOp::Add => vk::BlendOp::ADD,
+            BlendOp::Subtract => vk::BlendOp::SUBTRACT,
+            BlendOp::ReverseSubtract => vk::BlendOp::REVERSE_SUBTRACT,
+            BlendOp::Min => vk::BlendOp::MIN,
+            BlendOp::Max => vk::BlendOp::MAX,
+        }
+    }
+}
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub struct BlendDesc {
+    pub src_blend: BlendFactor,
+    pub dst_blend: BlendFactor,
+    pub op: BlendOp,
+}
+
+impl BlendDesc {
+    pub fn new(src: BlendFactor, dst: BlendFactor, op: BlendOp) -> Self {
+        Self {
+            src_blend: src,
+            dst_blend: dst,
+            op,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct InputVertexAttributeDesc {
-    pub format: vk::Format,
+    pub format: Format,
     pub locaion: u32,
     pub binding: u32,
     pub offset: u32,
@@ -45,7 +100,7 @@ impl From<InputVertexAttributeDesc> for vk::VertexInputAttributeDescription {
         Self {
             location: value.locaion,
             binding: value.binding,
-            format: value.format,
+            format: value.format.into(),
             offset: value.offset,
         }
     }
@@ -55,6 +110,52 @@ impl From<InputVertexAttributeDesc> for vk::VertexInputAttributeDescription {
 pub struct InputVertexStreamDesc {
     pub attributes: &'static [InputVertexAttributeDesc],
     pub stride: u32,
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum CullMode {
+    None,
+    Front,
+    Back,
+    FrontAndBack,
+}
+
+impl From<CullMode> for vk::CullModeFlags {
+    fn from(value: CullMode) -> Self {
+        match value {
+            CullMode::None => vk::CullModeFlags::NONE,
+            CullMode::Front => vk::CullModeFlags::FRONT,
+            CullMode::Back => vk::CullModeFlags::BACK,
+            CullMode::FrontAndBack => vk::CullModeFlags::FRONT_AND_BACK,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum DepthCompareOp {
+    Never,
+    Less,
+    Equal,
+    LessOrEqual,
+    Greater,
+    NotEqual,
+    GreaterOrEqual,
+    Always,
+}
+
+impl From<DepthCompareOp> for vk::CompareOp {
+    fn from(value: DepthCompareOp) -> Self {
+        match value {
+            DepthCompareOp::Never => vk::CompareOp::NEVER,
+            DepthCompareOp::Less => vk::CompareOp::LESS,
+            DepthCompareOp::Equal => vk::CompareOp::EQUAL,
+            DepthCompareOp::LessOrEqual => vk::CompareOp::LESS_OR_EQUAL,
+            DepthCompareOp::Greater => vk::CompareOp::GREATER,
+            DepthCompareOp::NotEqual => vk::CompareOp::NOT_EQUAL,
+            DepthCompareOp::GreaterOrEqual => vk::CompareOp::GREATER_OR_EQUAL,
+            DepthCompareOp::Always => vk::CompareOp::ALWAYS,
+        }
+    }
 }
 
 /// Data to create pipeline.
@@ -68,12 +169,9 @@ pub struct RasterPipelineCreateDesc {
     pub pass_layout: RenderPassLayout,
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(BlendDesc, BlendDesc)>,
-    /// Depth comparison op, None if no depth test is happening
-    pub depth_test: Option<vk::CompareOp>,
-    /// true if we write into depth
+    pub cull: CullMode,
+    pub depth_test: Option<DepthCompareOp>,
     pub depth_write: bool,
-    /// Culling information, None if we don't do culling
-    pub cull: Option<(vk::CullModeFlags, vk::FrontFace)>,
     /// Vertex streams layout
     pub streams: &'static [InputVertexStreamDesc],
 }
@@ -88,34 +186,62 @@ impl RasterPipelineCreateDesc {
             program,
             pass_layout,
             blend: None,
-            depth_test: Some(vk::CompareOp::LESS),
-            depth_write: true,
-            cull: Some((vk::CullModeFlags::BACK, vk::FrontFace::CLOCKWISE)),
+            cull: CullMode::None,
+            depth_test: None,
+            depth_write: false,
             streams: T::vertex_streams(),
         }
     }
 
-    pub fn blend(mut self, color: BlendDesc, alpha: BlendDesc) -> Self {
+    pub fn blending(mut self, color: BlendDesc, alpha: BlendDesc) -> Self {
         self.blend = Some((color, alpha));
 
         self
     }
 
-    pub fn depth_test(mut self, value: vk::CompareOp) -> Self {
-        self.depth_test = Some(value);
+    pub fn cull(mut self, mode: CullMode) -> Self {
+        self.cull = mode;
 
         self
     }
 
-    pub fn depth_write(mut self, value: bool) -> Self {
-        self.depth_write = value;
-
+    pub fn alpha_blend(mut self) -> Self {
+        self.blend = Some((
+            BlendDesc::new(
+                BlendFactor::SrcAlpha,
+                BlendFactor::OneMinusSrcAlpha,
+                BlendOp::Add,
+            ),
+            BlendDesc::new(
+                BlendFactor::SrcAlpha,
+                BlendFactor::OneMinusSrcAlpha,
+                BlendOp::Add,
+            ),
+        ));
         self
     }
 
-    pub fn cull(mut self, mode: vk::CullModeFlags, front: vk::FrontFace) -> Self {
-        self.cull = Some((mode, front));
+    pub fn premultiplied(mut self) -> Self {
+        self.blend = Some((
+            BlendDesc::new(
+                BlendFactor::One,
+                BlendFactor::OneMinusSrcAlpha,
+                BlendOp::Add,
+            ),
+            BlendDesc::new(
+                BlendFactor::One,
+                BlendFactor::OneMinusSrcAlpha,
+                BlendOp::Add,
+            ),
+        ));
+        self
+    }
 
+    pub fn additive(mut self) -> Self {
+        self.blend = Some((
+            BlendDesc::new(BlendFactor::SrcAlpha, BlendFactor::One, BlendOp::Add),
+            BlendDesc::new(BlendFactor::SrcAlpha, BlendFactor::One, BlendOp::Add),
+        ));
         self
     }
 }
@@ -195,11 +321,9 @@ impl Device {
             .depth_bias_clamp(0.0)
             .depth_bias_slope_factor(0.0);
 
-        let rasterizer_state = if let Some(desc) = desc.cull {
-            rasterizer_state.cull_mode(desc.0).front_face(desc.1)
-        } else {
-            rasterizer_state.cull_mode(vk::CullModeFlags::NONE)
-        };
+        let rasterizer_state = rasterizer_state
+            .cull_mode(desc.cull.into())
+            .front_face(vk::FrontFace::CLOCKWISE);
 
         let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
             .sample_shading_enable(false)
@@ -209,21 +333,15 @@ impl Device {
             .alpha_to_one_enable(false)
             .build();
 
-        let depthstencil_state = if let Some(op) = desc.depth_test {
-            vk::PipelineDepthStencilStateCreateInfo::builder()
-                .depth_compare_op(op)
-                .stencil_test_enable(false)
-                .depth_test_enable(true)
-                .depth_write_enable(desc.depth_write)
-                .build()
-        } else {
-            vk::PipelineDepthStencilStateCreateInfo::builder()
-                .depth_compare_op(vk::CompareOp::NEVER)
-                .stencil_test_enable(false)
-                .depth_test_enable(false)
-                .depth_write_enable(desc.depth_write)
-                .build()
-        };
+        let mut depthstencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+            .stencil_test_enable(false)
+            .depth_write_enable(desc.depth_write);
+
+        if let Some(depth_compare) = desc.depth_test {
+            depthstencil_state = depthstencil_state
+                .depth_write_enable(true)
+                .depth_compare_op(depth_compare.into());
+        }
 
         let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
             .color_write_mask(vk::ColorComponentFlags::RGBA);
@@ -231,12 +349,12 @@ impl Device {
         let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
             color_blend_attachment
                 .blend_enable(true)
-                .src_color_blend_factor(color.src_blend)
-                .dst_color_blend_factor(color.dst_blend)
-                .color_blend_op(color.op)
-                .src_alpha_blend_factor(alpha.src_blend)
-                .dst_alpha_blend_factor(alpha.dst_blend)
-                .alpha_blend_op(alpha.op)
+                .src_color_blend_factor(color.src_blend.into())
+                .dst_color_blend_factor(color.dst_blend.into())
+                .color_blend_op(color.op.into())
+                .src_alpha_blend_factor(alpha.src_blend.into())
+                .dst_alpha_blend_factor(alpha.dst_blend.into())
+                .alpha_blend_op(alpha.op.into())
         } else {
             color_blend_attachment.blend_enable(false)
         }
