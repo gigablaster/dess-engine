@@ -42,9 +42,9 @@ pub use physical_device::*;
 pub use pipeline::*;
 pub use program::*;
 use speedy::{Readable, Writable};
-pub use staging::*;
+use staging::*;
 pub use swapchain::*;
-pub use uniforms::*;
+use uniforms::*;
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;

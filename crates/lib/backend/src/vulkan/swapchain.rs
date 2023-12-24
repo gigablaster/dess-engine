@@ -72,7 +72,6 @@ impl Drop for Surface {
 }
 
 pub struct Swapchain<'a> {
-    surface: &'a Surface,
     device: &'a Device,
     raw: vk::SwapchainKHR,
     images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
@@ -81,7 +80,6 @@ pub struct Swapchain<'a> {
     rendering_finished_semaphores: ArrayVec<vk::Semaphore, DESIRED_IMAGES_COUNT>,
     next_semaphore: AtomicUsize,
     dims: [u32; 2],
-    format: vk::Format,
 }
 
 pub struct SwapchainImage<'a> {
@@ -224,7 +222,6 @@ impl<'a> Swapchain<'a> {
             rendering_finished_semaphores.push(rendering_finished_semaphore);
         }
         Ok(Self {
-            surface,
             device,
             raw: swapchain,
             images,
@@ -232,12 +229,11 @@ impl<'a> Swapchain<'a> {
             rendering_finished_semaphores,
             next_semaphore: AtomicUsize::new(0),
             loader,
-            format: format.format,
             dims: [surface_resolution.width, surface_resolution.height],
         })
     }
 
-    pub fn acquire_next_image(&self) -> BackendResult<AcquiredSurface> {
+    pub(crate) fn acquire_next_image(&self) -> BackendResult<AcquiredSurface> {
         puffin::profile_function!();
         let current_semaphore = self.next_semaphore.load(Ordering::Acquire);
         let acquire_semaphore = self.acquire_semaphores[current_semaphore];
@@ -276,7 +272,7 @@ impl<'a> Swapchain<'a> {
         }))
     }
 
-    pub fn present_image(&self, image: SwapchainImage, queue: vk::Queue) {
+    pub(crate) fn present_image(&self, image: SwapchainImage, queue: vk::Queue) {
         puffin::profile_scope!("present");
         let present_info = vk::PresentInfoKHR::builder()
             .wait_semaphores(slice::from_ref(&image.rendering_finished))

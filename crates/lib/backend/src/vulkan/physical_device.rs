@@ -38,7 +38,6 @@ pub struct PhysicalDevice {
     pub(crate) raw: vk::PhysicalDevice,
     pub(crate) queue_families: Vec<QueueFamily>,
     pub(crate) properties: vk::PhysicalDeviceProperties,
-    pub(crate) memory_properties: vk::PhysicalDeviceMemoryProperties,
     pub(crate) supported_extensions: HashSet<String>,
 }
 
@@ -88,7 +87,6 @@ impl Instance {
                         })
                         .collect();
 
-                    let memory_properties = self.raw.get_physical_device_memory_properties(pdevice);
                     let extension_properties = self
                         .raw
                         .enumerate_device_extension_properties(pdevice)
@@ -107,7 +105,6 @@ impl Instance {
                         raw: pdevice,
                         queue_families,
                         properties,
-                        memory_properties,
                         supported_extensions,
                     }
                 })

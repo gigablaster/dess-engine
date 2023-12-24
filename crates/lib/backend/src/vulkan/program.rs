@@ -23,10 +23,9 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
-use gpu_descriptor::DescriptorTotalCount;
 use rspirv_reflect::{BindingCount, DescriptorInfo};
 
-use crate::{BackendError, BackendResult};
+use crate::{BackendError, BackendResult, ShaderStage};
 
 use super::{Device, Index, ProgramHandle, SamplerDesc};
 
@@ -48,18 +47,17 @@ type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
 type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
 
 #[derive(Debug, Default)]
-pub struct DescriptorSetInfo {
+pub(crate) struct DescriptorSetInfo {
     pub layout: vk::DescriptorSetLayout,
-    pub descriptor_count: DescriptorTotalCount,
     pub types: HashMap<u32, vk::DescriptorType>,
     pub names: HashMap<String, u32>,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DescriptorSetCreateInfo {
-    pub stage: vk::ShaderStageFlags,
+    pub stage: ShaderStage,
     pub expected_count: u32,
-    pub set: HashMap<u32, DescriptorInfo>,
+    set: HashMap<u32, DescriptorInfo>,
 }
 
 impl std::hash::Hash for DescriptorSetCreateInfo {
@@ -78,8 +76,18 @@ impl std::hash::Hash for DescriptorSetCreateInfo {
     }
 }
 
+pub enum DescriptorType {
+    SampledImage,
+    StorageImage,
+    CombinedImageSampler,
+    UniformBuffer,
+    DynamicUniformBuffer,
+    StorageBuffer,
+    DynamicStorageBuffer,
+}
+
 impl DescriptorSetCreateInfo {
-    pub fn stage(mut self, stage: vk::ShaderStageFlags) -> Self {
+    pub fn stage(mut self, stage: ShaderStage) -> Self {
         self.stage = stage;
 
         self
@@ -90,22 +98,21 @@ impl DescriptorSetCreateInfo {
         self
     }
 
-    pub fn descriptor(mut self, index: usize, name: &str, ty: vk::DescriptorType) -> Self {
+    pub fn descriptor(mut self, index: usize, name: &str, ty: DescriptorType) -> Self {
         let ty = match ty {
-            vk::DescriptorType::UNIFORM_BUFFER => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
-            vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC => {
+            DescriptorType::UniformBuffer => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
+            DescriptorType::DynamicUniformBuffer => {
                 rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
-            vk::DescriptorType::STORAGE_BUFFER => rspirv_reflect::DescriptorType::STORAGE_BUFFER,
-            vk::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
+            DescriptorType::StorageBuffer => rspirv_reflect::DescriptorType::STORAGE_BUFFER,
+            DescriptorType::DynamicStorageBuffer => {
                 rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC
             }
-            vk::DescriptorType::SAMPLED_IMAGE => rspirv_reflect::DescriptorType::SAMPLED_IMAGE,
-            vk::DescriptorType::STORAGE_IMAGE => rspirv_reflect::DescriptorType::STORAGE_IMAGE,
-            vk::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+            DescriptorType::SampledImage => rspirv_reflect::DescriptorType::SAMPLED_IMAGE,
+            DescriptorType::StorageImage => rspirv_reflect::DescriptorType::STORAGE_IMAGE,
+            DescriptorType::CombinedImageSampler => {
                 rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER
             }
-            _ => panic!("Unsupported descriptor type {:?}", ty),
         };
         self.set.insert(
             index as u32,
@@ -128,9 +135,8 @@ impl DescriptorSetInfo {
     ) -> BackendResult<Self> {
         Self::new(
             device,
-            desc.stage,
+            desc.stage.into(),
             &desc.set,
-            desc.expected_count,
             false,
             inmuatable_samplers,
         )
@@ -140,7 +146,6 @@ impl DescriptorSetInfo {
         device: &ash::Device,
         stage: vk::ShaderStageFlags,
         set: &HashMap<u32, DescriptorInfo>,
-        expected_count: u32,
         dynamic: bool,
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<Self, BackendError> {
@@ -215,22 +220,6 @@ impl DescriptorSetInfo {
             types,
             names,
             layout,
-            descriptor_count: DescriptorTotalCount {
-                sampler: 0,
-                combined_image_sampler: combined_samplers_count * expected_count,
-                sampled_image: sampled_images_count * expected_count,
-                storage_image: 0,
-                uniform_texel_buffer: 0,
-                storage_texel_buffer: 0,
-                uniform_buffer: uniform_buffers_count * expected_count,
-                storage_buffer: 0,
-                uniform_buffer_dynamic: dynamic_uniform_buffers_count * expected_count,
-                storage_buffer_dynamic: 0,
-                input_attachment: 0,
-                acceleration_structure: 0,
-                inline_uniform_block_bytes: 0,
-                inline_uniform_block_bindings: 0,
-            },
         })
     }
 
@@ -331,13 +320,13 @@ impl DescriptorSetInfo {
 
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct ShaderDesc<'a> {
-    pub stage: vk::ShaderStageFlags,
+    pub stage: ShaderStage,
     pub entry: &'a str,
     pub code: &'a [u8],
 }
 
 impl<'a> ShaderDesc<'a> {
-    pub fn new(stage: vk::ShaderStageFlags, code: &'a [u8]) -> Self {
+    pub fn new(stage: ShaderStage, code: &'a [u8]) -> Self {
         Self {
             stage,
             entry: "main",
@@ -347,7 +336,7 @@ impl<'a> ShaderDesc<'a> {
 
     pub fn vertex(code: &'a [u8]) -> Self {
         Self {
-            stage: vk::ShaderStageFlags::VERTEX,
+            stage: ShaderStage::Vertex,
             entry: "main",
             code,
         }
@@ -355,7 +344,7 @@ impl<'a> ShaderDesc<'a> {
 
     pub fn fragment(code: &'a [u8]) -> Self {
         Self {
-            stage: vk::ShaderStageFlags::FRAGMENT,
+            stage: ShaderStage::Fragment,
             entry: "main",
             code,
         }
@@ -363,7 +352,7 @@ impl<'a> ShaderDesc<'a> {
 
     pub fn compute(code: &'a [u8]) -> Self {
         Self {
-            stage: vk::ShaderStageFlags::COMPUTE,
+            stage: ShaderStage::Compute,
             entry: "main",
             code,
         }
@@ -392,7 +381,7 @@ impl Shader {
         let shader = unsafe { device.create_shader_module(&shader_create_info, None) }?;
         Ok(Self {
             raw: shader,
-            stage: desc.stage,
+            stage: desc.stage.into(),
             entry: CString::new(desc.entry).unwrap(),
             descriptor_sets: rspirv_reflect::Reflection::new_from_spirv(desc.code)?
                 .get_descriptor_sets()?,
@@ -417,14 +406,14 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new(
+    pub(crate) fn new(
         device: &ash::Device,
         shaders: &[ShaderDesc],
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<Self, BackendError> {
         let mut stages = vk::ShaderStageFlags::empty();
         shaders.iter().for_each(|x| {
-            stages |= x.stage;
+            stages |= x.stage.into();
         });
 
         let shaders = shaders
@@ -478,7 +467,6 @@ impl Program {
                         device,
                         stages,
                         &set,
-                        DESCRIPTORS_PER_SLOT[set_index as usize],
                         set_index == PER_DRAW_BINDING_SLOT as u32,
                         inmuatable_samplers,
                     )?);

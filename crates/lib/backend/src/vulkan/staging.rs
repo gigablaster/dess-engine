@@ -27,19 +27,13 @@ use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{
     vulkan::{Buffer, CommandBuffer, Device, Image},
-    BackendError, BackendResult,
+    BackendError, BackendResult, ImageSubresourceData,
 };
 
 use super::{GpuAllocator, GpuMemory, Instance, PhysicalDevice};
 
 const STAGES: usize = 4;
 const BUFFER_SIZE: usize = 32 * 1024 * 1024;
-
-#[derive(Debug, Hash, PartialEq, Eq)]
-pub struct ImageSubresourceData<'a> {
-    pub data: &'a [u8],
-    pub row_pitch: usize,
-}
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy2, vk::ImageSubresourceRange);

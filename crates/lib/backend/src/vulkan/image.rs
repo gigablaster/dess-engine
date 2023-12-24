@@ -22,7 +22,7 @@ use speedy::{Readable, Writable};
 
 use crate::{BackendError, BackendResult, Format};
 
-use super::{AsVulkan, Device, DropList, GpuMemory, ImageHandle, ImageSubresourceData, ToDrop};
+use super::{AsVulkan, Device, DropList, GpuMemory, ImageHandle, ToDrop};
 
 pub type ImageView = vk::ImageView;
 
@@ -253,7 +253,7 @@ pub struct Image {
 }
 
 impl Image {
-    pub fn get_or_create_view(
+    pub(crate) fn get_or_create_view(
         &self,
         device: &ash::Device,
         desc: ImageViewDesc,
@@ -522,7 +522,7 @@ impl Device {
         &self,
         handle: ImageHandle,
         desc: ImageViewDesc,
-    ) -> BackendResult<vk::ImageView> {
+    ) -> BackendResult<ImageView> {
         self.image_storage
             .read()
             .get_cold(handle)
@@ -603,4 +603,10 @@ impl From<ImageLayout> for vk::ImageLayout {
             ImageLayout::Source => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         }
     }
+}
+
+#[derive(Debug, Hash, PartialEq, Eq)]
+pub struct ImageSubresourceData<'a> {
+    pub data: &'a [u8],
+    pub row_pitch: usize,
 }

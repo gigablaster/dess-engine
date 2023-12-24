@@ -627,7 +627,11 @@ impl Device {
         }
     }
 
-    pub fn scoped_label(&self, cb: vk::CommandBuffer, label: &str) -> ScopedCommandBufferLabel {
+    pub(crate) fn scoped_label(
+        &self,
+        cb: vk::CommandBuffer,
+        label: &str,
+    ) -> ScopedCommandBufferLabel {
         self.cmd_begin_label(cb, label);
         ScopedCommandBufferLabel { device: self, cb }
     }
