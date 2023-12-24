@@ -145,8 +145,6 @@ impl<'a> Drop for ScopedCommandBufferLabel<'a> {
     }
 }
 
-const BINDLESS_COUNT: usize = 129072;
-
 pub struct Device {
     pub(crate) raw: ash::Device,
     frames: [Mutex<Frame>; 2],
@@ -275,7 +273,7 @@ impl Device {
         let allocator_props =
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
         let mut memory_allocator = GpuAllocator::new(allocator_config, allocator_props);
-        let descriptor_allocator = DescriptorAllocator::new(1);
+        let descriptor_allocator = DescriptorAllocator::new(0);
 
         let temp_buffer_type =
             BufferUsage::Index | BufferUsage::Vertex | BufferUsage::Uniform | BufferUsage::Storage;
@@ -332,27 +330,6 @@ impl Device {
                 memory: None,
             },
         );
-        let _bindless_desc = BindGroupLayoutDesc::default()
-            .stage(ShaderStage::all())
-            .descriptor(
-                0,
-                "sampled_textures",
-                DescriptorType::SampledImage,
-                BINDLESS_COUNT,
-            )
-            .descriptor(
-                1,
-                "storage_buffers",
-                DescriptorType::StorageBuffer,
-                BINDLESS_COUNT,
-            )
-            .descriptor(
-                2,
-                "storage_images",
-                DescriptorType::StorageImage,
-                BINDLESS_COUNT,
-            );
-        // let bindless_descriptor =
 
         Ok(Arc::new(Self {
             staging: Mutex::new(Staging::new(

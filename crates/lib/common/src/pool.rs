@@ -20,7 +20,7 @@ use std::{
 };
 
 const DEFAULT_SPACE: usize = 4096;
-const GENERATION_BITS: u32 = 12;
+const GENERATION_BITS: u32 = 14;
 const INDEX_BITS: u32 = 32 - GENERATION_BITS;
 const INDEX_MASK: u32 = (1 << INDEX_BITS) - 1;
 const GENERATION_MASK: u32 = u32::MAX - INDEX_MASK;
