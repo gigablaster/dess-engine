@@ -39,7 +39,6 @@ pub struct BindingPoint<T> {
 }
 
 const BASIC_DESCIPTOR_UPDATE_COUNT: usize = 512;
-const DESCRIPTORS_PER_POOL: usize = 64;
 
 #[derive(Debug)]
 pub struct DescriptorData {
@@ -210,11 +209,11 @@ impl<'a> UpdateDescriptorContext<'a> {
             })
             .collect::<Vec<_>>();
         let count = DescriptorTotalCount {
-            sampled_image: (sampled_images.len() * DESCRIPTORS_PER_POOL) as _,
-            uniform_buffer: (uniform_buffers.len() * DESCRIPTORS_PER_POOL) as _,
-            uniform_buffer_dynamic: (dynamic_uniform_bufffers.len() * DESCRIPTORS_PER_POOL) as _,
-            storage_buffer: (storage_buffers.len() * DESCRIPTORS_PER_POOL) as _,
-            storage_image: (storage_images.len() * DESCRIPTORS_PER_POOL) as _,
+            sampled_image: (sampled_images.len()) as _,
+            uniform_buffer: (uniform_buffers.len()) as _,
+            uniform_buffer_dynamic: (dynamic_uniform_bufffers.len()) as _,
+            storage_buffer: (storage_buffers.len()) as _,
+            storage_image: (storage_images.len()) as _,
             ..Default::default()
         };
         let names = set
