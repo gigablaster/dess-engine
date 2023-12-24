@@ -13,8 +13,8 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod bind_group;
 mod buffer;
-mod descriptors;
 mod device;
 mod drop_list;
 mod frame;
@@ -31,8 +31,9 @@ mod uniforms;
 use std::marker::PhantomData;
 
 use ash::vk::{self};
+pub use bind_group::*;
+use bitflags::bitflags;
 pub use buffer::*;
-pub use descriptors::*;
 pub use device::*;
 use drop_list::*;
 pub use frame_context::*;
@@ -353,20 +354,29 @@ impl From<Format> for vk::Format {
     }
 }
 
-#[derive(Debug, Hash, Eq, PartialEq, Clone, Copy)]
-pub enum ShaderStage {
-    Vertex,
-    Fragment,
-    Compute,
+bitflags! {
+#[derive(Debug, Default, Hash, Eq, PartialEq, Clone, Copy)]
+pub struct ShaderStage: u32 {
+    const Vertex = 1;
+    const Fragment = 2;
+    const Compute = 4;
+}
+
 }
 
 impl From<ShaderStage> for vk::ShaderStageFlags {
     fn from(value: ShaderStage) -> Self {
-        match value {
-            ShaderStage::Vertex => vk::ShaderStageFlags::VERTEX,
-            ShaderStage::Fragment => vk::ShaderStageFlags::FRAGMENT,
-            ShaderStage::Compute => vk::ShaderStageFlags::COMPUTE,
+        let mut result = vk::ShaderStageFlags::empty();
+        if value.contains(ShaderStage::Vertex) {
+            result |= vk::ShaderStageFlags::VERTEX;
         }
+        if value.contains(ShaderStage::Fragment) {
+            result |= vk::ShaderStageFlags::FRAGMENT;
+        }
+        if value.contains(ShaderStage::Compute) {
+            result |= vk::ShaderStageFlags::COMPUTE;
+        }
+        result
     }
 }
 

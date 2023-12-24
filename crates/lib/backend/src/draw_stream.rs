@@ -17,7 +17,7 @@ use arrayvec::ArrayVec;
 use ash::vk;
 
 use crate::vulkan::{
-    BufferHandle, BufferSlice, DescriptorHandle, ExecutionContext, RasterPipelineHandle,
+    BindGroupHandle, BufferHandle, BufferSlice, ExecutionContext, RasterPipelineHandle,
 };
 
 pub(crate) const MAX_VERTEX_STREAMS: usize = 3;
@@ -29,7 +29,7 @@ struct Draw {
     pipeline: RasterPipelineHandle,
     vertex_buffers: [BufferSlice; MAX_VERTEX_STREAMS],
     index_buffer: BufferSlice,
-    descriptors: [DescriptorHandle; MAX_DESCRIPTOR_SETS],
+    descriptors: [BindGroupHandle; MAX_DESCRIPTOR_SETS],
     dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
     first_index: u32,
     index_count: u32,
@@ -42,7 +42,7 @@ impl Default for Draw {
             pipeline: RasterPipelineHandle::default(),
             vertex_buffers: [BufferSlice::default(); MAX_VERTEX_STREAMS],
             index_buffer: BufferSlice::default(),
-            descriptors: [DescriptorHandle::default(); MAX_DESCRIPTOR_SETS],
+            descriptors: [BindGroupHandle::default(); MAX_DESCRIPTOR_SETS],
             dynamic_offsets: [u32::MAX; MAX_DYNAMIC_OFFSETS],
             first_index: u32::MAX,
             index_count: u32::MAX,
@@ -68,7 +68,7 @@ const INSTANCE_COUNT: u16 = FIRST_INDEX << 1;
 /// one CPU cache line.
 #[derive(Debug)]
 pub struct DrawStream {
-    pass_descriptor_set: DescriptorHandle,
+    pass_descriptor_set: BindGroupHandle,
     stream: Vec<u16>,
     current: Draw,
     mask: u16,
@@ -103,7 +103,7 @@ impl<'a> DrawStreamReader<'a> {
 }
 
 impl DrawStream {
-    pub fn new(pass_descriptor_set: DescriptorHandle) -> Self {
+    pub fn new(pass_descriptor_set: BindGroupHandle) -> Self {
         Self {
             pass_descriptor_set,
             stream: Vec::with_capacity(1024),
@@ -136,7 +136,7 @@ impl DrawStream {
         }
     }
 
-    pub fn bind_descriptor_set(&mut self, slot: usize, ds: Option<DescriptorHandle>) {
+    pub fn bind_descriptor_set(&mut self, slot: usize, ds: Option<BindGroupHandle>) {
         debug_assert!((1..=MAX_DESCRIPTOR_SETS).contains(&slot));
         let slot = slot - 1;
         let ds = ds.unwrap_or_default();
@@ -310,7 +310,7 @@ impl DrawStream {
             }
             for index in 0..MAX_DESCRIPTOR_SETS {
                 if mask & (DS1 << index) != 0 {
-                    let handle: DescriptorHandle = stream.read_u32()?.into();
+                    let handle: BindGroupHandle = stream.read_u32()?.into();
                     let index = index + 1;
                     if handle.is_valid() {
                         descriptors[index] = context

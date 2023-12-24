@@ -568,6 +568,7 @@ dependencies = [
  "bevy_tasks",
  "bitflags 2.4.1",
  "byte-slice-cast",
+ "bytes",
  "dess-common",
  "directories",
  "gpu-alloc",

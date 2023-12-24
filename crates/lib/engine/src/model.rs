@@ -17,7 +17,7 @@ use std::{collections::HashMap, fmt::Debug, sync::Arc};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dess_assets::{MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset, ShaderSource};
-use dess_backend::{BufferSlice, DescriptorHandle};
+use dess_backend::{BindGroupHandle, BufferSlice};
 
 use smol_str::SmolStr;
 
@@ -40,7 +40,7 @@ pub struct SubMesh {
     pub first_index: u32,
     pub index_count: u32,
     pub bounds: (glam::Vec3, glam::Vec3),
-    pub object_ds: DescriptorHandle,
+    pub object_ds: BindGroupHandle,
     pub material_index: usize,
 }
 
@@ -74,7 +74,7 @@ impl StaticMesh {
                     glam::Vec3::from_array(submesh.bounds.0),
                     glam::Vec3::from_array(submesh.bounds.1),
                 ),
-                object_ds: DescriptorHandle::default(),
+                object_ds: BindGroupHandle::default(),
                 material_index: index,
             })
             .collect::<Vec<_>>();

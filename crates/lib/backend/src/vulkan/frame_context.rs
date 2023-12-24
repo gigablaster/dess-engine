@@ -25,7 +25,7 @@ use crate::{
 };
 
 use super::{
-    frame::Frame, BufferHandle, BufferSlice, BufferStorage, DescriptorStorage, Device, ImageHandle,
+    frame::Frame, BindGroupStorage, BufferHandle, BufferSlice, BufferStorage, Device, ImageHandle,
     ImageStorage, RasterPipelineStorage,
 };
 
@@ -353,7 +353,7 @@ pub(crate) struct ExecutionContext<'a> {
     pub images: &'a ImageStorage,
     pub buffers: &'a BufferStorage,
     pub pipelines: &'a RasterPipelineStorage,
-    pub descriptors: &'a DescriptorStorage,
+    pub descriptors: &'a BindGroupStorage,
 }
 
 impl<'a> ExecutionContext<'a> {

@@ -23,7 +23,7 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
-use rspirv_reflect::{BindingCount, DescriptorInfo};
+use rspirv_reflect::DescriptorInfo;
 
 use crate::{BackendError, BackendResult, ShaderStage};
 
@@ -38,27 +38,27 @@ type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
 type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
 
 #[derive(Debug, Default)]
-pub(crate) struct DescriptorSetInfo {
+pub(crate) struct BindGroupLayout {
     pub layout: vk::DescriptorSetLayout,
     pub types: HashMap<u32, vk::DescriptorType>,
     pub names: HashMap<String, u32>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DescriptorSetCreateInfo {
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct BindGroupLayoutDesc {
     pub stage: ShaderStage,
     pub expected_count: u32,
     set: HashMap<u32, DescriptorInfo>,
 }
 
-impl std::hash::Hash for DescriptorSetCreateInfo {
+impl std::hash::Hash for BindGroupLayoutDesc {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         self.stage.hash(state);
         self.expected_count.hash(state);
         self.set.iter().for_each(|(index, info)| {
             index.hash(state);
             discriminant(&info.binding_count);
-            if let BindingCount::StaticSized(count) = info.binding_count {
+            if let rspirv_reflect::BindingCount::StaticSized(count) = info.binding_count {
                 count.hash(state);
             }
             info.name.hash(state);
@@ -67,6 +67,7 @@ impl std::hash::Hash for DescriptorSetCreateInfo {
     }
 }
 
+#[derive(Debug, Hash, Clone, PartialEq, Eq)]
 pub enum DescriptorType {
     SampledImage,
     StorageImage,
@@ -77,7 +78,7 @@ pub enum DescriptorType {
     DynamicStorageBuffer,
 }
 
-impl DescriptorSetCreateInfo {
+impl BindGroupLayoutDesc {
     pub fn stage(mut self, stage: ShaderStage) -> Self {
         self.stage = stage;
 
@@ -89,7 +90,14 @@ impl DescriptorSetCreateInfo {
         self
     }
 
-    pub fn descriptor(mut self, index: usize, name: &str, ty: DescriptorType) -> Self {
+    pub fn descriptor(
+        mut self,
+        index: usize,
+        name: &str,
+        ty: DescriptorType,
+        count: usize,
+    ) -> Self {
+        debug_assert!(count > 0);
         let ty = match ty {
             DescriptorType::UniformBuffer => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
             DescriptorType::DynamicUniformBuffer => {
@@ -105,11 +113,16 @@ impl DescriptorSetCreateInfo {
                 rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER
             }
         };
+        let binding_count = if count == 1 {
+            rspirv_reflect::BindingCount::One
+        } else {
+            rspirv_reflect::BindingCount::StaticSized(count)
+        };
         self.set.insert(
             index as u32,
             rspirv_reflect::DescriptorInfo {
                 ty,
-                binding_count: rspirv_reflect::BindingCount::One,
+                binding_count,
                 name: name.to_owned(),
             },
         );
@@ -118,10 +131,10 @@ impl DescriptorSetCreateInfo {
     }
 }
 
-impl DescriptorSetInfo {
+impl BindGroupLayout {
     pub(crate) fn from_desc(
         device: &ash::Device,
-        desc: &DescriptorSetCreateInfo,
+        desc: &BindGroupLayoutDesc,
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> BackendResult<Self> {
         Self::new(
@@ -238,8 +251,8 @@ impl DescriptorSetInfo {
         binding: &DescriptorInfo,
     ) -> vk::DescriptorSetLayoutBinding {
         let descriptor_count = match binding.binding_count {
-            BindingCount::One => 1,
-            BindingCount::StaticSized(size) => size,
+            rspirv_reflect::BindingCount::One => 1,
+            rspirv_reflect::BindingCount::StaticSized(size) => size,
             _ => unimplemented!("{:?}", binding.binding_count),
         };
         vk::DescriptorSetLayoutBinding::builder()
@@ -257,8 +270,8 @@ impl DescriptorSetInfo {
         sampler: &vk::Sampler,
     ) -> vk::DescriptorSetLayoutBinding {
         let descriptor_count = match binding.binding_count {
-            BindingCount::One => 1,
-            BindingCount::StaticSized(size) => size,
+            rspirv_reflect::BindingCount::One => 1,
+            rspirv_reflect::BindingCount::StaticSized(size) => size,
             _ => unimplemented!("{:?}", binding.binding_count),
         };
         let ty = match binding.ty {
@@ -381,7 +394,7 @@ pub const MAX_SHADERS: usize = 2;
 #[derive(Debug)]
 pub struct Program {
     pub(crate) pipeline_layout: vk::PipelineLayout,
-    pub(crate) sets: ArrayVec<DescriptorSetInfo, MAX_SETS>,
+    pub(crate) sets: ArrayVec<BindGroupLayout, MAX_SETS>,
     pub(crate) shaders: ArrayVec<Shader, MAX_SHADERS>,
 }
 
@@ -427,7 +440,7 @@ impl Program {
         stages: vk::ShaderStageFlags,
         shaders: &[Shader],
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
-    ) -> Result<ArrayVec<DescriptorSetInfo, MAX_SETS>, BackendError> {
+    ) -> Result<ArrayVec<BindGroupLayout, MAX_SETS>, BackendError> {
         let sets = shaders
             .iter()
             .map(|shader| shader.descriptor_sets.clone())
@@ -443,7 +456,7 @@ impl Program {
                         .iter()
                         .map(|(a, b)| (*a, b.clone()))
                         .collect::<HashMap<_, _>>();
-                    layouts.push(DescriptorSetInfo::new(
+                    layouts.push(BindGroupLayout::new(
                         device,
                         stages,
                         &set,
@@ -452,7 +465,7 @@ impl Program {
                     )?);
                 }
                 None => {
-                    layouts.push(DescriptorSetInfo::default());
+                    layouts.push(BindGroupLayout::default());
                 }
             }
         }

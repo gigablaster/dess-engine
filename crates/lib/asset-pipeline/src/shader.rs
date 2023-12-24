@@ -43,9 +43,10 @@ fn compile_shader(
     let mut source = String::new();
     chunks.iter().for_each(|x| source += &x.source);
     let profile = match stage {
-        ShaderStage::Vertex => "vs_6_4",
-        ShaderStage::Fragment => "ps_6_4",
-        ShaderStage::Compute => "cs_6_4",
+        _ if stage == ShaderStage::Vertex => "vs_6_4",
+        _ if stage == ShaderStage::Fragment => "ps_6_4",
+        _ if stage == ShaderStage::Compute => "cs_6_4",
+        _ => return Err(Error::ProcessingFailed("Unknown shader type".to_owned())),
     };
     let code = hassle_rs::compile_hlsl(
         name,

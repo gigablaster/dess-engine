@@ -1,7 +1,7 @@
 use dess_assets::{ContentSource, GltfSource};
 use dess_backend::{
     ClearRenderTarget, DrawStream, Format, ImageAspect, ImageLayout, ImageUsage,
-    {DescriptorHandle, ImageBarrier, RenderTarget},
+    {BindGroupHandle, ImageBarrier, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -43,7 +43,7 @@ impl Client for ClearBackbuffer {
                 context.frame.render_area,
                 &[color_attachment],
                 None,
-                [DrawStream::new(DescriptorHandle::invalid())].into_iter(),
+                [DrawStream::new(BindGroupHandle::invalid())].into_iter(),
                 &[ImageBarrier::color_to_attachment(temp.image())],
             );
         }
@@ -56,7 +56,7 @@ impl Client for ClearBackbuffer {
             context.frame.render_area,
             &[color_attachment],
             None,
-            [DrawStream::new(DescriptorHandle::invalid())].into_iter(),
+            [DrawStream::new(BindGroupHandle::invalid())].into_iter(),
             &[],
         );
 

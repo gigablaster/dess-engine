@@ -19,7 +19,7 @@ use bytes::Bytes;
 use dess_assets::AssetRef;
 use dess_backend::{
     BackendResultExt, ImageLayout, MATERIAL_BINDING_SLOT,
-    {DescriptorHandle, ImageHandle, ProgramHandle},
+    {BindGroupHandle, ImageHandle, ProgramHandle},
 };
 use smol_str::SmolStr;
 
@@ -37,7 +37,7 @@ pub struct Material {
     program: ProgramHandle,
     images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
     uniform: Bytes,
-    ds: DescriptorHandle,
+    bind_group: BindGroupHandle,
 }
 
 impl Resource for Material {}
@@ -54,17 +54,18 @@ impl ResourceDependencies for Material {
         for (name, image) in self.images.iter() {
             images.insert(name, ctx.resolve_image(*image)?);
         }
-        ctx.device.with_descriptors(|ctx| {
-            let ds = ctx.from_program(self.program, MATERIAL_BINDING_SLOT)?;
+        self.bind_group = ctx
+            .device
+            .create_bind_group_from_program(self.program, MATERIAL_BINDING_SLOT)?;
+        ctx.device.with_bind_groups(|ctx| {
             for (name, image) in images {
-                ctx.bind_image_by_name(ds, name, *image, ImageLayout::ShaderRead)
+                ctx.bind_image_by_name(self.bind_group, name, *image, ImageLayout::ShaderRead)
                     .ignore_missing()?;
             }
             if !self.uniform.is_empty() {
-                ctx.bind_uniform_by_name(ds, MATERIAL_UNIFORM_NAME, &self.uniform)
+                ctx.bind_uniform_by_name(self.bind_group, MATERIAL_UNIFORM_NAME, &self.uniform)
                     .ignore_missing()?;
             }
-            self.ds = ds;
             Ok(())
         })?;
 
@@ -87,7 +88,7 @@ impl Material {
             program,
             images,
             uniform,
-            ds: DescriptorHandle::default(),
+            bind_group: BindGroupHandle::default(),
         }
     }
 }

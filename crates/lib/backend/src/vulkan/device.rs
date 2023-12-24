@@ -30,15 +30,15 @@ use std::{mem, slice};
 
 use crate::vulkan::frame::MAX_TEMP_MEMORY;
 use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};
-use crate::{BackendError, BackendResult, BufferUsage};
+use crate::{BackendError, BackendResult, BufferUsage, DescriptorType, ShaderStage};
 
 use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
     PhysicalDevice, ToDrop, UniformStorage,
 };
 use super::{
-    load_or_create_pipeline_cache, DescriptorHandle, DescriptorSetCreateInfo, DescriptorSetInfo,
-    DescriptorStorage, FrameContext, Index, Program, RasterPipelineCreateDesc, Staging, Swapchain,
+    load_or_create_pipeline_cache, BindGroupHandle, BindGroupLayout, BindGroupLayoutDesc,
+    BindGroupStorage, FrameContext, Index, Program, RasterPipelineCreateDesc, Staging, Swapchain,
 };
 
 pub type ImageHandle = Handle<vk::Image>;
@@ -145,6 +145,8 @@ impl<'a> Drop for ScopedCommandBufferLabel<'a> {
     }
 }
 
+const BINDLESS_COUNT: usize = 129072;
+
 pub struct Device {
     pub(crate) raw: ash::Device,
     frames: [Mutex<Frame>; 2],
@@ -157,8 +159,8 @@ pub struct Device {
     pub(crate) uniform_storage: Mutex<UniformStorage>,
     pub(crate) program_storage: RwLock<ProgramStorage>,
     pub(crate) current_drop_list: Mutex<DropList>,
-    pub(crate) descriptor_storage: RwLock<DescriptorStorage>,
-    pub(crate) dirty_descriptors: Mutex<HashSet<DescriptorHandle>>,
+    pub(crate) bind_groups_storage: RwLock<BindGroupStorage>,
+    pub(crate) dirty_bind_groups: Mutex<HashSet<BindGroupHandle>>,
     pub(crate) samplers: HashMap<SamplerDesc, vk::Sampler>,
     pub(crate) staging: Mutex<Staging>,
     pub(crate) universal_queue: Mutex<vk::Queue>,
@@ -169,7 +171,7 @@ pub struct Device {
     pub(crate) temp_buffer: vk::Buffer,
     temp_buffer_memory: Option<GpuMemory>,
     temp_buffer_handle: BufferHandle,
-    pub(crate) descriptor_layouts: Mutex<HashMap<DescriptorSetCreateInfo, DescriptorSetInfo>>,
+    pub(crate) descriptor_layouts: Mutex<HashMap<BindGroupLayoutDesc, BindGroupLayout>>,
 }
 
 impl Debug for Device {
@@ -273,7 +275,7 @@ impl Device {
         let allocator_props =
             unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
         let mut memory_allocator = GpuAllocator::new(allocator_config, allocator_props);
-        let descriptor_allocator = DescriptorAllocator::new(0);
+        let descriptor_allocator = DescriptorAllocator::new(1);
 
         let temp_buffer_type =
             BufferUsage::Index | BufferUsage::Vertex | BufferUsage::Uniform | BufferUsage::Storage;
@@ -330,6 +332,27 @@ impl Device {
                 memory: None,
             },
         );
+        let _bindless_desc = BindGroupLayoutDesc::default()
+            .stage(ShaderStage::all())
+            .descriptor(
+                0,
+                "sampled_textures",
+                DescriptorType::SampledImage,
+                BINDLESS_COUNT,
+            )
+            .descriptor(
+                1,
+                "storage_buffers",
+                DescriptorType::StorageBuffer,
+                BINDLESS_COUNT,
+            )
+            .descriptor(
+                2,
+                "storage_images",
+                DescriptorType::StorageImage,
+                BINDLESS_COUNT,
+            );
+        // let bindless_descriptor =
 
         Ok(Arc::new(Self {
             staging: Mutex::new(Staging::new(
@@ -351,8 +374,8 @@ impl Device {
             image_storage: RwLock::default(),
             buffer_storage: RwLock::new(buffer_storage),
             current_drop_list: Mutex::default(),
-            descriptor_storage: RwLock::default(),
-            dirty_descriptors: Mutex::default(),
+            bind_groups_storage: RwLock::default(),
+            dirty_bind_groups: Mutex::default(),
             program_storage: RwLock::default(),
             pipelines: RwLock::default(),
             raw: device,
@@ -503,7 +526,7 @@ impl Device {
                 images: &self.image_storage.read(),
                 buffers: &self.buffer_storage.read(),
                 pipelines: &self.pipelines.read(),
-                descriptors: &self.descriptor_storage.read(),
+                descriptors: &self.bind_groups_storage.read(),
             };
             execution_context.execute(context.passes.into_inner().iter())?;
         }
@@ -734,7 +757,7 @@ impl Drop for Device {
         let mut buffers = self.buffer_storage.write().drain().collect::<Vec<_>>();
         images.iter_mut().for_each(|x| x.1.to_drop(&mut drop_list));
         buffers.iter_mut().for_each(|x| x.1.to_drop(&mut drop_list));
-        self.descriptor_storage
+        self.bind_groups_storage
             .write()
             .drain()
             .filter_map(|(_, x)| x.descriptor)
