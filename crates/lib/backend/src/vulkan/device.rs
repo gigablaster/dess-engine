@@ -573,6 +573,10 @@ impl Device {
         Ok(FrameResult::Rendered)
     }
 
+    pub fn temp_buffer(&self) -> BufferHandle {
+        self.temp_buffer_handle
+    }
+
     pub(crate) fn submit(
         &self,
         cb: &CommandBuffer,

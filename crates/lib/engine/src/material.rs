@@ -18,8 +18,8 @@ use std::{collections::HashMap, fmt::Debug};
 use bytes::Bytes;
 use dess_assets::AssetRef;
 use dess_backend::{
-    BackendResultExt, ImageLayout,
-    {DescriptorHandle, ImageHandle, ProgramHandle, PER_MATERIAL_BINDING_SLOT},
+    BackendResultExt, ImageLayout, MATERIAL_BINDING_SLOT,
+    {DescriptorHandle, ImageHandle, ProgramHandle},
 };
 use smol_str::SmolStr;
 
@@ -55,7 +55,7 @@ impl ResourceDependencies for Material {
             images.insert(name, ctx.resolve_image(*image)?);
         }
         ctx.device.with_descriptors(|ctx| {
-            let ds = ctx.from_program(self.program, PER_MATERIAL_BINDING_SLOT)?;
+            let ds = ctx.from_program(self.program, MATERIAL_BINDING_SLOT)?;
             for (name, image) in images {
                 ctx.bind_image_by_name(ds, name, *image, ImageLayout::ShaderRead)
                     .ignore_missing()?;

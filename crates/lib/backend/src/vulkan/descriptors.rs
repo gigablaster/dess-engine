@@ -101,7 +101,7 @@ impl<'a> UpdateDescriptorContext<'a> {
             .get(program.index())
             .ok_or(BackendError::InvalidHandle)?
             .sets[index];
-        self.new(set)
+        self.create(set)
     }
 
     pub fn from_desc(&mut self, desc: DescriptorSetCreateInfo) -> BackendResult<DescriptorHandle> {
@@ -114,13 +114,13 @@ impl<'a> UpdateDescriptorContext<'a> {
             layouts.insert(desc.clone(), layout_desc);
             layouts.get(&desc).unwrap()
         };
-        Self::new(self, layout)
+        Self::create(self, layout)
     }
 
     /// Created descriptor set from descriptor set info
     ///
     /// Descriptor set info can be extracted from Program as an example.
-    fn new(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, BackendError> {
+    fn create(&mut self, set: &DescriptorSetInfo) -> Result<DescriptorHandle, BackendError> {
         let uniform_buffers = set
             .types
             .iter()
@@ -158,7 +158,7 @@ impl<'a> UpdateDescriptorContext<'a> {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
                     Some(BindingPoint::<vk::Buffer> {
                         binding: *index,
-                        data: Some(self.device.temp_buffer),
+                        data: None,
                     })
                 } else {
                     None
@@ -186,7 +186,7 @@ impl<'a> UpdateDescriptorContext<'a> {
                 if *ty == vk::DescriptorType::STORAGE_BUFFER_DYNAMIC {
                     Some(BindingPoint::<vk::Buffer> {
                         binding: *index,
-                        data: Some(self.device.temp_buffer),
+                        data: None,
                     })
                 } else {
                     None
@@ -445,6 +445,51 @@ impl<'a> UpdateDescriptorContext<'a> {
         Ok(())
     }
 
+    pub fn bind_dynamic_uniform_buffer(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: usize,
+        buffer: BufferHandle,
+    ) -> BackendResult<()> {
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+
+        let raw = self
+            .buffers
+            .get_cold(buffer)
+            .ok_or(BackendError::InvalidHandle)?;
+        debug_assert!(raw.desc.ty.contains(BufferUsage::Uniform));
+        let buffer_bind = desc
+            .dynamic_uniform_bufffers
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = buffer_bind {
+            point.data = Some(raw.raw);
+            self.dirty.insert(handle);
+        }
+
+        Ok(())
+    }
+
+    pub fn bind_dynamic_uniform_buffer_by_name(
+        &mut self,
+        handle: DescriptorHandle,
+        name: &str,
+        buffer: BufferHandle,
+    ) -> BackendResult<()> {
+        let binding = self
+            .storage
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .names
+            .get(name)
+            .copied()
+            .ok_or(BackendError::NotFound)?;
+        self.bind_dynamic_uniform_buffer(handle, binding, buffer)
+    }
+
     pub fn bind_storage_buffer(
         &mut self,
         handle: DescriptorHandle,
@@ -487,6 +532,51 @@ impl<'a> UpdateDescriptorContext<'a> {
             .copied()
             .ok_or(BackendError::NotFound)?;
         self.bind_storage_buffer(handle, binding, buffer)
+    }
+
+    pub fn bind_dynamic_storage_buffer(
+        &mut self,
+        handle: DescriptorHandle,
+        binding: usize,
+        buffer: BufferHandle,
+    ) -> BackendResult<()> {
+        let desc = self
+            .storage
+            .get_cold_mut(handle)
+            .ok_or(BackendError::InvalidHandle)?;
+
+        let raw = self
+            .buffers
+            .get_cold(buffer)
+            .ok_or(BackendError::InvalidHandle)?;
+        debug_assert!(raw.desc.ty.contains(BufferUsage::Storage));
+        let buffer_bind = desc
+            .dynamic_storage_buffers
+            .iter_mut()
+            .find(|point| point.binding == binding as u32);
+        if let Some(point) = buffer_bind {
+            point.data = Some(raw.raw);
+            self.dirty.insert(handle);
+        }
+
+        Ok(())
+    }
+
+    pub fn bind_dynamic_storage_buffer_by_name(
+        &mut self,
+        handle: DescriptorHandle,
+        name: &str,
+        buffer: BufferHandle,
+    ) -> BackendResult<()> {
+        let binding = self
+            .storage
+            .get_cold(handle)
+            .ok_or(BackendError::InvalidHandle)?
+            .names
+            .get(name)
+            .copied()
+            .ok_or(BackendError::NotFound)?;
+        self.bind_dynamic_storage_buffer(handle, binding, buffer)
     }
 }
 

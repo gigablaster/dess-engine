@@ -31,17 +31,8 @@ use super::{Device, Index, ProgramHandle, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
 const MAX_SETS: usize = 4;
-pub const PER_PASS_BINDING_SLOT: usize = 0;
-pub const PER_MATERIAL_BINDING_SLOT: usize = 1;
-pub const PER_OBJECT_BINDING_SLOT: usize = 2;
-pub const PER_DRAW_BINDING_SLOT: usize = 3;
-
-// Slots are
-// 0 - per pass
-// 1 - per material
-// 2 - per object (optional)
-// 3 - dynamic shit
-static DESCRIPTORS_PER_SLOT: [u32; MAX_SETS] = [4, 64, 256, 512];
+pub const DYNAMIC_BINDING_SLOT: usize = 3;
+pub const MATERIAL_BINDING_SLOT: usize = 1;
 
 type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
 type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
@@ -149,10 +140,6 @@ impl DescriptorSetInfo {
         dynamic: bool,
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<Self, BackendError> {
-        let mut uniform_buffers_count = 0;
-        let mut dynamic_uniform_buffers_count = 0;
-        let mut combined_samplers_count = 0;
-        let mut sampled_images_count = 0;
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
         let mut bindings = HashMap::with_capacity(set.len());
         for (index, binding) in set.iter() {
@@ -165,18 +152,12 @@ impl DescriptorSetInfo {
                     let binding = Self::create_buffer_binding(*index, stage, binding, dynamic);
 
                     bindings.insert(*index, binding);
-                    if binding.descriptor_type == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
-                        dynamic_uniform_buffers_count += 1
-                    } else {
-                        uniform_buffers_count += 1;
-                    }
                 }
                 rspirv_reflect::DescriptorType::SAMPLED_IMAGE => {
                     bindings.insert(
                         *index,
                         Self::create_sampled_image_binding(*index, stage, binding),
                     );
-                    sampled_images_count += 1;
                 }
                 rspirv_reflect::DescriptorType::SAMPLER
                 | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
@@ -195,7 +176,6 @@ impl DescriptorSetInfo {
                             samplers[sampler_index],
                         ),
                     );
-                    combined_samplers_count += 1;
                 }
                 _ => unimplemented!("{:?}", binding),
             };
@@ -467,7 +447,7 @@ impl Program {
                         device,
                         stages,
                         &set,
-                        set_index == PER_DRAW_BINDING_SLOT as u32,
+                        set_index == DYNAMIC_BINDING_SLOT as u32,
                         inmuatable_samplers,
                     )?);
                 }

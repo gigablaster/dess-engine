@@ -372,7 +372,7 @@ impl ResourceLoader for Arc<ResourceManager> {
                     .iter()
                     .zip(loaded.iter())
                     .map(|(source, code)| ShaderDesc {
-                        stage: source.stage.into(),
+                        stage: source.stage,
                         entry: "main",
                         code,
                     })
