@@ -21,7 +21,7 @@ use std::{
 
 use bytes::Bytes;
 use siphasher::sip128::Hasher128;
-use speedy::{Context, Readable, Writable};
+use speedy::{Readable, Writable};
 
 use crate::{Asset, AssetLoad, AssetRef, ContentSource};
 
@@ -48,20 +48,20 @@ impl ContentSource for GltfSource {
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Readable, Writable)]
 pub struct StaticMeshVertex {
-    pub position: [i16; 3],
-    pub normal: [i16; 2],
-    pub tangent: [i16; 2],
-    pub uv1: [i16; 2],
-    pub uv2: [i16; 2],
+    pub position: [u16; 3],
+    pub normal: [u16; 2],
+    pub tangent: [u16; 2],
+    pub uv1: [u16; 2],
+    pub uv2: [u16; 2],
 }
 
 impl StaticMeshVertex {
     pub fn new(
-        position: [i16; 3],
-        normal: [i16; 2],
-        tangent: [i16; 2],
-        uv1: [i16; 2],
-        uv2: [i16; 2],
+        position: [u16; 3],
+        normal: [u16; 2],
+        tangent: [u16; 2],
+        uv1: [u16; 2],
+        uv2: [u16; 2],
     ) -> Self {
         Self {
             position,
@@ -99,18 +99,18 @@ pub struct MeshData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Readable, Writable)]
-pub enum BlendMode {
+pub enum MeshBlendMode {
     Opaque,
     AlphaTest(f32),
     AlphaBlend,
 }
 
-impl Eq for BlendMode {}
+impl Eq for MeshBlendMode {}
 
-impl Hash for BlendMode {
+impl Hash for MeshBlendMode {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         core::mem::discriminant(self).hash(state);
-        if let BlendMode::AlphaTest(value) = self {
+        if let MeshBlendMode::AlphaTest(value) = self {
             (((value.clamp(0.0, 1.0)) * 255.0) as u8).hash(state)
         }
     }
@@ -122,13 +122,13 @@ pub const MATERIAL_TYPE_UNLIT: &str = "unlit";
 #[derive(Debug, Clone, PartialEq, Readable, Writable)]
 pub struct MeshMaterial {
     pub ty: String,
-    pub blend: BlendMode,
+    pub blend: MeshBlendMode,
     pub images: HashMap<String, AssetRef>,
     pub values: HashMap<String, f32>,
 }
 
 impl MeshMaterial {
-    pub fn new(ty: &str, blend: BlendMode) -> Self {
+    pub fn new(ty: &str, blend: MeshBlendMode) -> Self {
         Self {
             ty: ty.to_owned(),
             blend,

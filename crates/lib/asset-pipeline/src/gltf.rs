@@ -5,8 +5,8 @@ use std::{
 };
 
 use dess_assets::{
-    get_absolute_asset_path, get_relative_asset_path, AssetRef, BlendMode, Bone, GltfSource,
-    ImageSource, ImageSourceDesc, MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset,
+    get_absolute_asset_path, get_relative_asset_path, AssetRef, Bone, GltfSource, ImageSource,
+    ImageSourceDesc, MeshBlendMode, MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset,
     StaticMeshVertex, SubMesh, MATERIAL_TYPE_PBR, MATERIAL_TYPE_UNLIT,
 };
 use normalize_path::NormalizePath;
@@ -195,13 +195,13 @@ fn process_placeholder(
         .import(Box::new(ImageSource::from_color(color, desc)))
 }
 
-fn process_blend(material: &gltf::Material) -> BlendMode {
+fn process_blend(material: &gltf::Material) -> MeshBlendMode {
     match material.alpha_mode() {
-        gltf::material::AlphaMode::Opaque => BlendMode::Opaque,
+        gltf::material::AlphaMode::Opaque => MeshBlendMode::Opaque,
         gltf::material::AlphaMode::Mask => {
-            BlendMode::AlphaTest(material.alpha_cutoff().unwrap_or(0.0))
+            MeshBlendMode::AlphaTest(material.alpha_cutoff().unwrap_or(0.0))
         }
-        gltf::material::AlphaMode::Blend => BlendMode::AlphaBlend,
+        gltf::material::AlphaMode::Blend => MeshBlendMode::AlphaBlend,
     }
 }
 
