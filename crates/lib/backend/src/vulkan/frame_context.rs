@@ -308,11 +308,7 @@ impl<'a> FrameContext<'a> {
     /// Buffer slive is only valid during current frame, no need to free it in any way
     pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
         let offset = self.frame.temp_allocate(data)?;
-        Ok(BufferSlice::new(
-            self.temp_buffer_handle,
-            offset,
-            mem::size_of_val(data) as u32,
-        ))
+        Ok(BufferSlice::new(self.temp_buffer_handle, offset))
     }
 
     /// Record render pass

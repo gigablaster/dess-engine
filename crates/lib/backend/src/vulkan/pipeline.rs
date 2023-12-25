@@ -159,12 +159,12 @@ impl From<DepthCompareOp> for vk::CompareOp {
 /// Data to create pipeline.
 ///
 /// Contains all data to create new pipeline.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct RasterPipelineCreateDesc {
     /// Associated program
     pub program: ProgramHandle,
     /// Render pass layout
-    pub pass_layout: RenderPassLayout,
+    pub pass_layout: &'static RenderPassLayout<'static>,
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(BlendDesc, BlendDesc)>,
     pub cull: Option<CullMode>,
@@ -179,7 +179,10 @@ pub trait PipelineVertex: Sized {
 }
 
 impl RasterPipelineCreateDesc {
-    pub fn new<T: PipelineVertex>(program: ProgramHandle, pass_layout: RenderPassLayout) -> Self {
+    pub fn new<T: PipelineVertex>(
+        program: ProgramHandle,
+        pass_layout: &'static RenderPassLayout,
+    ) -> Self {
         Self {
             program,
             pass_layout,
@@ -245,8 +248,8 @@ impl RasterPipelineCreateDesc {
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct RenderPassLayout {
-    pub color_attachments: ArrayVec<vk::Format, MAX_COLOR_ATTACHMENTS>,
+pub struct RenderPassLayout<'a> {
+    pub color_attachments: &'a [vk::Format],
     pub depth_attachment: Option<vk::Format>,
 }
 

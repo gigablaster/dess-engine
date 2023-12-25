@@ -35,9 +35,9 @@ const MATERIAL_UNIFORM_NAME: &str = "material";
 #[derive(Debug, Default)]
 pub struct Material {
     program: ProgramHandle,
-    images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
-    uniform: Bytes,
     bind_group: BindGroupHandle,
+    uniform: Bytes,
+    images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
 }
 
 impl Resource for Material {}

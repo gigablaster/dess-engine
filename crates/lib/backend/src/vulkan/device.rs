@@ -55,15 +55,13 @@ pub enum FrameResult {
 pub struct BufferSlice {
     pub handle: BufferHandle,
     pub offset: u32,
-    pub size: u32,
 }
 
 impl BufferSlice {
-    pub fn new(buffer: BufferHandle, offset: u32, size: u32) -> Self {
+    pub fn new(buffer: BufferHandle, offset: u32) -> Self {
         Self {
             handle: buffer,
             offset,
-            size,
         }
     }
 
@@ -75,10 +73,6 @@ impl BufferSlice {
         Self {
             handle: self.handle,
             offset: self.offset + offset,
-            size: self
-                .size
-                .checked_sub(offset)
-                .expect("Buffer part offset must be less than it's size"),
         }
     }
 }

@@ -341,6 +341,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
         handle: BindGroupHandle,
         binding: usize,
         buffer: BufferSlice,
+        size: usize,
     ) -> BackendResult<()> {
         let desc = self
             .storage
@@ -356,7 +357,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
             .iter_mut()
             .find(|point| point.binding == binding as u32);
         if let Some(point) = buffer_bind {
-            point.data = Some((buffer.handle, raw.raw, buffer.offset, buffer.size));
+            point.data = Some((buffer.handle, raw.raw, buffer.offset, size as _));
             self.dirty.insert(handle);
         }
 
@@ -368,6 +369,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
         handle: BindGroupHandle,
         name: &str,
         buffer: BufferSlice,
+        size: usize,
     ) -> BackendResult<()> {
         let binding = self
             .storage
@@ -377,7 +379,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
             .get(name)
             .copied()
             .ok_or(BackendError::NotFound)?;
-        self.bind_storage_buffer(handle, binding, buffer)
+        self.bind_storage_buffer(handle, binding, buffer, size)
     }
 
     pub fn bind_dynamic_storage_buffer(
