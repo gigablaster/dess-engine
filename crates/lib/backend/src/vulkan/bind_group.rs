@@ -88,20 +88,6 @@ pub struct UpdateBindGroupsContext<'a> {
 
 /// Allows client to manipulate descriptor set
 impl<'a> UpdateBindGroupsContext<'a> {
-    /// Mark descriptor set as invalid.
-    ///
-    /// It will be destroyed when current frame finished rendering..
-    pub fn remove(&mut self, handle: BindGroupHandle) {
-        if let Some((_, value)) = self.storage.remove(handle) {
-            value
-                .uniform_buffers
-                .iter()
-                .filter_map(|x| x.data)
-                .for_each(|x| self.retired_uniforms.push(x.0));
-            self.retired_descriptors.push(*value);
-        }
-    }
-
     pub fn bind_storage_image(
         &mut self,
         handle: BindGroupHandle,
@@ -806,5 +792,22 @@ impl Device {
 
         self.dirty_bind_groups.lock().insert(handle);
         Ok(handle)
+    }
+
+    /// Mark descriptor set as invalid.
+    ///
+    /// It will be destroyed when current frame finished rendering..
+    pub fn destroy_bind_group(&self, handle: BindGroupHandle) {
+        if let Some((_, mut value)) = self.bind_groups_storage.write().remove(handle) {
+            let mut drop_list = self.current_drop_list.lock();
+            value
+                .uniform_buffers
+                .iter()
+                .filter_map(|x| x.data)
+                .for_each(|x| drop_list.free_uniform(x.0 as _));
+            if let Some(ds) = value.descriptor.take() {
+                drop_list.free_descriptor_set(ds)
+            }
+        }
     }
 }

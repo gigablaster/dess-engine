@@ -40,7 +40,11 @@ pub struct Material {
     images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
 }
 
-impl Resource for Material {}
+impl Resource for Material {
+    fn dispose(&self, ctx: &ResourceContext) {
+        ctx.device.destroy_bind_group(self.bind_group);
+    }
+}
 
 impl ResourceDependencies for Material {
     fn is_finished(&self, ctx: &ResourceContext) -> bool {

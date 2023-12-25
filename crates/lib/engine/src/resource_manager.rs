@@ -40,7 +40,9 @@ pub trait ResourceDependencies: Send + Sync + Debug + 'static {
     fn resolve(&mut self, ctx: &ResourceContext) -> Result<(), Error>;
 }
 
-pub trait Resource: ResourceDependencies {}
+pub trait Resource: ResourceDependencies {
+    fn dispose(&self, ctx: &ResourceContext);
+}
 
 impl ResourceDependencies for ImageHandle {
     fn is_finished(&self, _ctx: &ResourceContext) -> bool {
@@ -52,7 +54,11 @@ impl ResourceDependencies for ImageHandle {
     }
 }
 
-impl Resource for ImageHandle {}
+impl Resource for ImageHandle {
+    fn dispose(&self, ctx: &ResourceContext) {
+        ctx.device.destroy_image(*self);
+    }
+}
 
 pub struct ResourceContext<'a> {
     pub device: &'a Device,
@@ -402,5 +408,11 @@ impl ResourceLoader for Arc<ResourceManager> {
 
     fn render_device(&self) -> &Device {
         &self.device
+    }
+}
+
+impl Drop for ResourceManager {
+    fn drop(&mut self) {
+        todo!()
     }
 }

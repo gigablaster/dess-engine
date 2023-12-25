@@ -112,6 +112,12 @@ impl StaticMesh {
             materials,
         }
     }
+
+    fn dispose(&self, ctx: &ResourceContext<'_>) {
+        self.submeshes.iter().for_each(|x| {
+            ctx.device.destroy_bind_group(x.object_bind_group);
+        })
+    }
 }
 
 impl ResourceDependencies for StaticMesh {
@@ -198,6 +204,10 @@ impl Model {
             instances: asset.node_to_mesh,
         }
     }
+
+    fn dispose(&self, ctx: &ResourceContext) {
+        self.static_meshes.iter().for_each(|x| x.dispose(ctx));
+    }
 }
 
 /// Representation of single gltf file
@@ -265,7 +275,13 @@ impl ModelCollection {
     }
 }
 
-impl Resource for ModelCollection {}
+impl Resource for ModelCollection {
+    fn dispose(&self, ctx: &ResourceContext) {
+        self.models.iter().for_each(|(_, x)| x.dispose(ctx));
+        ctx.buffers.deallocate(self.vertices);
+        ctx.buffers.deallocate(self.indices);
+    }
+}
 
 #[derive(Debug)]
 pub struct BasicPbrMaterialFactory;
