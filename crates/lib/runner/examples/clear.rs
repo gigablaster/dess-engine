@@ -1,6 +1,6 @@
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
-    ClearRenderTarget, DrawStream, Format, ImageAspect, ImageLayout, ImageUsage,
+    ClearRenderTarget, DepthCompareOp, DrawStream, Format, ImageAspect, ImageLayout, ImageUsage,
     RasterPipelineCreateDesc, RenderPassLayout, {BindGroupHandle, ImageBarrier, RenderTarget},
 };
 use dess_common::GameTime;
@@ -17,7 +17,7 @@ struct ClearBackbuffer {
 
 static PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     color_attachments: &[Format::RGBA8_UNORM],
-    depth_attachment: None,
+    depth_attachment: Some(Format::D24),
 };
 
 impl Client for ClearBackbuffer {
@@ -26,42 +26,30 @@ impl Client for ClearBackbuffer {
     }
 
     fn render(&self, context: RenderContext) -> Result<(), dess_backend::BackendError> {
-        {
-            let temp = context
-                .resource_pool
-                .temp_image(
-                    [
-                        context.frame.render_area.width,
-                        context.frame.render_area.height,
-                    ],
-                    PoolImageDesc {
-                        format: Format::RGBA16_SFLOAT,
-                        aspect: ImageAspect::Color,
-                        usage: ImageUsage::Sampled | ImageUsage::ColorTarget,
-                        resolution: RelativeImageSize::Backbuffer,
-                    },
-                )
-                .unwrap();
-            let color_attachment = RenderTarget::new(temp.view(), ImageLayout::ColorTarget)
-                .store_output()
-                .clear_input(ClearRenderTarget::Color([0.5, 0.5, 0.5, 1.0]));
-            context.frame.execute(
-                context.frame.render_area,
-                &[color_attachment],
-                None,
-                [DrawStream::new(BindGroupHandle::invalid())].into_iter(),
-                &[ImageBarrier::color_to_attachment(temp.image())],
-            );
-        }
-
-        let color_attachment =
-            RenderTarget::new(context.frame.target_view, ImageLayout::ColorTarget)
-                .store_output()
-                .clear_input(ClearRenderTarget::Color([0.125, 0.25, 0.5, 1.0]));
+        let depth = context
+            .resource_pool
+            .temp_image(
+                [
+                    context.frame.render_area.width,
+                    context.frame.render_area.height,
+                ],
+                PoolImageDesc {
+                    format: Format::D24,
+                    aspect: ImageAspect::Depth,
+                    usage: ImageUsage::DepthStencilTarget,
+                    resolution: RelativeImageSize::Backbuffer,
+                },
+            )
+            .unwrap();
+        let color_target = RenderTarget::new(context.frame.target_view, ImageLayout::ColorTarget)
+            .store_output()
+            .clear_input(ClearRenderTarget::Color([0.125, 0.25, 0.5, 1.0]));
+        let depth_target = RenderTarget::new(depth.view(), ImageLayout::DepthStencilTarget)
+            .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
         context.frame.execute(
             context.frame.render_area,
-            &[color_attachment],
-            None,
+            &[color_target],
+            Some(depth_target),
             [DrawStream::new(BindGroupHandle::invalid())].into_iter(),
             &[],
         );
@@ -82,10 +70,12 @@ impl Client for ClearBackbuffer {
 
         context
             .pipeline_cache
-            .register_raster_pipeline(RasterPipelineCreateDesc::new::<BasicVertex>(
-                program,
-                &PASS_LAYOUT,
-            ))
+            .register_raster_pipeline(
+                RasterPipelineCreateDesc::new::<BasicVertex>(program, &PASS_LAYOUT)
+                    .depth_test(DepthCompareOp::LessOrEqual)
+                    .cull(dess_backend::CullMode::Back)
+                    .depth_write(),
+            )
             .unwrap();
         self.model = context
             .resource_manager

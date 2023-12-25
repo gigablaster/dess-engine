@@ -242,6 +242,18 @@ impl RasterPipelineCreateDesc {
         ));
         self
     }
+
+    pub fn depth_write(mut self) -> Self {
+        self.depth_write = true;
+
+        self
+    }
+
+    pub fn depth_test(mut self, value: DepthCompareOp) -> Self {
+        self.depth_test = Some(value);
+
+        self
+    }
 }
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
@@ -411,7 +423,7 @@ impl Device {
                 .read()
                 .enumerate()
                 .for_each(|(handle, (pipeline, _), desc)| {
-                    if *pipeline != vk::Pipeline::null() {
+                    if *pipeline == vk::Pipeline::null() {
                         let program = programs
                             .get(desc.program.index())
                             .ok_or(BackendError::InvalidHandle)

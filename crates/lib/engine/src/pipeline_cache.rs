@@ -13,44 +13,39 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, mem};
 
 use dess_backend::{Device, RasterPipelineCreateDesc, RasterPipelineHandle};
 use parking_lot::Mutex;
 
 use crate::Error;
 
-pub struct PipelineCacheBuilder<'a> {
+pub struct PipelineCache<'a> {
     device: &'a Device,
-    raster_pipelines: Mutex<HashMap<RasterPipelineCreateDesc, RasterPipelineHandle>>,
-}
-pub struct PipelineCache {
+    raster_pipelines_builder: Mutex<HashMap<RasterPipelineCreateDesc, RasterPipelineHandle>>,
     raster_pipelines: HashMap<RasterPipelineCreateDesc, RasterPipelineHandle>,
 }
 
-impl<'a> PipelineCacheBuilder<'a> {
+impl<'a> PipelineCache<'a> {
     pub fn new(device: &'a Device) -> Self {
         Self {
             device,
-            raster_pipelines: Mutex::default(),
+            raster_pipelines_builder: Mutex::default(),
+            raster_pipelines: HashMap::default(),
         }
     }
 
     pub fn register_raster_pipeline(&self, desc: RasterPipelineCreateDesc) -> Result<(), Error> {
-        self.raster_pipelines
+        self.raster_pipelines_builder
             .lock()
             .insert(desc, self.device.register_raster_pipeline(desc)?);
         Ok(())
     }
 
-    pub fn build(self) -> PipelineCache {
-        PipelineCache {
-            raster_pipelines: self.raster_pipelines.into_inner(),
-        }
+    pub fn sync(&mut self) {
+        self.raster_pipelines = mem::take(&mut self.raster_pipelines_builder.lock());
     }
-}
 
-impl PipelineCache {
     pub fn get_raster_pipeline(
         &self,
         desc: &RasterPipelineCreateDesc,

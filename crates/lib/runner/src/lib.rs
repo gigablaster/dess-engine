@@ -5,9 +5,7 @@ use dess_common::GameTime;
 
 mod runner;
 
-use dess_engine::{
-    BufferPool, PipelineCache, PipelineCacheBuilder, ResourceManager, TemporaryImagePool,
-};
+use dess_engine::{BufferPool, PipelineCache, ResourceManager, TemporaryImagePool};
 pub use runner::*;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -20,7 +18,7 @@ pub struct RenderContext<'a> {
     pub frame: &'a FrameContext<'a>,
     pub resource_pool: &'a TemporaryImagePool<'a>,
     pub buffer_pool: &'a BufferPool,
-    pub pipeline_cache: &'a PipelineCache,
+    pub pipeline_cache: &'a PipelineCache<'a>,
 }
 
 pub struct UpdateContext {
@@ -29,7 +27,7 @@ pub struct UpdateContext {
 
 pub struct InitContext<'a> {
     pub resource_manager: Arc<ResourceManager>,
-    pub pipeline_cache: &'a PipelineCacheBuilder<'a>,
+    pub pipeline_cache: &'a PipelineCache<'a>,
 }
 
 pub trait Client {

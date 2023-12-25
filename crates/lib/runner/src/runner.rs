@@ -6,7 +6,7 @@ use dess_backend::{
     Surface, Swapchain,
 };
 use dess_common::TimeFilter;
-use dess_engine::{BufferPool, PipelineCacheBuilder, ResourceManager, TemporaryImagePool};
+use dess_engine::{BufferPool, PipelineCache, ResourceManager, TemporaryImagePool};
 use log::info;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
@@ -70,7 +70,7 @@ impl<T: Client> Runner<T> {
         let resource_pool = TemporaryImagePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
         let resource_manager = ResourceManager::new(&device, &buffer_pool);
-        let pipeline_cache_builder = PipelineCacheBuilder::new(&device);
+        let mut pipeline_cache = PipelineCache::new(&device);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
@@ -82,13 +82,12 @@ impl<T: Client> Runner<T> {
         {
             self.client.init(InitContext {
                 resource_manager: resource_manager.clone(),
-                pipeline_cache: &pipeline_cache_builder,
+                pipeline_cache: &pipeline_cache,
             });
         }
         info!("Main loop enter");
         let mut last_timestamp = Instant::now();
         let mut alt_pressed = false;
-        let pipeline_cache = pipeline_cache_builder.build();
         event_loop
             .run(|event, elwt| {
                 elwt.set_control_flow(winit::event_loop::ControlFlow::Poll);
@@ -112,6 +111,7 @@ impl<T: Client> Runner<T> {
                                     Some(Swapchain::new(&device, &surface, resolution).unwrap());
                             }
                             if let Some(current_swapchain) = &swapchain {
+                                pipeline_cache.sync();
                                 if let FrameResult::NeedRecreate = device
                                     .frame(current_swapchain, |context| {
                                         let context = RenderContext {
