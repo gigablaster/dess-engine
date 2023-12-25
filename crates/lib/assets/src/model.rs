@@ -46,40 +46,13 @@ impl ContentSource for GltfSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Default, Readable, Writable)]
 pub struct StaticMeshVertex {
     pub position: [i16; 3],
-    _pad: i16,
     pub normal: [i16; 2],
     pub tangent: [i16; 2],
     pub uv1: [i16; 2],
     pub uv2: [i16; 2],
-}
-
-impl<'a, C: Context> Readable<'a, C> for StaticMeshVertex {
-    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
-        Ok(Self {
-            position: reader.read_value::<[i16; 3]>()?,
-            _pad: 0,
-            normal: reader.read_value::<[i16; 2]>()?,
-            tangent: reader.read_value::<[i16; 2]>()?,
-            uv1: reader.read_value::<[i16; 2]>()?,
-            uv2: reader.read_value::<[i16; 2]>()?,
-        })
-    }
-}
-
-impl<C: Context> Writable<C> for StaticMeshVertex {
-    fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
-        writer.write_value(&self.position)?;
-        writer.write_value(&self.normal)?;
-        writer.write_value(&self.tangent)?;
-        writer.write_value(&self.uv1)?;
-        writer.write_value(&self.uv2)?;
-
-        Ok(())
-    }
 }
 
 impl StaticMeshVertex {
@@ -92,7 +65,6 @@ impl StaticMeshVertex {
     ) -> Self {
         Self {
             position,
-            _pad: 0,
             normal,
             tangent,
             uv1,
