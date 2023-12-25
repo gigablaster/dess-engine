@@ -114,7 +114,6 @@ pub struct InputVertexStreamDesc {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum CullMode {
-    None,
     Front,
     Back,
     FrontAndBack,
@@ -123,7 +122,6 @@ pub enum CullMode {
 impl From<CullMode> for vk::CullModeFlags {
     fn from(value: CullMode) -> Self {
         match value {
-            CullMode::None => vk::CullModeFlags::NONE,
             CullMode::Front => vk::CullModeFlags::FRONT,
             CullMode::Back => vk::CullModeFlags::BACK,
             CullMode::FrontAndBack => vk::CullModeFlags::FRONT_AND_BACK,
@@ -169,7 +167,7 @@ pub struct RasterPipelineCreateDesc {
     pub pass_layout: RenderPassLayout,
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(BlendDesc, BlendDesc)>,
-    pub cull: CullMode,
+    pub cull: Option<CullMode>,
     pub depth_test: Option<DepthCompareOp>,
     pub depth_write: bool,
     /// Vertex streams layout
@@ -186,7 +184,7 @@ impl RasterPipelineCreateDesc {
             program,
             pass_layout,
             blend: None,
-            cull: CullMode::None,
+            cull: None,
             depth_test: None,
             depth_write: false,
             streams: T::vertex_streams(),
@@ -200,7 +198,7 @@ impl RasterPipelineCreateDesc {
     }
 
     pub fn cull(mut self, mode: CullMode) -> Self {
-        self.cull = mode;
+        self.cull = Some(mode);
 
         self
     }
@@ -322,7 +320,11 @@ impl Device {
             .depth_bias_slope_factor(0.0);
 
         let rasterizer_state = rasterizer_state
-            .cull_mode(desc.cull.into())
+            .cull_mode(
+                desc.cull
+                    .map(|x| x.into())
+                    .unwrap_or(vk::CullModeFlags::NONE),
+            )
             .front_face(vk::FrontFace::CLOCKWISE);
 
         let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
@@ -339,7 +341,7 @@ impl Device {
 
         if let Some(depth_compare) = desc.depth_test {
             depthstencil_state = depthstencil_state
-                .depth_write_enable(true)
+                .depth_test_enable(true)
                 .depth_compare_op(depth_compare.into());
         }
 
