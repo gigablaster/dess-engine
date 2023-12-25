@@ -15,6 +15,7 @@
 
 use arrayvec::ArrayVec;
 use ash::{extensions::khr, vk};
+use bevy_tasks::block_on;
 use dess_common::{Handle, HotColdPool, SentinelPoolStrategy};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
@@ -30,7 +31,7 @@ use std::{mem, slice};
 
 use crate::vulkan::frame::MAX_TEMP_MEMORY;
 use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};
-use crate::{BackendError, BackendResult, BindType, BufferUsage, ShaderStage};
+use crate::{BackendError, BackendResult, BufferUsage};
 
 use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
@@ -411,8 +412,12 @@ impl Device {
         swapchain: &Swapchain,
         frame_fn: F,
     ) -> BackendResult<FrameResult> {
-        let current_cpu_frame = self.current_cpu_frame.load(Ordering::Acquire);
         puffin::profile_function!();
+        {
+            puffin::profile_scope!("Compile pipelines");
+            block_on(self.compile_raster_pipelines());
+        }
+        let current_cpu_frame = self.current_cpu_frame.load(Ordering::Acquire);
         let mut frame = self.frames[current_cpu_frame].lock();
         unsafe {
             self.raw.wait_for_fences(

@@ -15,7 +15,9 @@
 
 mod material;
 mod model;
+mod pipeline_cache;
 mod pool;
+pub mod render;
 mod resource_manager;
 
 use std::{
@@ -32,6 +34,7 @@ use log::debug;
 pub use material::*;
 use memmap2::Mmap;
 pub use model::*;
+pub use pipeline_cache::*;
 pub use pool::*;
 pub use resource_manager::*;
 

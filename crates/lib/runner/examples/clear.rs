@@ -1,18 +1,24 @@
-use dess_assets::{ContentSource, GltfSource};
+use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     ClearRenderTarget, DrawStream, Format, ImageAspect, ImageLayout, ImageUsage,
-    {BindGroupHandle, ImageBarrier, RenderTarget},
+    RasterPipelineCreateDesc, RenderPassLayout, {BindGroupHandle, ImageBarrier, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
-    ModelCollection, PoolImageDesc, RelativeImageSize, ResourceHandle, ResourceLoader,
+    render::BasicVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceHandle,
+    ResourceLoader,
 };
-use dess_runner::{Client, RenderContext, Runner, UpdateContext};
+use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
 
 #[derive(Default)]
 struct ClearBackbuffer {
     model: ResourceHandle<ModelCollection>,
 }
+
+static PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color_attachments: &[Format::RGBA8_UNORM],
+    depth_attachment: None,
+};
 
 impl Client for ClearBackbuffer {
     fn tick(&mut self, _context: UpdateContext, _dt: GameTime) -> dess_runner::ClientState {
@@ -65,7 +71,22 @@ impl Client for ClearBackbuffer {
 
     fn hidden(&mut self, _value: bool) {}
 
-    fn init(&mut self, context: UpdateContext) {
+    fn init(&mut self, context: InitContext) {
+        let program = context
+            .resource_manager
+            .get_or_load_program(&[
+                ShaderSource::vertex("shaders/unlit_vs.hlsl"),
+                ShaderSource::fragment("shaders/unlit_ps.hlsl"),
+            ])
+            .unwrap();
+
+        context
+            .pipeline_cache
+            .register_raster_pipeline(RasterPipelineCreateDesc::new::<BasicVertex>(
+                program,
+                &PASS_LAYOUT,
+            ))
+            .unwrap();
         self.model = context
             .resource_manager
             .request_model(GltfSource::new("models/Avocado/Avocado.gltf").get_ref());

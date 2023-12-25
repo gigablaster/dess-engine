@@ -19,7 +19,8 @@ use arrayvec::ArrayVec;
 use bevy_tasks::{block_on, IoTaskPool, Task};
 use bytes::Bytes;
 use dess_assets::{
-    AssetRef, ContentSource, ImageAsset, ModelCollectionAsset, ShaderAsset, ShaderSource,
+    AssetRef, ContentSource, ImageAsset, MeshMaterial, ModelCollectionAsset, ShaderAsset,
+    ShaderSource,
 };
 use dess_backend::{
     Device, ImageCreateDesc, ImageHandle, ImageSubresourceData, ProgramHandle, ShaderDesc,
@@ -30,10 +31,7 @@ use log::{debug, error};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use siphasher::sip128::Hasher128;
 
-use crate::{
-    load_cached_asset, BasicPbrMaterialFactory, BasicUnlitMaterialFactory, BufferPool, Error,
-    Material, MaterialFactoryCollection, ModelCollection,
-};
+use crate::{load_cached_asset, BufferPool, Error, Material, ModelCollection};
 
 pub trait ResourceDependencies: Send + Sync + Debug + 'static {
     fn is_finished(&self, ctx: &ResourceContext) -> bool;
@@ -94,12 +92,7 @@ impl<'a> ResourceContext<'a> {
 pub trait ResourceLoader {
     fn render_device(&self) -> &Device;
     fn request_image(&self, asset: AssetRef) -> ResourceHandle<ImageHandle>;
-    fn request_material(
-        &self,
-        program: ProgramHandle,
-        images: &[(String, AssetRef)],
-        uniform: Bytes,
-    ) -> ResourceHandle<Material>;
+    fn request_material(&self, mesh_material: MeshMaterial) -> ResourceHandle<Material>;
     fn request_model(&self, asset: AssetRef) -> ResourceHandle<ModelCollection>;
     fn get_or_load_program(&self, shaders: &[ShaderSource]) -> Result<ProgramHandle, Error>;
 }
@@ -246,7 +239,6 @@ type ProgramSource = ArrayVec<ShaderSource, MAX_SHADERS>;
 pub struct ResourceManager {
     device: Arc<Device>,
     buffers: Arc<BufferPool>,
-    material_factory: Arc<MaterialFactoryCollection>,
     shaders: RwLock<HashMap<ShaderSource, Bytes>>,
     programs: RwLock<HashMap<ProgramSource, ProgramHandle>>,
     images: SingleTypeResourceCache<ImageHandle>,
@@ -256,9 +248,6 @@ pub struct ResourceManager {
 
 impl ResourceManager {
     pub fn new(device: &Arc<Device>, buffers: &Arc<BufferPool>) -> Arc<Self> {
-        let mut material_factory = MaterialFactoryCollection::default();
-        material_factory.register(Box::new(BasicUnlitMaterialFactory));
-        material_factory.register(Box::new(BasicPbrMaterialFactory));
         Arc::new(Self {
             buffers: buffers.clone(),
             device: device.clone(),
@@ -267,7 +256,6 @@ impl ResourceManager {
             images: SingleTypeResourceCache::default(),
             materials: SingleTypeResourceCache::default(),
             models: SingleTypeResourceCache::default(),
-            material_factory: Arc::new(material_factory),
         })
     }
 
@@ -322,24 +310,20 @@ impl ResourceManager {
 
     async fn load_material(
         loader: Arc<ResourceManager>,
-        program: ProgramHandle,
-        images: Vec<(String, AssetRef)>,
-        uniform: Bytes,
+        mesh_material: MeshMaterial,
     ) -> Result<Arc<Material>, Error> {
-        Ok(Arc::new(Material::new(&loader, program, &images, uniform)))
+        Ok(Arc::new(Material::new(&loader, &mesh_material)))
     }
 
     async fn load_model(
         loader: Arc<ResourceManager>,
         asset: AssetRef,
-        material_factory: Arc<MaterialFactoryCollection>,
     ) -> Result<Arc<ModelCollection>, Error> {
         let asset: ModelCollectionAsset = load_cached_asset(asset)?;
         Ok(Arc::new(ModelCollection::new(
             &loader,
             asset,
             &loader.buffers,
-            material_factory.as_ref(),
         )?))
     }
 }
@@ -352,28 +336,19 @@ impl ResourceLoader for Arc<ResourceManager> {
         )
     }
 
-    fn request_material(
-        &self,
-        program: ProgramHandle,
-        images: &[(String, AssetRef)],
-        uniform: Bytes,
-    ) -> ResourceHandle<Material> {
+    fn request_material(&self, mesh_material: MeshMaterial) -> ResourceHandle<Material> {
         let mut hasher = siphasher::sip128::SipHasher::default();
-        program.hash(&mut hasher);
-        images.hash(&mut hasher);
-        uniform.hash(&mut hasher);
+        mesh_material.hash(&mut hasher);
         let asset = hasher.finish128().as_u128().into();
         self.materials.request(
             asset,
-            ResourceManager::load_material(self.clone(), program, images.to_vec(), uniform),
+            ResourceManager::load_material(self.clone(), mesh_material),
         )
     }
 
     fn request_model(&self, asset: AssetRef) -> ResourceHandle<ModelCollection> {
-        self.models.request(
-            asset,
-            ResourceManager::load_model(self.clone(), asset, self.material_factory.clone()),
-        )
+        self.models
+            .request(asset, ResourceManager::load_model(self.clone(), asset))
     }
 
     fn get_or_load_program(&self, shaders: &[ShaderSource]) -> Result<ProgramHandle, Error> {
@@ -408,11 +383,5 @@ impl ResourceLoader for Arc<ResourceManager> {
 
     fn render_device(&self) -> &Device {
         &self.device
-    }
-}
-
-impl Drop for ResourceManager {
-    fn drop(&mut self) {
-        todo!()
     }
 }

@@ -14,10 +14,7 @@ use uuid::Uuid;
 
 use crate::{BackendError, BackendResult, Format};
 
-use super::{
-    Device, PhysicalDevice, ProgramHandle, RasterPipelineHandle, Shader, MAX_COLOR_ATTACHMENTS,
-    MAX_SHADERS,
-};
+use super::{Device, PhysicalDevice, ProgramHandle, RasterPipelineHandle, Shader, MAX_SHADERS};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum BlendFactor {
@@ -249,8 +246,8 @@ impl RasterPipelineCreateDesc {
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct RenderPassLayout<'a> {
-    pub color_attachments: &'a [vk::Format],
-    pub depth_attachment: Option<vk::Format>,
+    pub color_attachments: &'a [Format],
+    pub depth_attachment: Option<Format>,
 }
 
 impl Device {
@@ -369,10 +366,17 @@ impl Device {
             .logic_op_enable(false)
             .build();
 
-        let mut rendering_info = vk::PipelineRenderingCreateInfo::builder()
-            .color_attachment_formats(&desc.pass_layout.color_attachments);
+        let color_attachments = desc
+            .pass_layout
+            .color_attachments
+            .iter()
+            .copied()
+            .map(|x| x.into())
+            .collect::<Vec<_>>();
+        let mut rendering_info =
+            vk::PipelineRenderingCreateInfo::builder().color_attachment_formats(&color_attachments);
         if let Some(depth) = desc.pass_layout.depth_attachment {
-            rendering_info = rendering_info.depth_attachment_format(depth)
+            rendering_info = rendering_info.depth_attachment_format(depth.into())
         }
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
@@ -421,7 +425,7 @@ impl Device {
                             handle,
                             shaders,
                             program.pipeline_layout,
-                            desc.clone(),
+                            *desc,
                         ));
                     }
                 })

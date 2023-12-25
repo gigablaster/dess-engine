@@ -15,11 +15,9 @@
 
 use std::{collections::HashMap, fmt::Debug};
 
-use bytes::Bytes;
-use dess_assets::AssetRef;
+use dess_assets::MeshMaterial;
 use dess_backend::{
-    BackendResultExt, ImageLayout, MATERIAL_BINDING_SLOT,
-    {BindGroupHandle, ImageHandle, ProgramHandle},
+    BackendError, ImageLayout, UpdateBindGroupsContext, {BindGroupHandle, ImageHandle},
 };
 use smol_str::SmolStr;
 
@@ -27,23 +25,19 @@ use crate::{
     Error, Resource, ResourceContext, ResourceDependencies, ResourceHandle, ResourceLoader,
 };
 
-const MATERIAL_UNIFORM_NAME: &str = "material";
 /// Material contains effect and a per-material descriptor set
 /// for every effect technique.
 ///
 /// Pipelines aren't created at this stage, they belong to render pass.
 #[derive(Debug, Default)]
 pub struct Material {
-    program: ProgramHandle,
-    bind_group: BindGroupHandle,
-    uniform: Bytes,
     images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
+    resolved_images: HashMap<SmolStr, ImageHandle>,
+    parameters: HashMap<SmolStr, f32>,
 }
 
 impl Resource for Material {
-    fn dispose(&self, ctx: &ResourceContext) {
-        ctx.device.destroy_bind_group(self.bind_group);
-    }
+    fn dispose(&self, _ctx: &ResourceContext) {}
 }
 
 impl ResourceDependencies for Material {
@@ -54,49 +48,46 @@ impl ResourceDependencies for Material {
     }
 
     fn resolve(&mut self, ctx: &ResourceContext) -> Result<(), Error> {
-        let mut images = HashMap::new();
+        self.images.clear();
         for (name, image) in self.images.iter() {
-            images.insert(name, ctx.resolve_image(*image)?);
+            self.resolved_images
+                .insert(name.clone(), *ctx.resolve_image(*image)?);
         }
-        self.bind_group = ctx
-            .device
-            .create_bind_group_from_program(self.program, MATERIAL_BINDING_SLOT)?;
-        ctx.device.with_bind_groups(|ctx| {
-            for (name, image) in images {
-                ctx.bind_image_by_name(self.bind_group, name, *image, ImageLayout::ShaderRead)
-                    .ignore_missing()?;
-            }
-            if !self.uniform.is_empty() {
-                ctx.bind_uniform_by_name(self.bind_group, MATERIAL_UNIFORM_NAME, &self.uniform)
-                    .ignore_missing()?;
-            }
-            Ok(())
-        })?;
-
         Ok(())
     }
 }
 
 impl Material {
-    pub fn new<T: ResourceLoader>(
-        loader: &T,
-        program: ProgramHandle,
-        images: &[(String, AssetRef)],
-        uniform: Bytes,
-    ) -> Self {
-        let images = images
+    pub fn new<T: ResourceLoader>(loader: &T, mesh_material: &MeshMaterial) -> Self {
+        let images = mesh_material
+            .images
             .iter()
             .map(|(name, asset)| (name.into(), loader.request_image(*asset)))
             .collect::<HashMap<_, _>>();
         Self {
-            program,
             images,
-            uniform,
-            bind_group: BindGroupHandle::default(),
+            resolved_images: HashMap::default(),
+            parameters: mesh_material
+                .values
+                .iter()
+                .map(|(name, value)| (name.into(), *value))
+                .collect(),
         }
     }
 
-    pub fn bind_group(&self) -> BindGroupHandle {
-        self.bind_group
+    pub fn bind_images(
+        &self,
+        handle: BindGroupHandle,
+        ctx: &mut UpdateBindGroupsContext,
+    ) -> Result<(), BackendError> {
+        for (name, image) in &self.resolved_images {
+            ctx.bind_image_by_name(handle, name, *image, ImageLayout::ShaderRead)?;
+        }
+
+        Ok(())
+    }
+
+    pub fn paramters(&self) -> &HashMap<SmolStr, f32> {
+        &self.parameters
     }
 }

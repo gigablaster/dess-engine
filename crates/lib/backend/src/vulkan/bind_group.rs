@@ -659,12 +659,12 @@ impl Device {
         desc: &BindGroupLayoutDesc,
     ) -> BackendResult<BindGroupHandle> {
         let mut layouts = self.descriptor_layouts.lock();
-        let layout = if let Some(desc) = layouts.get(&desc) {
+        let layout = if let Some(desc) = layouts.get(desc) {
             desc
         } else {
-            let layout_desc = BindGroupLayout::from_desc(&self.raw, &desc, &self.samplers)?;
+            let layout_desc = BindGroupLayout::from_desc(&self.raw, desc, &self.samplers)?;
             layouts.insert(desc.clone(), layout_desc);
-            layouts.get(&desc).unwrap()
+            layouts.get(desc).unwrap()
         };
         self.create_bind_group(layout)
     }

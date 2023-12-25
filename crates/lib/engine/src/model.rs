@@ -13,13 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Debug, slice, sync::Arc};
+use std::{collections::HashMap, sync::Arc};
 
-use bytes::{BufMut, Bytes, BytesMut};
-use dess_assets::{MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset, ShaderSource};
+use dess_assets::{MeshData, ModelAsset, ModelCollectionAsset};
 use dess_backend::{BindGroupHandle, BindGroupLayoutDesc, BindType, BufferSlice, Device};
 
-use dess_common::any_as_u8_slice;
 use smol_str::SmolStr;
 
 use crate::{
@@ -91,10 +89,10 @@ impl StaticMesh {
             .collect::<Vec<_>>();
         device
             .with_bind_groups(|ctx| {
-                for i in 0..asset.submeshes.len() {
+                for (i, submesh) in asset.submeshes.iter().enumerate() {
                     let uniform = ObjectScaleUniform {
-                        position_range: asset.submeshes[i].position_range,
-                        uv_ranges: asset.submeshes[i].uv_ranges,
+                        position_range: submesh.position_range,
+                        uv_ranges: submesh.uv_ranges,
                         _pad: [0.0; 2],
                     };
                     ctx.bind_uniform(submeshes[i].object_bind_group, 0, &uniform)?;
@@ -234,27 +232,18 @@ impl ResourceDependencies for ModelCollection {
     }
 }
 
-pub trait MeshMaterialFactory: Debug + Send + Sync {
-    fn create_material(
-        &self,
-        loader: &dyn ResourceLoader,
-        material: &MeshMaterial,
-    ) -> Option<ResourceHandle<Material>>;
-}
-
 impl ModelCollection {
-    pub fn new<T: ResourceLoader, F: MeshMaterialFactory>(
+    pub fn new<T: ResourceLoader>(
         loader: &T,
         asset: ModelCollectionAsset,
         buffers: &BufferPool,
-        material_factory: &F,
     ) -> Result<Self, Error> {
         let vertices = buffers.allocate(&asset.vertices)?;
         let indices = buffers.allocate(&asset.indices)?;
         let materials = asset
             .materials
-            .iter()
-            .map(|material| material_factory.create_material(loader, material).unwrap())
+            .into_iter()
+            .map(|material| loader.request_material(material))
             .collect::<Vec<_>>();
         let models = asset
             .models
@@ -280,89 +269,5 @@ impl Resource for ModelCollection {
         self.models.iter().for_each(|(_, x)| x.dispose(ctx));
         ctx.buffers.deallocate(self.vertices);
         ctx.buffers.deallocate(self.indices);
-    }
-}
-
-#[derive(Debug)]
-pub struct BasicPbrMaterialFactory;
-
-#[derive(Debug)]
-pub struct BasicUnlitMaterialFactory;
-
-#[derive(Debug, Default)]
-pub struct MaterialFactoryCollection {
-    factories: Vec<Box<dyn MeshMaterialFactory>>,
-}
-
-impl MeshMaterialFactory for MaterialFactoryCollection {
-    fn create_material(
-        &self,
-        loader: &dyn ResourceLoader,
-        material: &MeshMaterial,
-    ) -> Option<ResourceHandle<Material>> {
-        self.factories
-            .iter()
-            .find_map(|factory| factory.create_material(loader, material))
-    }
-}
-
-impl MaterialFactoryCollection {
-    pub fn register(&mut self, factory: Box<dyn MeshMaterialFactory>) {
-        self.factories.insert(0, factory);
-    }
-}
-
-impl MeshMaterialFactory for BasicPbrMaterialFactory {
-    fn create_material(
-        &self,
-        loader: &dyn ResourceLoader,
-        material: &MeshMaterial,
-    ) -> Option<ResourceHandle<Material>> {
-        if material.ty == "pbr" {
-            if let Ok(program) = loader.get_or_load_program(&[
-                ShaderSource::vertex("shaders/pbr_vs.hlsl"),
-                ShaderSource::fragment("shaders/pbr_ps.hlsl"),
-            ]) {
-                let images = material
-                    .images
-                    .iter()
-                    .map(|(x, y)| (x.clone(), *y))
-                    .collect::<Vec<_>>();
-                let mut uniform = BytesMut::new();
-                uniform.put_f32(
-                    material
-                        .values
-                        .get("emissive_power")
-                        .copied()
-                        .unwrap_or(0.0),
-                );
-                uniform.put_f32(0.0);
-                uniform.put_f32(0.0);
-                uniform.put_f32(0.0);
-                return Some(loader.request_material(program, &images, uniform.into()));
-            }
-        }
-        None
-    }
-}
-
-impl MeshMaterialFactory for BasicUnlitMaterialFactory {
-    fn create_material(
-        &self,
-        loader: &dyn ResourceLoader,
-        material: &MeshMaterial,
-    ) -> Option<ResourceHandle<Material>> {
-        if let Ok(program) = loader.get_or_load_program(&[
-            ShaderSource::vertex("shaders/unlit_vs.hlsl"),
-            ShaderSource::fragment("shaders/unlit_ps.hlsl"),
-        ]) {
-            let images = material
-                .images
-                .iter()
-                .map(|(x, y)| (x.clone(), *y))
-                .collect::<Vec<_>>();
-            return Some(loader.request_material(program, &images, Bytes::default()));
-        }
-        None
     }
 }

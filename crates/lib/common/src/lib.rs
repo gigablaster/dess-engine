@@ -57,6 +57,11 @@ impl Align<usize> for usize {
     }
 }
 
+#[allow(clippy::missing_safety_doc)]
+pub unsafe fn any_as_u8_slice<T: Sized + Copy>(p: &T) -> &[u8] {
+    ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
+}
+
 #[cfg(test)]
 mod test {
     use crate::Align;
@@ -69,8 +74,4 @@ mod test {
         assert_eq!(128, 100u32.align(64));
         assert_eq!(128, 128u32.align(64));
     }
-}
-
-pub unsafe fn any_as_u8_slice<T: Sized + Copy>(p: &T) -> &[u8] {
-    ::core::slice::from_raw_parts((p as *const T) as *const u8, ::core::mem::size_of::<T>())
 }

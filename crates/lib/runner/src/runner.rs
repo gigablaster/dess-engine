@@ -6,7 +6,7 @@ use dess_backend::{
     Surface, Swapchain,
 };
 use dess_common::TimeFilter;
-use dess_engine::{BufferPool, ResourceManager, TemporaryImagePool};
+use dess_engine::{BufferPool, PipelineCacheBuilder, ResourceManager, TemporaryImagePool};
 use log::info;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
@@ -17,7 +17,7 @@ use winit::{
     window::{Fullscreen, WindowBuilder, WindowButtons},
 };
 
-use crate::{Client, ClientState, RenderContext};
+use crate::{Client, ClientState, InitContext, RenderContext};
 
 pub struct Runner<T: Client> {
     client: T,
@@ -70,6 +70,7 @@ impl<T: Client> Runner<T> {
         let resource_pool = TemporaryImagePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
         let resource_manager = ResourceManager::new(&device, &buffer_pool);
+        let pipeline_cache_builder = PipelineCacheBuilder::new(&device);
         let mut swapchain = None;
         let mut skip_draw = false;
         let mut paused = false;
@@ -78,12 +79,16 @@ impl<T: Client> Runner<T> {
         AsyncComputeTaskPool::get_or_init(TaskPool::default);
         ComputeTaskPool::get_or_init(TaskPool::default);
         info!("Init game");
-        self.client.init(crate::UpdateContext {
-            resource_manager: resource_manager.clone(),
-        });
+        {
+            self.client.init(InitContext {
+                resource_manager: resource_manager.clone(),
+                pipeline_cache: &pipeline_cache_builder,
+            });
+        }
         info!("Main loop enter");
         let mut last_timestamp = Instant::now();
         let mut alt_pressed = false;
+        let pipeline_cache = pipeline_cache_builder.build();
         event_loop
             .run(|event, elwt| {
                 elwt.set_control_flow(winit::event_loop::ControlFlow::Poll);
@@ -113,6 +118,7 @@ impl<T: Client> Runner<T> {
                                             frame: context,
                                             resource_pool: &resource_pool,
                                             buffer_pool: &buffer_pool,
+                                            pipeline_cache: &pipeline_cache,
                                         };
                                         self.client.render(context)
                                     })
