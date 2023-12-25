@@ -80,30 +80,37 @@ struct SceneProcessingContext<'a> {
     unique_materials: HashMap<MeshMaterial, u32>,
 }
 
-fn quantize_values(data: &[f32]) -> (f32, Vec<i16>) {
-    let max = data
+fn quantize_values(data: &[f32]) -> (f32, f32, Vec<u16>) {
+    let min = data
         .iter()
-        .max_by(|x, y| x.abs().total_cmp(&y.abs()))
+        .min_by(|x, y| x.total_cmp(y))
         .copied()
         .unwrap_or(0.0) as f64;
+    let max = data
+        .iter()
+        .max_by(|x, y| x.total_cmp(y))
+        .copied()
+        .unwrap_or(0.0) as f64;
+    let min = (min.abs() as u64).next_power_of_two() as f64 * min.signum();
+    let max = (max.abs() as u64).next_power_of_two() as f64 * max.signum();
     let result = data
         .iter()
-        .map(|x| quantize(*x as _, -max..max, i16::MAX))
+        .map(|x| quantize(*x as _, min..max, u16::MAX))
         .collect::<Vec<_>>();
 
-    (max as f32, result)
+    (min as f32, max as f32, result)
 }
 
-fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, Vec<[i16; N]>) {
+fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, f32, Vec<[u16; N]>) {
     let mut data = Vec::with_capacity(input.len() * N);
     input
         .iter()
         .for_each(|x| x.iter().for_each(|x| data.push(*x)));
-    let (max, values) = quantize_values(&data);
+    let (min, max, values) = quantize_values(&data);
     let mut result = Vec::with_capacity(input.len());
     for index in 0..values.len() / N {
         let start = index * N;
-        let mut value: [i16; N] = [0i16; N];
+        let mut value: [u16; N] = [0u16; N];
         let src = &values[start..start + N];
         (0..N).for_each(|i| {
             value[i] = src[i];
@@ -111,20 +118,24 @@ fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, Vec<[i16; N]>) {
         result.push(value);
     }
 
-    (max, result)
+    (min, max, result)
 }
 
-pub(crate) fn quantize_positions(input: &[[f32; 3]]) -> (f32, Vec<[i16; 3]>) {
+pub(crate) fn quantize_positions(input: &[[f32; 3]]) -> (f32, f32, Vec<[u16; 3]>) {
     quantize_input(input)
 }
 
-pub(crate) fn quantize_uvs(input: &[[f32; 2]]) -> (f32, Vec<[i16; 2]>) {
+pub(crate) fn quantize_uvs(input: &[[f32; 2]]) -> (f32, f32, Vec<[u16; 2]>) {
     quantize_input(input)
 }
 
-pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[i16; 2]> {
-    let (_, quantized) = quantize_input(input);
-    quantized.iter().map(|x| [x[0], x[1]]).collect()
+pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[u16; 2]> {
+    let data = input.iter().flatten().collect::<Vec<_>>();
+    let result = data
+        .into_iter()
+        .map(|x| quantize(x.clamp(-1.0, 1.0) as f64, -1.0..1.0, u16::MAX))
+        .collect::<Vec<_>>();
+    result.chunks(3).map(|x| [x[0], x[1]]).collect::<Vec<_>>()
 }
 
 fn process_model(ctx: &mut SceneProcessingContext, root: gltf::Node) {
@@ -133,9 +144,9 @@ fn process_model(ctx: &mut SceneProcessingContext, root: gltf::Node) {
 
 struct ProcessedGeometry {
     pub vertices: Vec<StaticMeshVertex>,
-    pub max_position_value: f32,
-    pub max_uv1: f32,
-    pub max_uv2: f32,
+    pub position_range: (f32, f32),
+    pub uv1_range: (f32, f32),
+    pub uv2_range: (f32, f32),
 }
 
 fn process_geometry(
@@ -147,7 +158,7 @@ fn process_geometry(
 ) -> ProcessedGeometry {
     let count = positons.len();
     let mut vertices = Vec::with_capacity(count);
-    let (max_position, positions) = quantize_positions(positons);
+    let (min_position, max_position, positions) = quantize_positions(positons);
     let uv1 = quantize_uvs(uv1);
     let uv2 = quantize_uvs(uv2);
     let normals = quantize_normalized(normals);
@@ -157,17 +168,17 @@ fn process_geometry(
             positions[index],
             normals[index],
             tangents[index],
-            uv1.1[index],
-            uv2.1[index],
+            uv1.2[index],
+            uv2.2[index],
         );
         vertices.push(vertex);
     }
 
     ProcessedGeometry {
         vertices,
-        max_position_value: max_position,
-        max_uv1: uv1.0,
-        max_uv2: uv2.0,
+        position_range: (min_position, max_position),
+        uv1_range: (uv1.0, uv1.1),
+        uv2_range: (uv2.0, uv2.1),
     }
 }
 
@@ -379,8 +390,8 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
             first_index,
             index_count,
             bounds,
-            max_position_value: processed.max_position_value,
-            max_uv_value: [processed.max_uv1, processed.max_uv2],
+            position_range: processed.position_range,
+            uv_ranges: [processed.uv1_range, processed.uv2_range],
             material,
         });
     }

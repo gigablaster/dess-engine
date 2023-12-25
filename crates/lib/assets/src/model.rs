@@ -86,8 +86,8 @@ pub struct SubMesh {
     pub first_index: u32,
     pub index_count: u32,
     pub bounds: ([f32; 3], [f32; 3]),
-    pub max_position_value: f32,
-    pub max_uv_value: [f32; 2],
+    pub position_range: (f32, f32),
+    pub uv_ranges: [(f32, f32); 2],
     pub material: u32,
 }
 
