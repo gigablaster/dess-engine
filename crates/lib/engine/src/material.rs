@@ -91,4 +91,8 @@ impl Material {
             bind_group: BindGroupHandle::default(),
         }
     }
+
+    pub fn bind_group(&self) -> BindGroupHandle {
+        self.bind_group
+    }
 }

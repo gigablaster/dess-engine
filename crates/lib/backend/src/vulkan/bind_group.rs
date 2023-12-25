@@ -670,7 +670,7 @@ impl Device {
 
     pub fn create_bind_group_from_desc(
         &self,
-        desc: BindGroupLayoutDesc,
+        desc: &BindGroupLayoutDesc,
     ) -> BackendResult<BindGroupHandle> {
         let mut layouts = self.descriptor_layouts.lock();
         let layout = if let Some(desc) = layouts.get(&desc) {

@@ -109,7 +109,7 @@ impl From<InputVertexAttributeDesc> for vk::VertexInputAttributeDescription {
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct InputVertexStreamDesc {
     pub attributes: &'static [InputVertexAttributeDesc],
-    pub stride: u32,
+    pub stride: usize,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]

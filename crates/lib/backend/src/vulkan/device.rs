@@ -30,7 +30,7 @@ use std::{mem, slice};
 
 use crate::vulkan::frame::MAX_TEMP_MEMORY;
 use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};
-use crate::{BackendError, BackendResult, BufferUsage, DescriptorType, ShaderStage};
+use crate::{BackendError, BackendResult, BindType, BufferUsage, ShaderStage};
 
 use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,

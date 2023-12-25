@@ -68,7 +68,7 @@ impl std::hash::Hash for BindGroupLayoutDesc {
 }
 
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
-pub enum DescriptorType {
+pub enum BindType {
     SampledImage,
     StorageImage,
     CombinedImageSampler,
@@ -90,26 +90,20 @@ impl BindGroupLayoutDesc {
         self
     }
 
-    pub fn descriptor(
-        mut self,
-        index: usize,
-        name: &str,
-        ty: DescriptorType,
-        count: usize,
-    ) -> Self {
+    pub fn bind(mut self, index: usize, name: &str, ty: BindType, count: usize) -> Self {
         debug_assert!(count > 0);
         let ty = match ty {
-            DescriptorType::UniformBuffer => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
-            DescriptorType::DynamicUniformBuffer => {
+            BindType::UniformBuffer => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
+            BindType::DynamicUniformBuffer => {
                 rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
-            DescriptorType::StorageBuffer => rspirv_reflect::DescriptorType::STORAGE_BUFFER,
-            DescriptorType::DynamicStorageBuffer => {
+            BindType::StorageBuffer => rspirv_reflect::DescriptorType::STORAGE_BUFFER,
+            BindType::DynamicStorageBuffer => {
                 rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC
             }
-            DescriptorType::SampledImage => rspirv_reflect::DescriptorType::SAMPLED_IMAGE,
-            DescriptorType::StorageImage => rspirv_reflect::DescriptorType::STORAGE_IMAGE,
-            DescriptorType::CombinedImageSampler => {
+            BindType::SampledImage => rspirv_reflect::DescriptorType::SAMPLED_IMAGE,
+            BindType::StorageImage => rspirv_reflect::DescriptorType::STORAGE_IMAGE,
+            BindType::CombinedImageSampler => {
                 rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER
             }
         };

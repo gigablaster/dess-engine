@@ -13,12 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, fmt::Debug, sync::Arc};
+use std::{collections::HashMap, fmt::Debug, slice, sync::Arc};
 
 use bytes::{BufMut, Bytes, BytesMut};
 use dess_assets::{MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset, ShaderSource};
-use dess_backend::{BindGroupHandle, BufferSlice};
+use dess_backend::{BindGroupHandle, BindGroupLayoutDesc, BindType, BufferSlice, Device};
 
+use dess_common::any_as_u8_slice;
 use smol_str::SmolStr;
 
 use crate::{
@@ -29,8 +30,8 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 struct ObjectScaleUniform {
-    pub position_scale: f32,
-    pub uv_scale: f32,
+    pub position_range: (f32, f32),
+    pub uv_ranges: [(f32, f32); 2],
     _pad: [f32; 2],
 }
 
@@ -40,7 +41,7 @@ pub struct SubMesh {
     pub first_index: u32,
     pub index_count: u32,
     pub bounds: (glam::Vec3, glam::Vec3),
-    pub object_ds: BindGroupHandle,
+    pub object_bind_group: BindGroupHandle,
     pub material_index: usize,
 }
 
@@ -56,11 +57,14 @@ pub struct StaticMesh {
 
 impl StaticMesh {
     pub(crate) fn new(
+        device: &Device,
         asset: MeshData,
         vertices: BufferSlice,
         indices: BufferSlice,
         materials: &[ResourceHandle<Material>],
     ) -> Self {
+        let object_bind_layout =
+            BindGroupLayoutDesc::default().bind(0, "object", BindType::UniformBuffer, 1);
         let geometry = vertices.part(asset.vertex_offset);
         let indices = indices.part(asset.index_offset);
         let submeshes = asset
@@ -74,7 +78,9 @@ impl StaticMesh {
                     glam::Vec3::from_array(submesh.bounds.0),
                     glam::Vec3::from_array(submesh.bounds.1),
                 ),
-                object_ds: BindGroupHandle::default(),
+                object_bind_group: device
+                    .create_bind_group_from_desc(&object_bind_layout)
+                    .unwrap(),
                 material_index: index,
             })
             .collect::<Vec<_>>();
@@ -83,6 +89,20 @@ impl StaticMesh {
             .iter()
             .map(|submesh| materials[submesh.material as usize])
             .collect::<Vec<_>>();
+        device
+            .with_bind_groups(|ctx| {
+                for i in 0..asset.submeshes.len() {
+                    let uniform = ObjectScaleUniform {
+                        position_range: asset.submeshes[i].position_range,
+                        uv_ranges: asset.submeshes[i].uv_ranges,
+                        _pad: [0.0; 2],
+                    };
+                    ctx.bind_uniform(submeshes[i].object_bind_group, 0, &uniform)?;
+                }
+
+                Ok(())
+            })
+            .unwrap();
 
         Self {
             vertices: geometry,
@@ -142,6 +162,7 @@ impl ResourceDependencies for Model {
 
 impl Model {
     pub fn new(
+        devce: &Device,
         asset: ModelAsset,
         vertices: BufferSlice,
         indices: BufferSlice,
@@ -166,7 +187,7 @@ impl Model {
         let static_meshes = asset
             .static_meshes
             .into_iter()
-            .map(|mesh| StaticMesh::new(mesh, vertices, indices, materials))
+            .map(|mesh| StaticMesh::new(devce, mesh, vertices, indices, materials))
             .collect::<Vec<_>>();
         Self {
             bones,
@@ -231,7 +252,7 @@ impl ModelCollection {
             .map(|(name, model)| {
                 (
                     name.into(),
-                    Model::new(model, vertices, indices, &materials),
+                    Model::new(loader.render_device(), model, vertices, indices, &materials),
                 )
             })
             .collect::<HashMap<_, _>>();

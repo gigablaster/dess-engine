@@ -86,6 +86,7 @@ impl<'a> ResourceContext<'a> {
 }
 
 pub trait ResourceLoader {
+    fn render_device(&self) -> &Device;
     fn request_image(&self, asset: AssetRef) -> ResourceHandle<ImageHandle>;
     fn request_material(
         &self,
@@ -397,5 +398,9 @@ impl ResourceLoader for Arc<ResourceManager> {
                 Ok(program)
             }
         }
+    }
+
+    fn render_device(&self) -> &Device {
+        &self.device
     }
 }
