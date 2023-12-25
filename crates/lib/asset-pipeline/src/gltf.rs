@@ -9,6 +9,7 @@ use dess_assets::{
     ImageSourceDesc, MeshBlendMode, MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset,
     StaticMeshVertex, SubMesh, MATERIAL_TYPE_PBR, MATERIAL_TYPE_UNLIT,
 };
+use gltf::mesh::Mode;
 use normalize_path::NormalizePath;
 use numquant::linear::quantize;
 
@@ -135,6 +136,7 @@ pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[u16; 2]> {
         .into_iter()
         .map(|x| quantize(x.clamp(-1.0, 1.0) as f64, -1.0..1.0, u16::MAX))
         .collect::<Vec<_>>();
+
     result.chunks(3).map(|x| [x[0], x[1]]).collect::<Vec<_>>()
 }
 
@@ -319,6 +321,7 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
     let mut mesh_indices = Vec::new();
     let mut mesh_vertices = Vec::new();
     for prim in mesh.primitives() {
+        assert_eq!(prim.mode(), Mode::Triangles);
         let reader = prim.reader(|buffer| Some(&ctx.buffers[buffer.index()]));
         let positions = if let Some(positions) = reader.read_positions() {
             positions.collect::<Vec<_>>()
