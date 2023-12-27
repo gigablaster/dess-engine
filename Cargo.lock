@@ -526,7 +526,7 @@ dependencies = [
  "dess-backend",
  "dess-common",
  "failure",
- "glam 0.24.2",
+ "glam 0.25.0",
  "gltf",
  "hassle-rs",
  "image",
@@ -615,7 +615,7 @@ dependencies = [
  "dess-assets",
  "dess-backend",
  "dess-common",
- "glam 0.24.2",
+ "glam 0.25.0",
  "log",
  "memmap2",
  "parking_lot",
@@ -633,6 +633,7 @@ dependencies = [
  "dess-backend",
  "dess-common",
  "dess-engine",
+ "glam 0.25.0",
  "log",
  "raw-window-handle 0.5.2",
  "simple_logger",
@@ -911,9 +912,9 @@ checksum = "3abb554f8ee44336b72d522e0a7fe86a29e09f839a36022fa869a7dfe941a54b"
 
 [[package]]
 name = "glam"
-version = "0.24.2"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5418c17512bdf42730f9032c74e1ae39afc408745ebb2acf72fbc4691c17945"
+checksum = "151665d9be52f9bb40fc7966565d39666f2d1e69233571b71b87791c7e0528b3"
 
 [[package]]
 name = "gltf"

@@ -7,7 +7,7 @@ use std::{
 use dess_assets::{
     get_absolute_asset_path, get_relative_asset_path, AssetRef, Bone, GltfSource, ImageSource,
     ImageSourceDesc, MeshBlendMode, MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset,
-    StaticMeshVertex, SubMesh, MATERIAL_TYPE_PBR, MATERIAL_TYPE_UNLIT,
+    StaticMeshVertex, SubMesh,
 };
 use gltf::mesh::Mode;
 use normalize_path::NormalizePath;
@@ -218,22 +218,6 @@ fn process_blend(material: &gltf::Material) -> MeshBlendMode {
     }
 }
 
-fn create_unlit_material(
-    ctx: &mut SceneProcessingContext,
-    material: &gltf::Material,
-) -> MeshMaterial {
-    let base = if let Some(texture) = material.pbr_metallic_roughness().base_color_texture() {
-        process_texture(ctx, &texture.texture(), ImageSourceDesc::color())
-    } else {
-        process_placeholder(
-            ctx,
-            material.pbr_metallic_roughness().base_color_factor(),
-            ImageSourceDesc::color(),
-        )
-    };
-    MeshMaterial::new(MATERIAL_TYPE_UNLIT, process_blend(material)).image("base", base)
-}
-
 fn create_pbr_material(
     ctx: &mut SceneProcessingContext,
     material: &gltf::Material,
@@ -272,7 +256,7 @@ fn create_pbr_material(
         process_placeholder(ctx, [0.0, 0.0, 1.0, 1.0], ImageSourceDesc::non_color())
     };
 
-    let normal = if let Some(texture) = material.normal_texture() {
+    let normals = if let Some(texture) = material.normal_texture() {
         process_texture(ctx, &texture.texture(), ImageSourceDesc::normals())
     } else {
         process_placeholder(ctx, [0.0, 0.0, 1.0, 1.0], ImageSourceDesc::normals())
@@ -288,24 +272,19 @@ fn create_pbr_material(
             ImageSourceDesc::non_color(),
         )
     };
-    MeshMaterial::new(MATERIAL_TYPE_PBR, process_blend(material))
-        .image("base", base)
-        .image("metallic_roughness", metallic_roughness)
-        .image("normal", normal)
-        .image("occlusion", occlusion)
-        .image("emissive", emissive)
-        .value(
-            "emissive_power",
-            material.emissive_strength().unwrap_or(0.0),
-        )
+    MeshMaterial {
+        blend: process_blend(material),
+        base,
+        normals,
+        metallic_roughness,
+        occlusion,
+        emissive,
+        emission_power: material.emissive_strength().unwrap_or(0.0),
+    }
 }
 
 fn process_material(ctx: &mut SceneProcessingContext, material: &gltf::Material) -> u32 {
-    let material = if material.unlit() {
-        create_unlit_material(ctx, material)
-    } else {
-        create_pbr_material(ctx, material)
-    };
+    let material = create_pbr_material(ctx, material);
     if let Some(index) = ctx.unique_materials.get(&material) {
         *index
     } else {

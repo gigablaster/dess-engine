@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     ClearRenderTarget, DepthCompareOp, DrawStream, Format, ImageAspect, ImageLayout, ImageUsage,
-    RasterPipelineCreateDesc, RenderPassLayout, {BindGroupHandle, ImageBarrier, RenderTarget},
+    RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassLayout,
+    {BindGroupHandle, ImageBarrier, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -9,16 +12,26 @@ use dess_engine::{
     ResourceLoader,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
+use glam::vec3;
 
 #[derive(Default)]
 struct ClearBackbuffer {
-    model: ResourceHandle<ModelCollection>,
+    model: Arc<ModelCollection>,
+    pipeline: RasterPipelineHandle,
+    scene_bind_group: BindGroupHandle,
+    draw_bind_group: BindGroupHandle,
 }
 
 static PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     color_attachments: &[Format::RGBA8_UNORM],
     depth_attachment: Some(Format::D24),
 };
+
+#[repr(C, align(16))]
+struct SceneUniform {
+    pub view: glam::Mat4,
+    pub projection: glam::Mat4,
+}
 
 impl Client for ClearBackbuffer {
     fn tick(&mut self, _context: UpdateContext, _dt: GameTime) -> dess_runner::ClientState {
@@ -46,6 +59,40 @@ impl Client for ClearBackbuffer {
             .clear_input(ClearRenderTarget::Color([0.125, 0.25, 0.5, 1.0]));
         let depth_target = RenderTarget::new(depth.view(), ImageLayout::DepthStencilTarget)
             .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
+        context.device.with_bind_groups(|ctx| {
+            let scene = SceneUniform {
+                view: glam::Mat4::look_at_lh(vec3(0.0, 0.0, -10.0), glam::Vec3::ZERO, glam::Vec3::Y),
+                projection: glam::Mat4::perspective_lh(3.1415926/2.0, 1.0, 1.0, 100.0)
+            };
+            ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
+
+            Ok(())
+        }).unwrap();
+        let mut stream = DrawStream::new(self.scene_bind_group);
+        stream.bind_pipeline(self.pipeline);
+        for (_, model) in &self.model.models {
+            let mut bones = Vec::with_capacity(model.bones.len());
+            for (index, bone) in model.bones.iter().enumerate() {
+                let parent = model.bone_parents[index];
+                if parent == u32::MAX {
+                    bones.push(glam::Mat4::from(*bone));
+                } else {
+                    bones.push(bones[parent as usize] * glam::Mat4::from(*bone))
+                }
+            }
+            let temp = context.frame.temp_allocate(&bones).unwrap();
+            stream.set_dynamic_buffer_offset(3, Some(temp.offset));
+            stream.bind_descriptor_set(0, Some(self.draw_bind_group));
+            for (bone_idx, mesh_idx) in &model.instances {
+                let mesh = &model.static_meshes[*mesh_idx as usize];
+                stream.bind_vertex_buffer(0, Some(mesh.vertices));
+                stream.bind_index_buffer(Some(mesh.indices));
+                for submesh in &mesh.submeshes {
+                    stream.bind_descriptor_set(2, Some(submesh.object_bind_group));
+                    stream.draw(submesh.first_index, submesh.index_count, 1, *bone_idx);
+                }
+            }
+        }
         context.frame.execute(
             context.frame.render_area,
             &[color_target],
@@ -68,18 +115,36 @@ impl Client for ClearBackbuffer {
             ])
             .unwrap();
 
-        context
+        self.pipeline = context
             .pipeline_cache
-            .register_raster_pipeline(
+            .get_or_register_raster_pipeline(
                 RasterPipelineCreateDesc::new::<BasicVertex>(program, &PASS_LAYOUT)
                     .depth_test(DepthCompareOp::LessOrEqual)
                     .cull(dess_backend::CullMode::Back)
                     .depth_write(),
             )
             .unwrap();
-        self.model = context
+        let model = context
             .resource_manager
             .request_model(GltfSource::new("models/Avocado/Avocado.gltf").get_ref());
+        context
+            .resource_manager
+            .with_context(|ctx| {
+                self.model = ctx.resolve_model(model)?;
+                Ok(())
+            })
+            .unwrap();
+        self.scene_bind_group = context
+            .render_device
+            .create_bind_group_from_program(program, 0)
+            .unwrap();
+        self.draw_bind_group = context
+            .render_device
+            .create_bind_group_from_program(program, 3)
+            .unwrap();
+        context.render_device.with_bind_groups(|ctx| {
+            ctx.bind_dynamic_storage_buffer(self.draw_bind_group, 0, context.render_device.temp_buffer())
+        }).unwrap();
     }
 }
 

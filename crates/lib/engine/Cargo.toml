@@ -13,7 +13,7 @@ bevy_tasks = { version = "0.12.1", features = ["multi-threaded"] }
 puffin = "0.17.0"
 parking_lot = "0.12.1"
 smol_str = "0.2.0"
-glam = "0.24.2"
+glam = "0.25.0"
 siphasher = "1.0.0"
 log = "0.4.20"
 arrayvec = "0.7.4"

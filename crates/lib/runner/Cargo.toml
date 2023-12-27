@@ -20,3 +20,4 @@ name = "clear"
 
 [dev-dependencies]
 dess-assets = { path = "../assets" }
+glam = "0.25.0"

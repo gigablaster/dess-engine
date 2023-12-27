@@ -15,9 +15,10 @@
 
 use std::{collections::HashMap, fmt::Debug};
 
-use dess_assets::MeshMaterial;
+use dess_assets::{MeshBlendMode, MeshMaterial};
 use dess_backend::{
-    BackendError, ImageLayout, UpdateBindGroupsContext, {BindGroupHandle, ImageHandle},
+    BackendResultExt, BindGroupLayoutDesc, BindType, ImageLayout, ShaderStage,
+    {BindGroupHandle, ImageHandle},
 };
 use smol_str::SmolStr;
 
@@ -32,12 +33,25 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct Material {
     images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
-    resolved_images: HashMap<SmolStr, ImageHandle>,
-    parameters: HashMap<SmolStr, f32>,
+    main_bind_group: BindGroupHandle,
+    shadow_bind_group: BindGroupHandle,
+    emissive_power: f32,
+    alpha_cut: f32,
 }
 
 impl Resource for Material {
     fn dispose(&self, _ctx: &ResourceContext) {}
+}
+
+struct MainMaterialUniform {
+    emissive_power: f32,
+    alpha_cut: f32,
+    _pad: [f32; 2],
+}
+
+struct ShadowMaterialUniform {
+    alpha_cut: f32,
+    _pad: [f32; 3],
 }
 
 impl ResourceDependencies for Material {
@@ -48,46 +62,85 @@ impl ResourceDependencies for Material {
     }
 
     fn resolve(&mut self, ctx: &ResourceContext) -> Result<(), Error> {
-        self.images.clear();
+        let mut images = HashMap::new();
         for (name, image) in self.images.iter() {
-            self.resolved_images
-                .insert(name.clone(), *ctx.resolve_image(*image)?);
+            images.insert(name.clone(), *ctx.resolve_image(*image)?);
         }
+        ctx.device.with_bind_groups(|ctx| {
+            for (name, image) in &images {
+                ctx.bind_image_by_name(self.main_bind_group, name, *image, ImageLayout::ShaderRead)
+                    .ignore_missing()?;
+                ctx.bind_image_by_name(
+                    self.shadow_bind_group,
+                    name,
+                    *image,
+                    ImageLayout::ShaderRead,
+                )
+                .ignore_missing()?;
+            }
+            ctx.bind_uniform_by_name(
+                self.main_bind_group,
+                "material",
+                &MainMaterialUniform {
+                    emissive_power: self.emissive_power,
+                    alpha_cut: self.alpha_cut,
+                    _pad: [0.0; 2],
+                },
+            )?;
+            ctx.bind_uniform_by_name(
+                self.shadow_bind_group,
+                "material",
+                &ShadowMaterialUniform {
+                    alpha_cut: self.alpha_cut,
+                    _pad: [0.0; 3],
+                },
+            )?;
+
+            Ok(())
+        });
         Ok(())
     }
 }
 
 impl Material {
-    pub fn new<T: ResourceLoader>(loader: &T, mesh_material: &MeshMaterial) -> Self {
-        let images = mesh_material
-            .images
-            .iter()
-            .map(|(name, asset)| (name.into(), loader.request_image(*asset)))
-            .collect::<HashMap<_, _>>();
-        Self {
+    pub fn new<T: ResourceLoader>(loader: &T, mesh_material: &MeshMaterial) -> Result<Self, Error> {
+        let mut images = HashMap::new();
+        images.insert("base", mesh_material.base);
+        images.insert("normals", mesh_material.normals);
+        images.insert("metallic_roughness", mesh_material.metallic_roughness);
+        images.insert("occlusion", mesh_material.occlusion);
+        images.insert("emissive", mesh_material.emissive);
+        let images = images
+            .into_iter()
+            .map(|(name, image)| (name.into(), loader.request_image(image)))
+            .collect();
+        let alpha_cut = if let MeshBlendMode::AlphaTest(cut) = mesh_material.blend {
+            cut
+        } else {
+            0.0
+        };
+        let main_bind_group = loader.render_device().create_bind_group_from_desc(
+            &BindGroupLayoutDesc::default()
+                .stage(ShaderStage::Vertex | ShaderStage::Fragment)
+                .bind(0, "base", BindType::SampledImage, 1)
+                .bind(1, "normals", BindType::SampledImage, 1)
+                .bind(2, "metallic_roughness", BindType::SampledImage, 1)
+                .bind(3, "occlusion", BindType::SampledImage, 1)
+                .bind(4, "emissive", BindType::SampledImage, 1)
+                .bind(5, "material", BindType::Uniform, 1),
+        )?;
+        let shadow_bind_group = loader.render_device().create_bind_group_from_desc(
+            &BindGroupLayoutDesc::default()
+                .stage(ShaderStage::Vertex | ShaderStage::Fragment)
+                .bind(0, "base", BindType::SampledImage, 1)
+                .bind(1, "material", BindType::Uniform, 1),
+        )?;
+        Ok(Self {
             images,
-            resolved_images: HashMap::default(),
-            parameters: mesh_material
-                .values
-                .iter()
-                .map(|(name, value)| (name.into(), *value))
-                .collect(),
-        }
-    }
-
-    pub fn bind_images(
-        &self,
-        handle: BindGroupHandle,
-        ctx: &mut UpdateBindGroupsContext,
-    ) -> Result<(), BackendError> {
-        for (name, image) in &self.resolved_images {
-            ctx.bind_image_by_name(handle, name, *image, ImageLayout::ShaderRead)?;
-        }
-
-        Ok(())
-    }
-
-    pub fn paramters(&self) -> &HashMap<SmolStr, f32> {
-        &self.parameters
+            main_bind_group,
+            shadow_bind_group,
+            alpha_cut,
+            emissive_power: mesh_material.emission_power,
+        })
     }
 }

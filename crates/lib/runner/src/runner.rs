@@ -83,6 +83,7 @@ impl<T: Client> Runner<T> {
             self.client.init(InitContext {
                 resource_manager: resource_manager.clone(),
                 pipeline_cache: &pipeline_cache,
+                render_device: &device,
             });
         }
         info!("Main loop enter");
@@ -115,6 +116,7 @@ impl<T: Client> Runner<T> {
                                 if let FrameResult::NeedRecreate = device
                                     .frame(current_swapchain, |context| {
                                         let context = RenderContext {
+                                            device: &device,
                                             frame: context,
                                             resource_pool: &resource_pool,
                                             buffer_pool: &buffer_pool,

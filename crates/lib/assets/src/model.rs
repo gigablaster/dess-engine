@@ -116,44 +116,15 @@ impl Hash for MeshBlendMode {
     }
 }
 
-pub const MATERIAL_TYPE_PBR: &str = "pbr";
-pub const MATERIAL_TYPE_UNLIT: &str = "unlit";
-
 #[derive(Debug, Clone, PartialEq, Readable, Writable)]
 pub struct MeshMaterial {
-    pub ty: String,
     pub blend: MeshBlendMode,
-    pub images: HashMap<String, AssetRef>,
-    pub values: HashMap<String, f32>,
-}
-
-impl MeshMaterial {
-    pub fn new(ty: &str, blend: MeshBlendMode) -> Self {
-        Self {
-            ty: ty.to_owned(),
-            blend,
-            images: HashMap::default(),
-            values: HashMap::default(),
-        }
-    }
-
-    pub fn add_image(&mut self, name: &str, image: AssetRef) {
-        self.images.insert(name.to_owned(), image);
-    }
-
-    pub fn set_value(&mut self, name: &str, value: f32) {
-        self.values.insert(name.to_owned(), value);
-    }
-
-    pub fn image(mut self, name: &str, image: AssetRef) -> Self {
-        self.add_image(name, image);
-        self
-    }
-
-    pub fn value(mut self, name: &str, value: f32) -> Self {
-        self.set_value(name, value);
-        self
-    }
+    pub base: AssetRef,
+    pub normals: AssetRef,
+    pub metallic_roughness: AssetRef,
+    pub occlusion: AssetRef,
+    pub emissive: AssetRef,
+    pub emission_power: f32,
 }
 
 impl Eq for MeshMaterial {}
@@ -161,14 +132,12 @@ impl Eq for MeshMaterial {}
 impl Hash for MeshMaterial {
     fn hash<H: hash::Hasher>(&self, state: &mut H) {
         self.blend.hash(state);
-        for (name, image) in self.images.iter() {
-            name.hash(state);
-            image.hash(state);
-        }
-        for (name, value) in self.values.iter() {
-            name.hash(state);
-            ((value * 100000.0) as u64).hash(state);
-        }
+        self.base.hash(state);
+        self.normals.hash(state);
+        self.metallic_roughness.hash(state);
+        self.occlusion.hash(state);
+        self.emissive.hash(state);
+        ((self.emission_power * 1000.0) as u64).hash(state);
     }
 }
 

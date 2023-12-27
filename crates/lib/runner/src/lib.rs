@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dess_backend::{BackendError, FrameContext};
+use dess_backend::{BackendError, Device, FrameContext};
 use dess_common::GameTime;
 
 mod runner;
@@ -15,6 +15,7 @@ pub enum ClientState {
 }
 
 pub struct RenderContext<'a> {
+    pub device: &'a Device,
     pub frame: &'a FrameContext<'a>,
     pub resource_pool: &'a TemporaryImagePool<'a>,
     pub buffer_pool: &'a BufferPool,
@@ -28,6 +29,7 @@ pub struct UpdateContext {
 pub struct InitContext<'a> {
     pub resource_manager: Arc<ResourceManager>,
     pub pipeline_cache: &'a PipelineCache<'a>,
+    pub render_device: &'a Device,
 }
 
 pub trait Client {

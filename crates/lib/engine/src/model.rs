@@ -62,7 +62,7 @@ impl StaticMesh {
         materials: &[ResourceHandle<Material>],
     ) -> Self {
         let object_bind_layout =
-            BindGroupLayoutDesc::default().bind(0, "object", BindType::UniformBuffer, 1);
+            BindGroupLayoutDesc::default().bind(0, "object", BindType::Uniform, 1);
         let geometry = vertices.part(asset.vertex_offset);
         let indices = indices.part(asset.index_offset);
         let submeshes = asset

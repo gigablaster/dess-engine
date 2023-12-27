@@ -63,6 +63,7 @@ pub struct ResourceContext<'a> {
     pub buffers: &'a BufferPool,
     images: &'a SingleTypeResourceCache<ImageHandle>,
     materials: &'a SingleTypeResourceCache<Material>,
+    models: &'a SingleTypeResourceCache<ModelCollection>,
 }
 
 impl<'a> ResourceContext<'a> {
@@ -86,6 +87,17 @@ impl<'a> ResourceContext<'a> {
 
     pub fn is_material_finished(&self, handle: ResourceHandle<Material>) -> bool {
         self.materials.is_finished(handle, self)
+    }
+
+    pub fn is_model_finished(&self, handle: ResourceHandle<ModelCollection>) -> bool {
+        self.models.is_finished(handle, self)
+    }
+
+    pub fn resolve_model(
+        &self,
+        handle: ResourceHandle<ModelCollection>,
+    ) -> Result<Arc<ModelCollection>, Error> {
+        self.models.resolve(handle, self)
     }
 }
 
@@ -265,6 +277,7 @@ impl ResourceManager {
             buffers: &self.buffers,
             images: &self.images,
             materials: &self.materials,
+            models: &self.models,
         };
         self.images.maintain(&context);
         self.materials.maintain(&context);
@@ -290,6 +303,20 @@ impl ResourceManager {
         }
     }
 
+    pub fn with_context<OP: FnOnce(ResourceContext) -> Result<(), Error>>(
+        &self,
+        op: OP,
+    ) -> Result<(), Error> {
+        let context = ResourceContext {
+            device: &self.device,
+            buffers: &self.buffers,
+            images: &self.images,
+            materials: &self.materials,
+            models: &self.models,
+        };
+        op(context)
+    }
+
     async fn load_image(device: Arc<Device>, asset: AssetRef) -> Result<Arc<ImageHandle>, Error> {
         let asset: ImageAsset = load_cached_asset(asset)?;
         let data = asset
@@ -312,7 +339,7 @@ impl ResourceManager {
         loader: Arc<ResourceManager>,
         mesh_material: MeshMaterial,
     ) -> Result<Arc<Material>, Error> {
-        Ok(Arc::new(Material::new(&loader, &mesh_material)))
+        Ok(Arc::new(Material::new(&loader, &mesh_material)?))
     }
 
     async fn load_model(
