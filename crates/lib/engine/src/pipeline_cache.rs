@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, mem};
+use std::collections::HashMap;
 
 use dess_backend::{Device, RasterPipelineCreateDesc, RasterPipelineHandle};
 use parking_lot::Mutex;
@@ -35,21 +35,43 @@ impl<'a> PipelineCache<'a> {
         }
     }
 
-    pub fn register_raster_pipeline(&self, desc: RasterPipelineCreateDesc) -> Result<(), Error> {
-        self.raster_pipelines_builder
-            .lock()
-            .insert(desc, self.device.register_raster_pipeline(desc)?);
-        Ok(())
+    pub fn get_or_register_raster_pipeline(
+        &self,
+        desc: RasterPipelineCreateDesc,
+    ) -> Result<RasterPipelineHandle, Error> {
+        if let Some(handle) = self.raster_pipelines.get(&desc) {
+            Ok(*handle)
+        } else {
+            let mut handles = self.raster_pipelines_builder.lock();
+            if let Some(handle) = handles.get(&desc) {
+                Ok(*handle)
+            } else {
+                let handle = self.device.register_raster_pipeline(desc)?;
+                handles.insert(desc, handle);
+                Ok(handle)
+            }
+        }
     }
 
     pub fn sync(&mut self) {
-        self.raster_pipelines = mem::take(&mut self.raster_pipelines_builder.lock());
+        let mut pipelines = self.raster_pipelines_builder.lock();
+        pipelines.drain().for_each(|(desc, handle)| {
+            self.raster_pipelines.insert(desc, handle);
+        });
     }
 
     pub fn get_raster_pipeline(
         &self,
         desc: &RasterPipelineCreateDesc,
     ) -> Option<RasterPipelineHandle> {
-        self.raster_pipelines.get(desc).copied()
+        if let Some(handle) = self.raster_pipelines.get(desc) {
+            Some(*handle)
+        } else {
+            if let Some(handle) = self.raster_pipelines_builder.lock().get(desc) {
+                Some(*handle)
+            } else {
+                None
+            }
+        }
     }
 }
