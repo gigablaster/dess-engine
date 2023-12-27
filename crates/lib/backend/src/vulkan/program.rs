@@ -72,7 +72,7 @@ pub enum BindType {
     SampledImage,
     StorageImage,
     CombinedImageSampler,
-    UniformBuffer,
+    Uniform,
     DynamicUniformBuffer,
     StorageBuffer,
     DynamicStorageBuffer,
@@ -93,7 +93,7 @@ impl BindGroupLayoutDesc {
     pub fn bind(mut self, index: usize, name: &str, ty: BindType, count: usize) -> Self {
         debug_assert!(count > 0);
         let ty = match ty {
-            BindType::UniformBuffer => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
+            BindType::Uniform => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
             BindType::DynamicUniformBuffer => {
                 rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC
             }
