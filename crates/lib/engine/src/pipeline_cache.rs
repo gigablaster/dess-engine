@@ -67,11 +67,7 @@ impl<'a> PipelineCache<'a> {
         if let Some(handle) = self.raster_pipelines.get(desc) {
             Some(*handle)
         } else {
-            if let Some(handle) = self.raster_pipelines_builder.lock().get(desc) {
-                Some(*handle)
-            } else {
-                None
-            }
+            self.raster_pipelines_builder.lock().get(desc).copied()
         }
     }
 }

@@ -43,12 +43,14 @@ impl Resource for Material {
     fn dispose(&self, _ctx: &ResourceContext) {}
 }
 
+#[repr(C)]
 struct MainMaterialUniform {
     emissive_power: f32,
     alpha_cut: f32,
     _pad: [f32; 2],
 }
 
+#[repr(C)]
 struct ShadowMaterialUniform {
     alpha_cut: f32,
     _pad: [f32; 3],
@@ -97,7 +99,7 @@ impl ResourceDependencies for Material {
             )?;
 
             Ok(())
-        });
+        })?;
         Ok(())
     }
 }
