@@ -459,7 +459,13 @@ impl Program {
                     )?);
                 }
                 None => {
-                    layouts.push(BindGroupLayout::default());
+                    layouts.push(BindGroupLayout::new(
+                        device,
+                        stages,
+                        &HashMap::default(),
+                        false,
+                        inmuatable_samplers,
+                    )?);
                 }
             }
         }
