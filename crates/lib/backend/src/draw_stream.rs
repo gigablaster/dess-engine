@@ -34,6 +34,7 @@ struct Draw {
     first_index: u32,
     index_count: u32,
     instance_count: u32,
+    first_instance: u32,
 }
 
 impl Default for Draw {
@@ -47,6 +48,7 @@ impl Default for Draw {
             first_index: u32::MAX,
             index_count: u32::MAX,
             instance_count: u32::MAX,
+            first_instance: u32::MAX,
         }
     }
 }
@@ -59,6 +61,7 @@ const DS1: u16 = DYNAMIC_OFFSET0 << MAX_DYNAMIC_OFFSETS;
 const INDEX_COUNT: u16 = DS1 << MAX_DESCRIPTOR_SETS;
 const FIRST_INDEX: u16 = INDEX_COUNT << 1;
 const INSTANCE_COUNT: u16 = FIRST_INDEX << 1;
+const FIRST_INSTANCE: u16 = INSTANCE_COUNT << 1;
 
 /// Collect draw calls
 ///
@@ -155,7 +158,7 @@ impl DrawStream {
         }
     }
 
-    pub fn draw(&mut self, first_index: u32, index_count: u32, instance_count: u32) {
+    pub fn draw(&mut self, first_index: u32, index_count: u32, instance_count: u32, first_instance: u32) {
         debug_assert!(
             self.current.pipeline.is_valid(),
             "Pipeline handle must be valid"
@@ -173,6 +176,10 @@ impl DrawStream {
         if self.current.instance_count != instance_count {
             self.current.instance_count = instance_count;
             self.mask |= INSTANCE_COUNT;
+        }
+        if self.current.first_instance != first_instance {
+            self.current.first_instance = first_instance;
+            self.mask |= FIRST_INSTANCE;
         }
         self.stream.push(self.mask);
         if self.mask & PIPELINE != 0 {
@@ -205,6 +212,9 @@ impl DrawStream {
         if self.mask & INSTANCE_COUNT != 0 {
             self.write_u32(self.current.instance_count);
         }
+        if self.mask & FIRST_INSTANCE != 0 {
+            self.write_u32(self.current.first_instance);
+        }
         self.mask = 0;
     }
 
@@ -230,6 +240,7 @@ impl DrawStream {
         let mut first_index = 0u32;
         let mut vertex_count = 0u32;
         let mut instance_count = 0u32;
+        let mut first_instance = 0u32;
         while let Some(mask) = stream.read() {
             descriptors[0] = context
                 .descriptors
@@ -365,6 +376,9 @@ impl DrawStream {
             if mask & INSTANCE_COUNT != 0 {
                 instance_count = stream.read_u32()?;
             }
+            if mask & FIRST_INSTANCE != 0 {
+                first_instance = stream.read_u32()?;
+            }
             if rebind_all_descriptors {
                 let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
                 for offset_index in 0..MAX_DYNAMIC_OFFSETS {
@@ -410,7 +424,7 @@ impl DrawStream {
                     instance_count,
                     first_index,
                     0,
-                    0,
+                    first_instance,
                 )
             }
         }
