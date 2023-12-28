@@ -16,7 +16,9 @@
 use std::{collections::HashMap, sync::Arc};
 
 use dess_assets::{MeshData, ModelAsset, ModelCollectionAsset};
-use dess_backend::{BindGroupHandle, BindGroupLayoutDesc, BindType, BufferSlice, Device};
+use dess_backend::{
+    BindGroupHandle, BindGroupLayoutDesc, BindType, BindingDesc, BufferSlice, Device, ShaderStage,
+};
 
 use smol_str::SmolStr;
 
@@ -53,6 +55,16 @@ pub struct StaticMesh {
     pub resolved_materials: Vec<Arc<Material>>,
 }
 
+pub const PACKED_MESH_OBJECT_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::Graphics,
+    set: &[BindingDesc {
+        slot: 0,
+        name: "object",
+        ty: BindType::UniformBuffer,
+        count: 1,
+    }],
+};
+
 impl StaticMesh {
     pub(crate) fn new(
         device: &Device,
@@ -61,8 +73,6 @@ impl StaticMesh {
         indices: BufferSlice,
         materials: &[ResourceHandle<Material>],
     ) -> Self {
-        let object_bind_layout =
-            BindGroupLayoutDesc::default().bind(0, "object", BindType::Uniform, 1);
         let geometry = vertices.part(asset.vertex_offset);
         let indices = indices.part(asset.index_offset);
         let submeshes = asset
@@ -77,7 +87,7 @@ impl StaticMesh {
                     glam::Vec3::from_array(submesh.bounds.1),
                 ),
                 object_bind_group: device
-                    .create_bind_group_from_desc(&object_bind_layout)
+                    .create_bind_group(&PACKED_MESH_OBJECT_LAYOUT)
                     .unwrap(),
                 material_index: index,
             })

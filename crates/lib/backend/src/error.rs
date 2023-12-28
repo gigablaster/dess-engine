@@ -25,7 +25,6 @@ pub enum BackendError {
     NotFound,
     OutOfAllocatedSpace,
     NoSuitableDevice,
-    ShaderReflectionFailed,
     ExtensionNotFound(String),
     NoSuitableQueue,
     Fail,
@@ -79,12 +78,6 @@ impl From<ash::LoadingError> for BackendError {
             ash::LoadingError::LibraryLoadFailure(..) => Self::Fail,
             ash::LoadingError::MissingEntryPoint(..) => Self::NotFound,
         }
-    }
-}
-
-impl From<rspirv_reflect::ReflectError> for BackendError {
-    fn from(_value: rspirv_reflect::ReflectError) -> Self {
-        Self::ShaderReflectionFailed
     }
 }
 

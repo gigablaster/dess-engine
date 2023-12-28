@@ -4,7 +4,12 @@ struct PassData {
 };
 
 struct ObjectData {
-    float scale;
+    float position_min_range;
+    float position_max_range;
+    float uv1_min_range;
+    float uv1_max_range;
+    float uv2_min_range;
+    float uv2_max_range;
 };
 
 struct InstanceTransform {
@@ -19,17 +24,18 @@ struct VsOut {
 struct VsIn {
     [[vk::location(0)]] float3 pos: POSITION;
     [[vk::location(1)]] float2 uv: TEXCOORD0;
+    uint instance: SV_InstanceID;
 };
 
 [[vk::binding(0, 0)]] ConstantBuffer<PassData> pass_data;
 [[vk::binding(0, 2)]] ConstantBuffer<ObjectData> object_data;
-[[vk::binding(0, 3)]] ConstantBuffer<InstanceTransform> transform_dyn;
+[[vk::binding(0, 3)]] StructuredBuffer<InstanceTransform> transforms;
 
 VsOut main(VsIn vsin) {
     VsOut vsout;
     
-    float4x4 mvp = transform_dyn.model * pass_data.view * pass_data.projection;
-    vsout.position = mul(mvp, float4(vsin.pos * object_data.scale, 0.0));
+    float4x4 mvp = transforms[vsin.instance].model * pass_data.view * pass_data.projection;
+    vsout.position = mul(mvp, float4(vsin.pos, 0.0));
     vsout.uv = vsin.uv;
 
     return vsout;

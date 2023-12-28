@@ -22,13 +22,14 @@ use ash::vk;
 use dess_common::{Handle, HotColdPool, TempList};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
+use log::warn;
 use smol_str::SmolStr;
 
 use crate::{BackendError, BackendResult, BufferUsage, ImageLayout, ImageUsage};
 
 use super::{
     BindGroupLayout, BindGroupLayoutDesc, BufferHandle, BufferSlice, BufferStorage, DescriptorSet,
-    Device, ImageHandle, ImageStorage, ImageViewDesc, ProgramHandle, UniformStorage,
+    Device, ImageHandle, ImageStorage, ImageViewDesc, UniformStorage,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -485,6 +486,10 @@ impl Device {
         });
         // Discard old data
         dirty.retain(|x| !Self::is_valid_descriptor_impl(&storage, *x));
+        // Warn if there's still dirty descriptors
+        if !dirty.is_empty() {
+            warn!("Some bind groups are still dirty and lack of bindings");
+        }
 
         Ok(())
     }
@@ -641,38 +646,25 @@ impl Device {
         }
     }
 
-    pub fn create_bind_group_from_program(
-        &self,
-        program: ProgramHandle,
-        index: usize,
-    ) -> Result<BindGroupHandle, BackendError> {
-        let programs = self.program_storage.read();
-        let set = &programs
-            .get(program.index())
-            .ok_or(BackendError::InvalidHandle)?
-            .sets[index];
-        self.create_bind_group(set)
-    }
-
-    pub fn create_bind_group_from_desc(
-        &self,
-        desc: &BindGroupLayoutDesc,
-    ) -> BackendResult<BindGroupHandle> {
+    pub fn create_bind_group(&self, desc: &BindGroupLayoutDesc) -> BackendResult<BindGroupHandle> {
         let mut layouts = self.descriptor_layouts.lock();
         let layout = if let Some(desc) = layouts.get(desc) {
             desc
         } else {
-            let layout_desc = BindGroupLayout::from_desc(&self.raw, desc, &self.samplers)?;
-            layouts.insert(desc.clone(), layout_desc);
+            let layout_desc = BindGroupLayout::new(&self.raw, desc, &self.samplers)?;
+            layouts.insert(*desc, layout_desc);
             layouts.get(desc).unwrap()
         };
-        self.create_bind_group(layout)
+        self.create_bind_group_impl(layout)
     }
 
     /// Created descriptor set from descriptor set info
     ///
     /// Descriptor set info can be extracted from Program as an example.
-    fn create_bind_group(&self, set: &BindGroupLayout) -> Result<BindGroupHandle, BackendError> {
+    fn create_bind_group_impl(
+        &self,
+        set: &BindGroupLayout,
+    ) -> Result<BindGroupHandle, BackendError> {
         let uniform_buffers = set
             .types
             .iter()
@@ -772,7 +764,7 @@ impl Device {
         let names = set
             .names
             .iter()
-            .map(|(name, slot)| (name.into(), *slot as usize))
+            .map(|(name, slot)| (name.clone(), *slot as usize))
             .collect::<HashMap<SmolStr, _>>();
         let handle = self.bind_groups_storage.write().push(
             vk::DescriptorSet::null(),

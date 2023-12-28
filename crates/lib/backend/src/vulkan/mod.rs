@@ -359,6 +359,7 @@ bitflags! {
 pub struct ShaderStage: u32 {
     const Vertex = 1;
     const Fragment = 2;
+    const Graphics = 3;
     const Compute = 4;
 }
 

@@ -1,15 +1,15 @@
-use std::sync::Arc;
+use std::{f32::consts::PI, sync::Arc};
 
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
-    ClearRenderTarget, DepthCompareOp, DrawStream, Format, ImageAspect, ImageLayout, ImageUsage,
-    RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassLayout,
-    {BindGroupHandle, ImageBarrier, RenderTarget},
+    BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
+    Format, ImageAspect, ImageLayout, ImageUsage, RasterPipelineCreateDesc, RasterPipelineHandle,
+    RenderPassLayout, ShaderStage, {BindGroupHandle, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
-    render::BasicVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceHandle,
-    ResourceLoader,
+    render::BasicVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
+    MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
 use glam::vec3;
@@ -26,6 +26,41 @@ static PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
     color_attachments: &[Format::RGBA8_UNORM],
     depth_attachment: Some(Format::D24),
 };
+
+const PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::Graphics,
+    set: &[
+        BindingDesc {
+            slot: 0,
+            name: "pass",
+            ty: BindType::UniformBuffer,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 1,
+            name: "base_sampler",
+            ty: BindType::Sampler,
+            count: 1,
+        },
+    ],
+};
+
+const DRAW_CALL_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::Graphics,
+    set: &[BindingDesc {
+        slot: 0,
+        name: "draw",
+        ty: BindType::DynamicStorageBuffer,
+        count: 1,
+    }],
+};
+
+const DRAW_PIPELINE_LAYOUT: [BindGroupLayoutDesc; 4] = [
+    PASS_BIND_LAYOUT,
+    MESH_PBR_MATERIAL_LAYOUT,
+    PACKED_MESH_OBJECT_LAYOUT,
+    DRAW_CALL_BIND_LAYOUT,
+];
 
 #[repr(C, align(16))]
 struct SceneUniform {
@@ -59,18 +94,25 @@ impl Client for ClearBackbuffer {
             .clear_input(ClearRenderTarget::Color([0.125, 0.25, 0.5, 1.0]));
         let depth_target = RenderTarget::new(depth.view(), ImageLayout::DepthStencilTarget)
             .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
-        context.device.with_bind_groups(|ctx| {
-            let scene = SceneUniform {
-                view: glam::Mat4::look_at_lh(vec3(0.0, 0.0, -10.0), glam::Vec3::ZERO, glam::Vec3::Y),
-                projection: glam::Mat4::perspective_lh(3.1415926/2.0, 1.0, 1.0, 100.0)
-            };
-            ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
+        context
+            .device
+            .with_bind_groups(|ctx| {
+                let scene = SceneUniform {
+                    view: glam::Mat4::look_at_lh(
+                        vec3(0.0, 0.0, -10.0),
+                        glam::Vec3::ZERO,
+                        glam::Vec3::Y,
+                    ),
+                    projection: glam::Mat4::perspective_lh(PI / 2.0, 1.0, 1.0, 100.0),
+                };
+                ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
 
-            Ok(())
-        }).unwrap();
+                Ok(())
+            })
+            .unwrap();
         let mut stream = DrawStream::new(self.scene_bind_group);
         stream.bind_pipeline(self.pipeline);
-        for (_, model) in &self.model.models {
+        for model in self.model.models.values() {
             let mut bones = Vec::with_capacity(model.bones.len());
             for (index, bone) in model.bones.iter().enumerate() {
                 let parent = model.bone_parents[index];
@@ -81,13 +123,17 @@ impl Client for ClearBackbuffer {
                 }
             }
             let temp = context.frame.temp_allocate(&bones).unwrap();
-            stream.set_dynamic_buffer_offset(3, Some(temp.offset));
-            stream.bind_descriptor_set(0, Some(self.draw_bind_group));
+            stream.set_dynamic_buffer_offset(0, Some(temp.offset));
+            stream.bind_descriptor_set(3, Some(self.draw_bind_group));
             for (bone_idx, mesh_idx) in &model.instances {
                 let mesh = &model.static_meshes[*mesh_idx as usize];
                 stream.bind_vertex_buffer(0, Some(mesh.vertices));
                 stream.bind_index_buffer(Some(mesh.indices));
                 for submesh in &mesh.submeshes {
+                    stream.bind_descriptor_set(
+                        1,
+                        Some(mesh.resolved_materials[submesh.material_index].main_bind_group),
+                    );
                     stream.bind_descriptor_set(2, Some(submesh.object_bind_group));
                     stream.draw(submesh.first_index, submesh.index_count, 1, *bone_idx);
                 }
@@ -97,7 +143,7 @@ impl Client for ClearBackbuffer {
             context.frame.render_area,
             &[color_target],
             Some(depth_target),
-            [DrawStream::new(BindGroupHandle::invalid())].into_iter(),
+            [stream].into_iter(),
             &[],
         );
 
@@ -118,10 +164,14 @@ impl Client for ClearBackbuffer {
         self.pipeline = context
             .pipeline_cache
             .get_or_register_raster_pipeline(
-                RasterPipelineCreateDesc::new::<BasicVertex>(program, &PASS_LAYOUT)
-                    .depth_test(DepthCompareOp::LessOrEqual)
-                    .cull(dess_backend::CullMode::Back)
-                    .depth_write(),
+                RasterPipelineCreateDesc::new::<BasicVertex>(
+                    program,
+                    &PASS_LAYOUT,
+                    &DRAW_PIPELINE_LAYOUT,
+                )
+                .depth_test(DepthCompareOp::LessOrEqual)
+                .cull(dess_backend::CullMode::Back)
+                .depth_write(),
             )
             .unwrap();
         let model = context
@@ -136,15 +186,22 @@ impl Client for ClearBackbuffer {
             .unwrap();
         self.scene_bind_group = context
             .render_device
-            .create_bind_group_from_program(program, 0)
+            .create_bind_group(&PASS_BIND_LAYOUT)
             .unwrap();
         self.draw_bind_group = context
             .render_device
-            .create_bind_group_from_program(program, 3)
+            .create_bind_group(&DRAW_CALL_BIND_LAYOUT)
             .unwrap();
-        context.render_device.with_bind_groups(|ctx| {
-            ctx.bind_dynamic_storage_buffer(self.draw_bind_group, 0, context.render_device.temp_buffer())
-        }).unwrap();
+        context
+            .render_device
+            .with_bind_groups(|ctx| {
+                ctx.bind_dynamic_storage_buffer(
+                    self.draw_bind_group,
+                    0,
+                    context.render_device.temp_buffer(),
+                )
+            })
+            .unwrap();
     }
 }
 

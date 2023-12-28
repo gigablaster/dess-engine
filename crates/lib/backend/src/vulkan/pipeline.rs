@@ -12,7 +12,9 @@ use log::{debug, error, info};
 use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
-use crate::{BackendError, BackendResult, Format};
+use crate::{
+    BackendError, BackendResult, BindGroupLayout, BindGroupLayoutDesc, Format, MAX_BINDING_GROUPS,
+};
 
 use super::{Device, PhysicalDevice, ProgramHandle, RasterPipelineHandle, Shader, MAX_SHADERS};
 
@@ -162,6 +164,8 @@ pub struct RasterPipelineCreateDesc {
     pub program: ProgramHandle,
     /// Render pass layout
     pub pass_layout: &'static RenderPassLayout<'static>,
+    /// Pipeline layout
+    pub pipeline_layout: &'static [BindGroupLayoutDesc],
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(BlendDesc, BlendDesc)>,
     pub cull: Option<CullMode>,
@@ -179,10 +183,12 @@ impl RasterPipelineCreateDesc {
     pub fn new<T: PipelineVertex>(
         program: ProgramHandle,
         pass_layout: &'static RenderPassLayout,
+        pipeline_layout: &'static [BindGroupLayoutDesc],
     ) -> Self {
         Self {
             program,
             pass_layout,
+            pipeline_layout,
             blend: None,
             cull: None,
             depth_test: None,
@@ -267,10 +273,31 @@ impl Device {
         &self,
         handle: RasterPipelineHandle,
         shaders: ArrayVec<Shader, MAX_SHADERS>,
-        layout: vk::PipelineLayout,
         desc: RasterPipelineCreateDesc,
     ) -> BackendResult<(RasterPipelineHandle, vk::Pipeline, vk::PipelineLayout)> {
         debug!("Compile pipeline {:?}", desc);
+
+        let pipeline_layout = {
+            let mut descriptor_layouts = self.descriptor_layouts.lock();
+            let descriptor_sets = desc
+                .pipeline_layout
+                .iter()
+                .map(|x| {
+                    if let Some(layout) = descriptor_layouts.get(x) {
+                        layout.layout
+                    } else {
+                        let layout = BindGroupLayout::new(&self.raw, x, &self.samplers).unwrap();
+                        let raw = layout.layout;
+                        descriptor_layouts.insert(*x, layout);
+                        raw
+                    }
+                })
+                .collect::<ArrayVec<_, MAX_BINDING_GROUPS>>();
+            let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
+                .set_layouts(&descriptor_sets)
+                .build();
+            unsafe { self.raw.create_pipeline_layout(&pipeline_layout_info, None) }?
+        };
 
         let shader_create_info = shaders
             .iter()
@@ -392,7 +419,7 @@ impl Device {
         }
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .layout(layout)
+            .layout(pipeline_layout)
             .stages(&shader_create_info)
             .dynamic_state(&dynamic_state_create_info)
             .viewport_state(&viewport_state)
@@ -413,7 +440,7 @@ impl Device {
             )
         };
 
-        Ok((handle, pipeline?[0], layout))
+        Ok((handle, pipeline?[0], pipeline_layout))
     }
 
     pub async fn compile_raster_pipelines(&self) {
@@ -433,12 +460,7 @@ impl Device {
                             .iter()
                             .cloned()
                             .collect::<ArrayVec<_, MAX_SHADERS>>();
-                        s.spawn(self.compile_raster_pipeline(
-                            handle,
-                            shaders,
-                            program.pipeline_layout,
-                            *desc,
-                        ));
+                        s.spawn(self.compile_raster_pipeline(handle, shaders, *desc));
                     }
                 })
         });

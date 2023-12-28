@@ -13,194 +13,116 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::{btree_map::Entry, BTreeMap, HashMap},
-    ffi::CString,
-    mem::discriminant,
-    slice,
-};
+use std::{collections::HashMap, ffi::CString, slice};
 
 use arrayvec::ArrayVec;
 use ash::vk;
 use byte_slice_cast::AsSliceOf;
-use rspirv_reflect::DescriptorInfo;
+use smol_str::SmolStr;
 
 use crate::{BackendError, BackendResult, ShaderStage};
 
 use super::{Device, Index, ProgramHandle, SamplerDesc};
 
 const MAX_SAMPLERS: usize = 16;
-const MAX_SETS: usize = 4;
+pub const MAX_BINDING_GROUPS: usize = 4;
 pub const DYNAMIC_BINDING_SLOT: usize = 3;
 pub const MATERIAL_BINDING_SLOT: usize = 1;
-
-type DescriptorSetLayout = BTreeMap<u32, rspirv_reflect::DescriptorInfo>;
-type StageDescriptorSetLayouts = BTreeMap<u32, DescriptorSetLayout>;
 
 #[derive(Debug, Default)]
 pub(crate) struct BindGroupLayout {
     pub layout: vk::DescriptorSetLayout,
     pub types: HashMap<u32, vk::DescriptorType>,
-    pub names: HashMap<String, u32>,
+    pub names: HashMap<SmolStr, u32>,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Eq)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
+pub struct BindingDesc<'a> {
+    pub slot: usize,
+    pub name: &'a str,
+    pub ty: BindType,
+    pub count: usize,
+}
+
+#[derive(Debug, Default, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct BindGroupLayoutDesc {
     pub stage: ShaderStage,
-    pub expected_count: u32,
-    set: HashMap<u32, DescriptorInfo>,
+    pub set: &'static [BindingDesc<'static>],
 }
 
-impl std::hash::Hash for BindGroupLayoutDesc {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.stage.hash(state);
-        self.expected_count.hash(state);
-        self.set.iter().for_each(|(index, info)| {
-            index.hash(state);
-            discriminant(&info.binding_count);
-            if let rspirv_reflect::BindingCount::StaticSized(count) = info.binding_count {
-                count.hash(state);
-            }
-            info.name.hash(state);
-            info.ty.0.hash(state);
-        });
-    }
-}
-
-#[derive(Debug, Hash, Clone, PartialEq, Eq)]
+#[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub enum BindType {
     SampledImage,
     StorageImage,
     CombinedImageSampler,
-    Uniform,
+    UniformBuffer,
     DynamicUniformBuffer,
     StorageBuffer,
     DynamicStorageBuffer,
+    Sampler,
 }
 
-impl BindGroupLayoutDesc {
-    pub fn stage(mut self, stage: ShaderStage) -> Self {
-        self.stage = stage;
-
-        self
-    }
-
-    pub fn expected_count(mut self, count: u32) -> Self {
-        self.expected_count = count;
-        self
-    }
-
-    pub fn bind(mut self, index: usize, name: &str, ty: BindType, count: usize) -> Self {
-        debug_assert!(count > 0);
-        let ty = match ty {
-            BindType::Uniform => rspirv_reflect::DescriptorType::UNIFORM_BUFFER,
-            BindType::DynamicUniformBuffer => {
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-            }
-            BindType::StorageBuffer => rspirv_reflect::DescriptorType::STORAGE_BUFFER,
-            BindType::DynamicStorageBuffer => {
-                rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC
-            }
-            BindType::SampledImage => rspirv_reflect::DescriptorType::SAMPLED_IMAGE,
-            BindType::StorageImage => rspirv_reflect::DescriptorType::STORAGE_IMAGE,
-            BindType::CombinedImageSampler => {
-                rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER
-            }
-        };
-        let binding_count = if count == 1 {
-            rspirv_reflect::BindingCount::One
-        } else {
-            rspirv_reflect::BindingCount::StaticSized(count)
-        };
-        self.set.insert(
-            index as u32,
-            rspirv_reflect::DescriptorInfo {
-                ty,
-                binding_count,
-                name: name.to_owned(),
-            },
-        );
-
-        self
+impl From<BindType> for vk::DescriptorType {
+    fn from(value: BindType) -> Self {
+        match value {
+            BindType::SampledImage => vk::DescriptorType::SAMPLED_IMAGE,
+            BindType::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
+            BindType::CombinedImageSampler => vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+            BindType::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
+            BindType::DynamicUniformBuffer => vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+            BindType::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
+            BindType::DynamicStorageBuffer => vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+            BindType::Sampler => vk::DescriptorType::SAMPLER,
+        }
     }
 }
 
 impl BindGroupLayout {
-    pub(crate) fn from_desc(
-        device: &ash::Device,
-        desc: &BindGroupLayoutDesc,
-        inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
-    ) -> BackendResult<Self> {
-        Self::new(
-            device,
-            desc.stage.into(),
-            &desc.set,
-            false,
-            inmuatable_samplers,
-        )
-    }
-
     pub(crate) fn new(
         device: &ash::Device,
-        stage: vk::ShaderStageFlags,
-        set: &HashMap<u32, DescriptorInfo>,
-        dynamic: bool,
+        set: &BindGroupLayoutDesc,
         inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
     ) -> Result<Self, BackendError> {
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
-        let mut bindings = HashMap::with_capacity(set.len());
-        for (index, binding) in set.iter() {
+        let mut bindings = HashMap::with_capacity(set.set.len());
+        for binding in set.set.iter() {
             match binding.ty {
-                rspirv_reflect::DescriptorType::UNIFORM_BUFFER
-                | rspirv_reflect::DescriptorType::UNIFORM_TEXEL_BUFFER
-                | rspirv_reflect::DescriptorType::STORAGE_IMAGE
-                | rspirv_reflect::DescriptorType::STORAGE_BUFFER
-                | rspirv_reflect::DescriptorType::STORAGE_BUFFER_DYNAMIC => {
-                    let binding = Self::create_buffer_binding(*index, stage, binding, dynamic);
-
-                    bindings.insert(*index, binding);
+                BindType::UniformBuffer
+                | BindType::StorageBuffer
+                | BindType::StorageImage
+                | BindType::DynamicUniformBuffer
+                | BindType::DynamicStorageBuffer
+                | BindType::SampledImage => {
+                    bindings.insert(binding.slot, Self::create_binding(set.stage, binding));
                 }
-                rspirv_reflect::DescriptorType::SAMPLED_IMAGE => {
-                    bindings.insert(
-                        *index,
-                        Self::create_sampled_image_binding(*index, stage, binding),
-                    );
-                }
-                rspirv_reflect::DescriptorType::SAMPLER
-                | rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
+                BindType::CombinedImageSampler | BindType::Sampler => {
                     let sampler_index = samplers.len();
                     samplers.push(
                         inmuatable_samplers
-                            .get(&Self::get_suitable_sampler_desc(binding))
+                            .get(&Self::get_suitable_sampler_desc(binding.name))
                             .unwrap(),
                     );
                     bindings.insert(
-                        *index,
-                        Self::create_sampler_binding(
-                            *index,
-                            stage,
-                            binding,
-                            samplers[sampler_index],
-                        ),
+                        binding.slot,
+                        Self::create_sampler_binding(set.stage, binding, samplers[sampler_index]),
                     );
                 }
-                _ => unimplemented!("{:?}", binding),
             };
         }
 
         let layoyt = bindings.values().copied().collect::<Vec<_>>();
-        let mut types = HashMap::with_capacity(set.len());
+        let mut types = HashMap::with_capacity(set.set.len());
         bindings.into_iter().for_each(|(index, binding)| {
-            types.insert(index, binding.descriptor_type);
+            types.insert(index as u32, binding.descriptor_type);
         });
         let layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
             .bindings(&layoyt)
             .build();
         let layout = unsafe { device.create_descriptor_set_layout(&layout_create_info, None) }?;
 
-        let mut names = HashMap::with_capacity(set.len());
-        set.iter().for_each(|(index, info)| {
-            names.insert(info.name.clone(), *index);
+        let mut names = HashMap::with_capacity(set.set.len());
+        set.set.iter().for_each(|binding| {
+            names.insert(binding.name.into(), binding.slot as u32);
         });
 
         Ok(Self {
@@ -210,76 +132,25 @@ impl BindGroupLayout {
         })
     }
 
-    fn create_buffer_binding(
-        index: u32,
-        stage: vk::ShaderStageFlags,
-        binding: &DescriptorInfo,
-        dynamic: bool,
-    ) -> vk::DescriptorSetLayoutBinding {
-        let descriptor_type = match binding.ty {
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if dynamic => {
-                vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC
-            }
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER => vk::DescriptorType::UNIFORM_BUFFER,
-            rspirv_reflect::DescriptorType::UNIFORM_TEXEL_BUFFER => {
-                vk::DescriptorType::UNIFORM_TEXEL_BUFFER
-            }
-            rspirv_reflect::DescriptorType::STORAGE_IMAGE => vk::DescriptorType::STORAGE_IMAGE,
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER if dynamic => {
-                vk::DescriptorType::STORAGE_BUFFER_DYNAMIC
-            }
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER => vk::DescriptorType::STORAGE_BUFFER,
-            _ => unimplemented!("{:?}", binding),
-        };
+    fn create_binding(stage: ShaderStage, binding: &BindingDesc) -> vk::DescriptorSetLayoutBinding {
         vk::DescriptorSetLayoutBinding::builder()
-            .binding(index)
-            .descriptor_type(descriptor_type)
-            .descriptor_count(1)
-            .stage_flags(stage)
-            .build()
-    }
-
-    fn create_sampled_image_binding(
-        index: u32,
-        stage: vk::ShaderStageFlags,
-        binding: &DescriptorInfo,
-    ) -> vk::DescriptorSetLayoutBinding {
-        let descriptor_count = match binding.binding_count {
-            rspirv_reflect::BindingCount::One => 1,
-            rspirv_reflect::BindingCount::StaticSized(size) => size,
-            _ => unimplemented!("{:?}", binding.binding_count),
-        };
-        vk::DescriptorSetLayoutBinding::builder()
-            .binding(index)
-            .descriptor_count(descriptor_count as _)
-            .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
-            .stage_flags(stage)
+            .binding(binding.slot as _)
+            .descriptor_type(binding.ty.into())
+            .descriptor_count(binding.count as _)
+            .stage_flags(stage.into())
             .build()
     }
 
     fn create_sampler_binding(
-        index: u32,
-        stage: vk::ShaderStageFlags,
-        binding: &DescriptorInfo,
+        stage: ShaderStage,
+        binding: &BindingDesc,
         sampler: &vk::Sampler,
     ) -> vk::DescriptorSetLayoutBinding {
-        let descriptor_count = match binding.binding_count {
-            rspirv_reflect::BindingCount::One => 1,
-            rspirv_reflect::BindingCount::StaticSized(size) => size,
-            _ => unimplemented!("{:?}", binding.binding_count),
-        };
-        let ty = match binding.ty {
-            rspirv_reflect::DescriptorType::SAMPLER => vk::DescriptorType::SAMPLER,
-            rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                vk::DescriptorType::COMBINED_IMAGE_SAMPLER
-            }
-            _ => unimplemented!(),
-        };
         vk::DescriptorSetLayoutBinding::builder()
-            .binding(index)
-            .descriptor_count(descriptor_count as _)
-            .descriptor_type(ty)
-            .stage_flags(stage)
+            .binding(binding.slot as _)
+            .descriptor_count(binding.count as _)
+            .descriptor_type(binding.ty.into())
+            .stage_flags(stage.into())
             .immutable_samplers(slice::from_ref(sampler))
             .build()
     }
@@ -288,10 +159,10 @@ impl BindGroupLayout {
         unsafe { device.destroy_descriptor_set_layout(self.layout, None) };
     }
 
-    fn get_suitable_sampler_desc(binding: &DescriptorInfo) -> SamplerDesc {
-        let address_mode = if binding.name.ends_with("_e") {
+    fn get_suitable_sampler_desc(name: &str) -> SamplerDesc {
+        let address_mode = if name.ends_with("_e") {
             vk::SamplerAddressMode::CLAMP_TO_EDGE
-        } else if binding.name.ends_with("_m") {
+        } else if name.ends_with("_m") {
             vk::SamplerAddressMode::MIRRORED_REPEAT
         } else {
             vk::SamplerAddressMode::REPEAT
@@ -356,7 +227,6 @@ pub(crate) struct Shader {
     pub raw: vk::ShaderModule,
     pub stage: vk::ShaderStageFlags,
     pub entry: CString,
-    pub descriptor_sets: StageDescriptorSetLayouts,
 }
 
 impl Shader {
@@ -370,8 +240,6 @@ impl Shader {
             raw: shader,
             stage: desc.stage.into(),
             entry: CString::new(desc.entry).unwrap(),
-            descriptor_sets: rspirv_reflect::Reflection::new_from_spirv(desc.code)?
-                .get_descriptor_sets()?,
         })
     }
 
@@ -380,24 +248,18 @@ impl Shader {
     }
 }
 
-pub const MAX_SHADERS: usize = 2;
+pub const MAX_SHADERS: usize = 3;
 
 /// Shader program similar to what we had in OpenGL.
 ///
 /// Contains shader modules and layouts needed to create PSOs and descriptor sets.
 #[derive(Debug)]
 pub struct Program {
-    pub(crate) pipeline_layout: vk::PipelineLayout,
-    pub(crate) sets: ArrayVec<BindGroupLayout, MAX_SETS>,
     pub(crate) shaders: ArrayVec<Shader, MAX_SHADERS>,
 }
 
 impl Program {
-    pub(crate) fn new(
-        device: &ash::Device,
-        shaders: &[ShaderDesc],
-        inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
-    ) -> Result<Self, BackendError> {
+    pub(crate) fn new(device: &ash::Device, shaders: &[ShaderDesc]) -> Result<Self, BackendError> {
         let mut stages = vk::ShaderStageFlags::empty();
         shaders.iter().for_each(|x| {
             stages |= x.stage.into();
@@ -408,130 +270,17 @@ impl Program {
             .map(|desc| Shader::new(device, desc).unwrap())
             .collect::<ArrayVec<_, MAX_SHADERS>>();
 
-        let sets =
-            Self::create_descriptor_set_layouts(device, stages, &shaders, inmuatable_samplers)?;
-
-        let descriptor_layouts = sets
-            .iter()
-            .map(|set| set.layout)
-            .collect::<ArrayVec<_, MAX_SETS>>();
-
-        let layout_create_info = vk::PipelineLayoutCreateInfo::builder()
-            .set_layouts(&descriptor_layouts)
-            .build();
-
-        let pipeline_layout = unsafe { device.create_pipeline_layout(&layout_create_info, None) }?;
-
-        Ok(Self {
-            pipeline_layout,
-            sets,
-            shaders,
-        })
-    }
-
-    fn create_descriptor_set_layouts(
-        device: &ash::Device,
-        stages: vk::ShaderStageFlags,
-        shaders: &[Shader],
-        inmuatable_samplers: &HashMap<SamplerDesc, vk::Sampler>,
-    ) -> Result<ArrayVec<BindGroupLayout, MAX_SETS>, BackendError> {
-        let sets = shaders
-            .iter()
-            .map(|shader| shader.descriptor_sets.clone())
-            .collect::<Vec<_>>();
-        let sets = Self::merge_shader_stage_layouts(sets);
-        let set_count = sets.keys().map(|index| *index + 1).max().unwrap_or(0);
-        let mut layouts = ArrayVec::new();
-        for set_index in 0..set_count {
-            let set = sets.get(&set_index);
-            match set {
-                Some(set) => {
-                    let set = set
-                        .iter()
-                        .map(|(a, b)| (*a, b.clone()))
-                        .collect::<HashMap<_, _>>();
-                    layouts.push(BindGroupLayout::new(
-                        device,
-                        stages,
-                        &set,
-                        set_index == DYNAMIC_BINDING_SLOT as u32,
-                        inmuatable_samplers,
-                    )?);
-                }
-                None => {
-                    layouts.push(BindGroupLayout::new(
-                        device,
-                        stages,
-                        &HashMap::default(),
-                        false,
-                        inmuatable_samplers,
-                    )?);
-                }
-            }
-        }
-
-        Ok(layouts)
-    }
-
-    fn merge_shader_stage_layouts(
-        stages: Vec<StageDescriptorSetLayouts>,
-    ) -> StageDescriptorSetLayouts {
-        let mut stages = stages.into_iter();
-        let mut result = stages.next().unwrap_or_default();
-
-        for stage in stages {
-            Self::merge_shader_stage_layout_pair(stage, &mut result);
-        }
-
-        result
-    }
-
-    fn merge_shader_stage_layout_pair(
-        src: StageDescriptorSetLayouts,
-        dst: &mut StageDescriptorSetLayouts,
-    ) {
-        for (set_idx, set) in src.into_iter() {
-            match dst.entry(set_idx) {
-                Entry::Occupied(mut existing) => {
-                    let existing = existing.get_mut();
-                    for (binding_idx, binding) in set {
-                        match existing.entry(binding_idx) {
-                            Entry::Occupied(existing) => {
-                                let existing = existing.get();
-                                assert_eq!(
-                                    existing.ty, binding.ty,
-                                    "binding idx: {}, name: {:?}",
-                                    binding_idx, binding.name
-                                );
-                                assert_eq!(
-                                    existing.name, binding.name,
-                                    "binding idx: {}, name: {:?}",
-                                    binding_idx, binding.name
-                                );
-                            }
-                            Entry::Vacant(vacant) => {
-                                vacant.insert(binding);
-                            }
-                        }
-                    }
-                }
-                Entry::Vacant(vacant) => {
-                    vacant.insert(set);
-                }
-            }
-        }
+        Ok(Self { shaders })
     }
 
     pub fn free(&self, device: &ash::Device) {
         self.shaders.iter().for_each(|shader| shader.free(device));
-        unsafe { device.destroy_pipeline_layout(self.pipeline_layout, None) };
-        self.sets.iter().for_each(|set| set.free(device));
     }
 }
 
 impl Device {
     pub fn create_program(&self, shaders: &[ShaderDesc]) -> BackendResult<ProgramHandle> {
-        let program = Program::new(&self.raw, shaders, &self.samplers)?;
+        let program = Program::new(&self.raw, shaders)?;
         let mut programs = self.program_storage.write();
         let index = programs.len();
         programs.push(program);

@@ -158,7 +158,13 @@ impl DrawStream {
         }
     }
 
-    pub fn draw(&mut self, first_index: u32, index_count: u32, instance_count: u32, first_instance: u32) {
+    pub fn draw(
+        &mut self,
+        first_index: u32,
+        index_count: u32,
+        instance_count: u32,
+        first_instance: u32,
+    ) {
         debug_assert!(
             self.current.pipeline.is_valid(),
             "Pipeline handle must be valid"
@@ -241,12 +247,13 @@ impl DrawStream {
         let mut vertex_count = 0u32;
         let mut instance_count = 0u32;
         let mut first_instance = 0u32;
+        descriptors[0] = context
+            .descriptors
+            .get(self.pass_descriptor_set)
+            .copied()
+            .ok_or(DrawStreamError::InvalidHandle)?;
+
         while let Some(mask) = stream.read() {
-            descriptors[0] = context
-                .descriptors
-                .get(self.pass_descriptor_set)
-                .copied()
-                .ok_or(DrawStreamError::InvalidHandle)?;
             if mask & PIPELINE != 0 {
                 let handle: RasterPipelineHandle = stream.read_u32()?.into();
                 let (pipeline, layout) = context

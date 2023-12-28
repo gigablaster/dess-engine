@@ -17,7 +17,7 @@ use std::{collections::HashMap, fmt::Debug};
 
 use dess_assets::{MeshBlendMode, MeshMaterial};
 use dess_backend::{
-    BackendResultExt, BindGroupLayoutDesc, BindType, ImageLayout, ShaderStage,
+    BackendResultExt, BindGroupLayoutDesc, BindType, BindingDesc, ImageLayout, ShaderStage,
     {BindGroupHandle, ImageHandle},
 };
 use smol_str::SmolStr;
@@ -32,9 +32,9 @@ use crate::{
 /// Pipelines aren't created at this stage, they belong to render pass.
 #[derive(Debug, Default)]
 pub struct Material {
+    pub main_bind_group: BindGroupHandle,
+    pub shadow_bind_group: BindGroupHandle,
     images: HashMap<SmolStr, ResourceHandle<ImageHandle>>,
-    main_bind_group: BindGroupHandle,
-    shadow_bind_group: BindGroupHandle,
     emissive_power: f32,
     alpha_cut: f32,
 }
@@ -104,6 +104,66 @@ impl ResourceDependencies for Material {
     }
 }
 
+pub const MESH_PBR_MATERIAL_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::Graphics,
+    set: &[
+        BindingDesc {
+            slot: 0,
+            name: "base",
+            ty: BindType::SampledImage,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 1,
+            name: "normals",
+            ty: BindType::SampledImage,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 2,
+            name: "metallic_roughness",
+            ty: BindType::SampledImage,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 3,
+            name: "occlusion",
+            ty: BindType::SampledImage,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 4,
+            name: "emissive",
+            ty: BindType::SampledImage,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 5,
+            name: "material",
+            ty: BindType::UniformBuffer,
+            count: 1,
+        },
+    ],
+};
+
+pub const MESH_SHADOW_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::Graphics,
+    set: &[
+        BindingDesc {
+            slot: 0,
+            name: "base",
+            ty: BindType::SampledImage,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 1,
+            name: "material",
+            ty: BindType::UniformBuffer,
+            count: 1,
+        },
+    ],
+};
+
 impl Material {
     pub fn new<T: ResourceLoader>(loader: &T, mesh_material: &MeshMaterial) -> Result<Self, Error> {
         let mut images = HashMap::new();
@@ -121,22 +181,12 @@ impl Material {
         } else {
             0.0
         };
-        let main_bind_group = loader.render_device().create_bind_group_from_desc(
-            &BindGroupLayoutDesc::default()
-                .stage(ShaderStage::Vertex | ShaderStage::Fragment)
-                .bind(0, "base", BindType::SampledImage, 1)
-                .bind(1, "normals", BindType::SampledImage, 1)
-                .bind(2, "metallic_roughness", BindType::SampledImage, 1)
-                .bind(3, "occlusion", BindType::SampledImage, 1)
-                .bind(4, "emissive", BindType::SampledImage, 1)
-                .bind(5, "material", BindType::Uniform, 1),
-        )?;
-        let shadow_bind_group = loader.render_device().create_bind_group_from_desc(
-            &BindGroupLayoutDesc::default()
-                .stage(ShaderStage::Vertex | ShaderStage::Fragment)
-                .bind(0, "base", BindType::SampledImage, 1)
-                .bind(1, "material", BindType::Uniform, 1),
-        )?;
+        let main_bind_group = loader
+            .render_device()
+            .create_bind_group(&MESH_PBR_MATERIAL_LAYOUT)?;
+        let shadow_bind_group = loader
+            .render_device()
+            .create_bind_group(&MESH_SHADOW_LAYOUT)?;
         Ok(Self {
             images,
             main_bind_group,
