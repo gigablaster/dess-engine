@@ -23,7 +23,7 @@ struct ClearBackbuffer {
 }
 
 static PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color_attachments: &[Format::RGBA8_UNORM],
+    color_attachments: &[Format::BGRA8_UNORM],
     depth_attachment: Some(Format::D24),
 };
 

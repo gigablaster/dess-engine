@@ -389,6 +389,18 @@ pub struct RenderArea {
     pub height: u32,
 }
 
+impl From<RenderArea> for vk::Viewport {
+    fn from(value: RenderArea) -> Self {
+        Self {
+            x: value.x as _,
+            y: value.y as _,
+            width: value.width as _,
+            height: value.height as _,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }
+    }
+}
 impl From<RenderArea> for vk::Rect2D {
     fn from(value: RenderArea) -> Self {
         Self {

@@ -242,7 +242,7 @@ impl DrawStream {
         let mut dynamic_offset_changed = false;
         let mut current_layout = vk::PipelineLayout::null();
         let mut descriptors = [vk::DescriptorSet::null(); MAX_DESCRIPTOR_SETS + 1];
-        let mut dynamic_offsets = [0u32; MAX_DYNAMIC_OFFSETS];
+        let mut dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
         let mut first_index = 0u32;
         let mut vertex_count = 0u32;
         let mut instance_count = 0u32;

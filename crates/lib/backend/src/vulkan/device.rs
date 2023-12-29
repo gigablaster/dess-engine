@@ -441,10 +441,6 @@ impl Device {
             .drop_list
             .replace(mem::take(&mut self.current_drop_list.lock()));
 
-        // Upload staging and descriptor sets
-        let staging_semaphore = self.staging.lock().upload(self)?;
-        self.update_descriptor_sets()?;
-
         let backbuffer = match swapchain.acquire_next_image()? {
             crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
             crate::vulkan::AcquiredSurface::Image(image) => image,
@@ -459,7 +455,9 @@ impl Device {
             passes: Mutex::default(),
         };
         frame_fn(&context)?;
-
+        // Upload staging and descriptor sets
+        let staging_semaphore = self.staging.lock().upload(self)?;
+        self.update_descriptor_sets()?;
         {
             puffin::profile_scope!("Record frame");
             let info = vk::CommandBufferBeginInfo::builder()
@@ -749,8 +747,13 @@ impl Drop for Device {
         self.pipelines
             .write()
             .drain()
-            .filter_map(|((pipeline, _), _)| (pipeline != vk::Pipeline::null()).then_some(pipeline))
-            .for_each(|pipeline| unsafe { self.raw.destroy_pipeline(pipeline, None) });
+            .filter_map(|((pipeline, layout), _)| {
+                (pipeline != vk::Pipeline::null()).then_some((pipeline, layout))
+            })
+            .for_each(|(pipeline, layout)| unsafe {
+                self.raw.destroy_pipeline(pipeline, None);
+                self.raw.destroy_pipeline_layout(layout, None);
+            });
 
         self.program_storage
             .write()

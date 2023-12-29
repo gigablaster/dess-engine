@@ -186,7 +186,18 @@ impl DeferedPass for Pass {
                 .raw
                 .cmd_begin_rendering(context.frame.main_cb.raw, &info)
         };
-
+        unsafe {
+            context.device.raw.cmd_set_viewport(
+                context.frame.main_cb.raw,
+                0,
+                &[self.rende_area.into()],
+            );
+            context.device.raw.cmd_set_scissor(
+                context.frame.main_cb.raw,
+                0,
+                &[self.rende_area.into()],
+            );
+        }
         for stream in &self.streams {
             stream.execute(context, context.frame.main_cb.raw)?;
         }

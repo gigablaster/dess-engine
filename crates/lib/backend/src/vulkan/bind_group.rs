@@ -22,7 +22,7 @@ use ash::vk;
 use dess_common::{Handle, HotColdPool, TempList};
 use gpu_descriptor::{DescriptorSetLayoutCreateFlags, DescriptorTotalCount};
 use gpu_descriptor_ash::AshDescriptorDevice;
-use log::warn;
+use log::{debug, warn};
 use smol_str::SmolStr;
 
 use crate::{BackendError, BackendResult, BufferUsage, ImageLayout, ImageUsage};
@@ -489,6 +489,9 @@ impl Device {
         // Warn if there's still dirty descriptors
         if !dirty.is_empty() {
             warn!("Some bind groups are still dirty and lack of bindings");
+            for it in dirty.iter() {
+                debug!("{:?}", storage.get_cold(*it).unwrap());
+            }
         }
 
         Ok(())
@@ -759,6 +762,7 @@ impl Device {
             uniform_buffer_dynamic: (dynamic_uniform_bufffers.len()) as _,
             storage_buffer: (storage_buffers.len()) as _,
             storage_image: (storage_images.len()) as _,
+            storage_buffer_dynamic: dynamic_storage_buffers.len() as _,
             ..Default::default()
         };
         let names = set
