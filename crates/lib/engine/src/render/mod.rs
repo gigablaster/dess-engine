@@ -18,7 +18,7 @@ use std::mem;
 use dess_assets::StaticMeshVertex;
 use dess_backend::{Format, InputVertexAttributeDesc, InputVertexStreamDesc, PipelineVertex};
 
-pub struct RenderMeshVertex {
+pub struct PackedMeshVertex {
     pub position: [u16; 3],
     _pad: u16,
     pub normal: [u16; 2],
@@ -32,7 +32,7 @@ pub struct BasicVertex {
     pub uv: [f32; 2],
 }
 
-impl PipelineVertex for RenderMeshVertex {
+impl PipelineVertex for PackedMeshVertex {
     fn vertex_streams() -> &'static [InputVertexStreamDesc] {
         &[InputVertexStreamDesc {
             attributes: &[
@@ -44,8 +44,8 @@ impl PipelineVertex for RenderMeshVertex {
                 },
                 InputVertexAttributeDesc {
                     format: Format::RG16_UNORM,
-                    locaion: 0,
-                    binding: 1,
+                    locaion: 1,
+                    binding: 0,
                     offset: 8,
                 },
                 InputVertexAttributeDesc {
@@ -67,7 +67,7 @@ impl PipelineVertex for RenderMeshVertex {
                     offset: 20,
                 },
             ],
-            stride: mem::size_of::<RenderMeshVertex>(),
+            stride: mem::size_of::<PackedMeshVertex>(),
         }]
     }
 }
@@ -94,7 +94,7 @@ impl PipelineVertex for BasicVertex {
     }
 }
 
-impl From<StaticMeshVertex> for RenderMeshVertex {
+impl From<StaticMeshVertex> for PackedMeshVertex {
     fn from(value: StaticMeshVertex) -> Self {
         Self {
             position: value.position,
