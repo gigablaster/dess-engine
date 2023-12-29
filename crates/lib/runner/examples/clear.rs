@@ -8,7 +8,7 @@ use dess_backend::{
 };
 use dess_common::GameTime;
 use dess_engine::{
-    render::BasicVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
+    render::PackedMeshVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
     MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
@@ -164,7 +164,7 @@ impl Client for ClearBackbuffer {
         self.pipeline = context
             .pipeline_cache
             .get_or_register_raster_pipeline(
-                RasterPipelineCreateDesc::new::<BasicVertex>(
+                RasterPipelineCreateDesc::new::<PackedMeshVertex>(
                     program,
                     &PASS_LAYOUT,
                     &DRAW_PIPELINE_LAYOUT,
