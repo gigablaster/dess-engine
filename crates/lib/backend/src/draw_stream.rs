@@ -244,7 +244,7 @@ impl DrawStream {
         let mut descriptors = [vk::DescriptorSet::null(); MAX_DESCRIPTOR_SETS + 1];
         let mut dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
         let mut first_index = 0u32;
-        let mut vertex_count = 0u32;
+        let mut index_count = 0u32;
         let mut instance_count = 0u32;
         let mut first_instance = 0u32;
         descriptors[0] = context
@@ -374,11 +374,11 @@ impl DrawStream {
                     }
                 }
             }
+            if mask & INDEX_COUNT != 0 {
+                index_count = stream.read_u32()?
+            }
             if mask & FIRST_INDEX != 0 {
                 first_index = stream.read_u32()?;
-            }
-            if mask & INDEX_COUNT != 0 {
-                vertex_count = stream.read_u32()?
             }
             if mask & INSTANCE_COUNT != 0 {
                 instance_count = stream.read_u32()?;
@@ -427,7 +427,7 @@ impl DrawStream {
             unsafe {
                 context.device.raw.cmd_draw_indexed(
                     cb,
-                    vertex_count,
+                    index_count,
                     instance_count,
                     first_index,
                     0,
