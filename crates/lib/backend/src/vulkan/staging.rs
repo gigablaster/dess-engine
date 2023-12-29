@@ -147,38 +147,6 @@ impl Staging {
         offset: usize,
         data: &[T],
     ) -> BackendResult<()> {
-        if let Some(memory) = &target.memory {
-            if memory.props().contains(
-                gpu_alloc::MemoryPropertyFlags::DEVICE_LOCAL
-                    | gpu_alloc::MemoryPropertyFlags::HOST_VISIBLE,
-            ) {
-                // Special experimental case for UMA - we just map and memcpy.
-                unsafe {
-                    let ptr = device.raw.map_memory(
-                        *memory.memory(),
-                        memory.offset(),
-                        memory.size(),
-                        vk::MemoryMapFlags::empty(),
-                    )? as *mut u8;
-                    copy_nonoverlapping(data.as_ptr() as *const u8, ptr, mem::size_of_val(data));
-                    if !memory
-                        .props()
-                        .contains(gpu_alloc::MemoryPropertyFlags::HOST_COHERENT)
-                    {
-                        let range = vk::MappedMemoryRange::builder()
-                            .memory(*memory.memory())
-                            .offset(memory.offset())
-                            .size(memory.size())
-                            .build();
-                        device
-                            .raw
-                            .flush_mapped_memory_ranges(slice::from_ref(&range))?;
-                    }
-                    device.raw.unmap_memory(*memory.memory());
-                }
-                return Ok(());
-            }
-        }
         let mut current_offset = 0;
         loop {
             let data_len = mem::size_of_val(data);
