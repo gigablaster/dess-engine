@@ -3,14 +3,7 @@ struct PassData {
     float4x4 projection;
 };
 
-struct ObjectData {
-    float position_min_range;
-    float position_max_range;
-    float uv1_min_range;
-    float uv1_max_range;
-    float uv2_min_range;
-    float uv2_max_range;
-};
+struct ObjectData {};
 
 struct InstanceTransform {
     float4x4 model;
@@ -23,7 +16,7 @@ struct VsOut {
 
 struct VsIn {
     [[vk::location(0)]] float3 pos: POSITION;
-    [[vk::location(1)]] float2 uv: TEXCOORD0;
+    [[vk::location(3)]] float2 uv: TEXCOORD0;
     uint instance: SV_InstanceID;
 };
 
@@ -34,8 +27,7 @@ struct VsIn {
 VsOut main(VsIn vsin) {
     VsOut vsout;
     
-    float4x4 mvp = transforms[vsin.instance].model * pass_data.view * pass_data.projection;
-    vsout.position = mul(mvp, float4(vsin.pos, 0.0));
+    vsout.position = mul(pass_data.projection, mul(pass_data.view, mul(transforms[vsin.instance].model, float4(vsin.pos, 1.0))));
     vsout.uv = vsin.uv;
 
     return vsout;
