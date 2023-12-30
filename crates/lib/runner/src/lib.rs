@@ -30,6 +30,7 @@ pub struct InitContext<'a> {
     pub resource_manager: Arc<ResourceManager>,
     pub pipeline_cache: &'a PipelineCache<'a>,
     pub render_device: &'a Device,
+    pub buffer_pool: &'a BufferPool,
 }
 
 pub trait Client {

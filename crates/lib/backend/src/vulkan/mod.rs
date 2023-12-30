@@ -425,4 +425,8 @@ impl RenderArea {
             height,
         }
     }
+
+    pub fn aspect_ratio(&self) -> f32 {
+        (self.width as f32) / (self.height as f32)
+    }
 }

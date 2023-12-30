@@ -8,7 +8,7 @@ use dess_backend::{
 };
 use dess_common::GameTime;
 use dess_engine::{
-    render::PackedMeshVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
+    render::BasicMeshVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
     MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
@@ -98,12 +98,17 @@ impl Client for ClearBackbuffer {
             .device
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
-                    view: glam::Mat4::look_at_lh(
-                        vec3(0.0, 0.0, -10.0),
+                    view: glam::Mat4::look_at_rh(
+                        vec3(0.1, 0.1, 0.1),
                         glam::Vec3::ZERO,
-                        glam::Vec3::Y,
+                        glam::Vec3::Z,
                     ),
-                    projection: glam::Mat4::perspective_lh(PI / 2.0, 1.0, 1.0, 100.0),
+                    projection: glam::Mat4::perspective_rh(
+                        PI / 2.0,
+                        context.frame.render_area.aspect_ratio(),
+                        0.1,
+                        100.0,
+                    ),
                 };
                 ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
 
@@ -164,7 +169,7 @@ impl Client for ClearBackbuffer {
         self.pipeline = context
             .pipeline_cache
             .get_or_register_raster_pipeline(
-                RasterPipelineCreateDesc::new::<PackedMeshVertex>(
+                RasterPipelineCreateDesc::new::<BasicMeshVertex>(
                     program,
                     &PASS_LAYOUT,
                     &DRAW_PIPELINE_LAYOUT,

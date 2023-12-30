@@ -30,9 +30,7 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 #[repr(C, align(16))]
 struct ObjectScaleUniform {
-    pub position_range: (f32, f32),
-    pub uv_ranges: [(f32, f32); 2],
-    _pad: [f32; 2],
+    _pad: [f32; 4],
 }
 
 /// Single primitive to draw
@@ -99,12 +97,8 @@ impl StaticMesh {
             .collect::<Vec<_>>();
         device
             .with_bind_groups(|ctx| {
-                for (i, submesh) in asset.submeshes.iter().enumerate() {
-                    let uniform = ObjectScaleUniform {
-                        position_range: submesh.position_range,
-                        uv_ranges: submesh.uv_ranges,
-                        _pad: [0.0; 2],
-                    };
+                for (i, _) in asset.submeshes.iter().enumerate() {
+                    let uniform = ObjectScaleUniform { _pad: [0.0; 4] };
                     ctx.bind_uniform(submeshes[i].object_bind_group, 0, &uniform)?;
                 }
 

@@ -47,21 +47,22 @@ impl ContentSource for GltfSource {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Default, Readable, Writable)]
+#[repr(C)]
 pub struct StaticMeshVertex {
-    pub position: [u16; 3],
-    pub normal: [u16; 2],
-    pub tangent: [u16; 2],
-    pub uv1: [u16; 2],
-    pub uv2: [u16; 2],
+    pub position: [f32; 3],
+    pub normal: [f32; 3],
+    pub tangent: [f32; 3],
+    pub uv1: [f32; 2],
+    pub uv2: [f32; 2],
 }
 
 impl StaticMeshVertex {
     pub fn new(
-        position: [u16; 3],
-        normal: [u16; 2],
-        tangent: [u16; 2],
-        uv1: [u16; 2],
-        uv2: [u16; 2],
+        position: [f32; 3],
+        normal: [f32; 3],
+        tangent: [f32; 3],
+        uv1: [f32; 2],
+        uv2: [f32; 2],
     ) -> Self {
         Self {
             position,
@@ -86,8 +87,6 @@ pub struct SubMesh {
     pub first_index: u32,
     pub index_count: u32,
     pub bounds: ([f32; 3], [f32; 3]),
-    pub position_range: (f32, f32),
-    pub uv_ranges: [(f32, f32); 2],
     pub material: u32,
 }
 

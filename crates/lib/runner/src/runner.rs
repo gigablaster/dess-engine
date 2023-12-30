@@ -84,6 +84,7 @@ impl<T: Client> Runner<T> {
                 resource_manager: resource_manager.clone(),
                 pipeline_cache: &pipeline_cache,
                 render_device: &device,
+                buffer_pool: &buffer_pool,
             });
         }
         info!("Main loop enter");

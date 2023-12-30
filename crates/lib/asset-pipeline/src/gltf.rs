@@ -146,42 +146,29 @@ fn process_model(ctx: &mut SceneProcessingContext, root: gltf::Node) {
 
 struct ProcessedGeometry {
     pub vertices: Vec<StaticMeshVertex>,
-    pub position_range: (f32, f32),
-    pub uv1_range: (f32, f32),
-    pub uv2_range: (f32, f32),
 }
 
 fn process_geometry(
-    positons: &[[f32; 3]],
+    positions: &[[f32; 3]],
     normals: &[[f32; 3]],
     tangents: &[[f32; 3]],
     uv1: &[[f32; 2]],
     uv2: &[[f32; 2]],
 ) -> ProcessedGeometry {
-    let count = positons.len();
+    let count = positions.len();
     let mut vertices = Vec::with_capacity(count);
-    let (min_position, max_position, positions) = quantize_positions(positons);
-    let uv1 = quantize_uvs(uv1);
-    let uv2 = quantize_uvs(uv2);
-    let normals = quantize_normalized(normals);
-    let tangents = quantize_normalized(tangents);
     for index in 0..count {
         let vertex = StaticMeshVertex::new(
             positions[index],
             normals[index],
             tangents[index],
-            uv1.2[index],
-            uv2.2[index],
+            uv1[index],
+            uv2[index],
         );
         vertices.push(vertex);
     }
 
-    ProcessedGeometry {
-        vertices,
-        position_range: (min_position, max_position),
-        uv1_range: (uv1.0, uv1.1),
-        uv2_range: (uv2.0, uv2.1),
-    }
+    ProcessedGeometry { vertices }
 }
 
 fn process_texture(
@@ -356,13 +343,15 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
             .collect::<Vec<_>>();
         let processed = process_geometry(&positions, &normals, &tangents, &uvs1, &uvs2);
 
-        let (total_vertex_count, remap) =
-            meshopt::generate_vertex_remap(&processed.vertices, Some(&indices));
-        let mut vertices =
-            meshopt::remap_vertex_buffer(&processed.vertices, total_vertex_count, &remap);
-        let mut indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
-        meshopt::optimize_vertex_cache_in_place(&indices, vertices.len());
+        // let (total_vertex_count, remap) =
+        //     meshopt::generate_vertex_remap(&processed.vertices, Some(&indices));
+        // let mut vertices =
+        //     meshopt::remap_vertex_buffer(&processed.vertices, total_vertex_count, &remap);
+        // let mut indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
+        // meshopt::optimize_vertex_cache_in_place(&indices, vertices.len());
 
+        let mut indices = indices.clone();
+        let mut vertices = processed.vertices.clone();
         let first_index = mesh_indices.len() as u32;
         let index_count = indices.len() as u32;
         let material = process_material(ctx, &prim.material());
@@ -372,8 +361,6 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
             first_index,
             index_count,
             bounds,
-            position_range: processed.position_range,
-            uv_ranges: [processed.uv1_range, processed.uv2_range],
             material,
         });
     }
