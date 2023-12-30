@@ -454,12 +454,15 @@ impl Device {
             temp_buffer_handle: self.temp_buffer_handle,
             passes: Mutex::default(),
         };
-        frame_fn(&context)?;
+        {
+            puffin::profile_scope!("Collection draw calls");
+            frame_fn(&context)?;
+        }
         // Upload staging and descriptor sets
         let staging_semaphore = self.staging.lock().upload(self)?;
         self.update_descriptor_sets()?;
         {
-            puffin::profile_scope!("Record frame");
+            puffin::profile_scope!("Execute recorded frame");
             let info = vk::CommandBufferBeginInfo::builder()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
                 .build();

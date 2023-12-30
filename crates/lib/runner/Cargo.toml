@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+puffin = "0.18.0"
 simple_logger = "4.2.0"
 dess-backend = { path = "../backend" }
 dess-common = { path = "../common" }
@@ -16,8 +17,9 @@ raw-window-handle = "0.5.2"
 log = "0.4.20"
 
 [[example]]
-name = "clear"
+name = "demo"
 
 [dev-dependencies]
 dess-assets = { path = "../assets" }
 glam = "0.25.0"
+puffin_http = "0.15.0"

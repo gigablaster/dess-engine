@@ -124,6 +124,6 @@ impl Frame {
             );
         }
 
-        Ok(offset as u32)
+        Ok((offset + self.temp_offset) as u32)
     }
 }

@@ -233,7 +233,7 @@ impl DrawStream {
         if self.stream.is_empty() {
             return Ok(());
         }
-        puffin::profile_function!();
+        puffin::profile_scope!("Execute draw stream");
         let mut stream = DrawStreamReader {
             stream: &self.stream,
             cursor: 0,

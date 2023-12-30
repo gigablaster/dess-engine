@@ -1,5 +1,6 @@
-use std::{f32::consts::PI, sync::Arc};
+use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 
+use bevy_tasks::ComputeTaskPool;
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
@@ -15,11 +16,12 @@ use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
 use glam::vec3;
 
 #[derive(Default)]
-struct ClearBackbuffer {
+struct ClearBackbuffer<'a> {
     model: Arc<ModelCollection>,
     pipeline: RasterPipelineHandle,
     scene_bind_group: BindGroupHandle,
     draw_bind_group: BindGroupHandle,
+    _phantom: PhantomData<&'a ()>,
 }
 
 static PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
@@ -50,7 +52,7 @@ const DRAW_CALL_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     set: &[BindingDesc {
         slot: 0,
         name: "draw",
-        ty: BindType::DynamicStorageBuffer,
+        ty: BindType::DynamicUniformBuffer,
         count: 1,
     }],
 };
@@ -68,7 +70,50 @@ struct SceneUniform {
     pub projection: glam::Mat4,
 }
 
-impl Client for ClearBackbuffer {
+impl<'a> ClearBackbuffer<'a> {
+    async fn create_draw_stream(&self, context: &RenderContext<'a>, x: f32, y: f32) -> DrawStream {
+        puffin::profile_function!();
+        let mut stream = DrawStream::new(self.scene_bind_group);
+        for z in -20..20 {
+            stream.bind_pipeline(self.pipeline);
+            for model in self.model.models.values() {
+                let mut bones = Vec::with_capacity(model.bones.len());
+                for (index, bone) in model.bones.iter().enumerate() {
+                    let parent = model.bone_parents[index];
+                    if parent == u32::MAX {
+                        bones.push(
+                            glam::Mat4::from_translation(vec3(
+                                x as f32 * 0.1,
+                                y as f32 * 0.1,
+                                z as f32 * 0.1,
+                            )) * glam::Mat4::from(*bone),
+                        );
+                    } else {
+                        bones.push(bones[parent as usize] * glam::Mat4::from(*bone))
+                    }
+                }
+                let temp = context.frame.temp_allocate(&bones).unwrap();
+                stream.set_dynamic_buffer_offset(0, Some(temp.offset));
+                stream.bind_descriptor_set(3, Some(self.draw_bind_group));
+                for (bone_idx, mesh_idx) in &model.instances {
+                    let mesh = &model.static_meshes[*mesh_idx as usize];
+                    stream.bind_vertex_buffer(0, Some(mesh.vertices));
+                    stream.bind_index_buffer(Some(mesh.indices));
+                    for submesh in &mesh.submeshes {
+                        stream.bind_descriptor_set(
+                            1,
+                            Some(mesh.resolved_materials[submesh.material_index].main_bind_group),
+                        );
+                        stream.bind_descriptor_set(2, Some(submesh.object_bind_group));
+                        stream.draw(submesh.first_index, submesh.index_count, 1, *bone_idx);
+                    }
+                }
+            }
+        }
+        stream
+    }
+}
+impl<'a> Client for ClearBackbuffer<'a> {
     fn tick(&mut self, _context: UpdateContext, _dt: GameTime) -> dess_runner::ClientState {
         dess_runner::ClientState::Continue
     }
@@ -115,40 +160,18 @@ impl Client for ClearBackbuffer {
                 Ok(())
             })
             .unwrap();
-        let mut stream = DrawStream::new(self.scene_bind_group);
-        stream.bind_pipeline(self.pipeline);
-        for model in self.model.models.values() {
-            let mut bones = Vec::with_capacity(model.bones.len());
-            for (index, bone) in model.bones.iter().enumerate() {
-                let parent = model.bone_parents[index];
-                if parent == u32::MAX {
-                    bones.push(glam::Mat4::from(*bone));
-                } else {
-                    bones.push(bones[parent as usize] * glam::Mat4::from(*bone))
+        let streams = ComputeTaskPool::get().scope(|s| {
+            for x in -20..20 {
+                for y in -20..20 {
+                    s.spawn(self.create_draw_stream(&context, x as f32, y as f32))
                 }
             }
-            let temp = context.frame.temp_allocate(&bones).unwrap();
-            stream.set_dynamic_buffer_offset(0, Some(temp.offset));
-            stream.bind_descriptor_set(3, Some(self.draw_bind_group));
-            for (bone_idx, mesh_idx) in &model.instances {
-                let mesh = &model.static_meshes[*mesh_idx as usize];
-                stream.bind_vertex_buffer(0, Some(mesh.vertices));
-                stream.bind_index_buffer(Some(mesh.indices));
-                for submesh in &mesh.submeshes {
-                    stream.bind_descriptor_set(
-                        1,
-                        Some(mesh.resolved_materials[submesh.material_index].main_bind_group),
-                    );
-                    stream.bind_descriptor_set(2, Some(submesh.object_bind_group));
-                    stream.draw(submesh.first_index, submesh.index_count, 1, *bone_idx);
-                }
-            }
-        }
+        });
         context.frame.execute(
             context.frame.render_area,
             &[color_target],
             Some(depth_target),
-            [stream].into_iter(),
+            streams.into_iter(),
             &[],
         );
 
@@ -200,10 +223,11 @@ impl Client for ClearBackbuffer {
         context
             .render_device
             .with_bind_groups(|ctx| {
-                ctx.bind_dynamic_storage_buffer(
+                ctx.bind_dynamic_uniform_buffer(
                     self.draw_bind_group,
                     0,
                     context.render_device.temp_buffer(),
+                    mem::size_of::<glam::Mat4>(),
                 )
             })
             .unwrap();
@@ -211,6 +235,9 @@ impl Client for ClearBackbuffer {
 }
 
 fn main() {
+    let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);
+    let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
+    puffin::set_scopes_on(true);
     let mut runner = Runner::new(
         ClearBackbuffer::default(),
         "Dess Engine - Clear backbuffer example",

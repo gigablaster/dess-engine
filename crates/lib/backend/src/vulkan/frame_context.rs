@@ -366,6 +366,7 @@ impl<'a> ExecutionContext<'a> {
     where
         I: Iterator<Item = &'a Box<dyn DeferedPass>>,
     {
+        puffin::profile_function!();
         for pass in passes {
             pass.execute(self)?;
         }

@@ -44,9 +44,9 @@ const BASIC_DESCIPTOR_UPDATE_COUNT: usize = 512;
 pub struct DescriptorData {
     pub(crate) descriptor: Option<DescriptorSet>,
     pub(crate) uniform_buffers: Vec<BindingPoint<(u32, u32)>>,
-    pub(crate) dynamic_uniform_bufffers: Vec<BindingPoint<vk::Buffer>>,
+    pub(crate) dynamic_uniform_bufffers: Vec<BindingPoint<(vk::Buffer, usize)>>,
     pub(crate) storage_buffers: Vec<BindingPoint<(BufferHandle, vk::Buffer, u32, u32)>>,
-    pub(crate) dynamic_storage_buffers: Vec<BindingPoint<vk::Buffer>>,
+    pub(crate) dynamic_storage_buffers: Vec<BindingPoint<(vk::Buffer, usize)>>,
     pub(crate) storage_images: Vec<BindingPoint<(ImageHandle, vk::ImageView, vk::ImageLayout)>>,
     pub(crate) sampled_images: Vec<BindingPoint<(ImageHandle, vk::ImageView, vk::ImageLayout)>>,
     pub(crate) layout: vk::DescriptorSetLayout,
@@ -283,6 +283,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
         handle: BindGroupHandle,
         binding: usize,
         buffer: BufferHandle,
+        size: usize,
     ) -> BackendResult<()> {
         let desc = self
             .storage
@@ -299,7 +300,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
             .iter_mut()
             .find(|point| point.binding == binding as u32);
         if let Some(point) = buffer_bind {
-            point.data = Some(raw.raw);
+            point.data = Some((raw.raw, size));
             self.dirty.insert(handle);
         }
 
@@ -311,6 +312,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
         handle: BindGroupHandle,
         name: &str,
         buffer: BufferHandle,
+        size: usize,
     ) -> BackendResult<()> {
         let binding = self
             .storage
@@ -320,7 +322,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
             .get(name)
             .copied()
             .ok_or(BackendError::NotFound)?;
-        self.bind_dynamic_uniform_buffer(handle, binding, buffer)
+        self.bind_dynamic_uniform_buffer(handle, binding, buffer, size)
     }
 
     pub fn bind_storage_buffer(
@@ -374,6 +376,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
         handle: BindGroupHandle,
         binding: usize,
         buffer: BufferHandle,
+        size: usize,
     ) -> BackendResult<()> {
         let desc = self
             .storage
@@ -390,7 +393,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
             .iter_mut()
             .find(|point| point.binding == binding as u32);
         if let Some(point) = buffer_bind {
-            point.data = Some(raw.raw);
+            point.data = Some((raw.raw, size));
             self.dirty.insert(handle);
         }
 
@@ -402,6 +405,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
         handle: BindGroupHandle,
         name: &str,
         buffer: BufferHandle,
+        size: usize,
     ) -> BackendResult<()> {
         let binding = self
             .storage
@@ -411,7 +415,7 @@ impl<'a> UpdateBindGroupsContext<'a> {
             .get(name)
             .copied()
             .ok_or(BackendError::NotFound)?;
-        self.bind_dynamic_storage_buffer(handle, binding, buffer)
+        self.bind_dynamic_storage_buffer(handle, binding, buffer, size)
     }
 }
 
@@ -568,9 +572,9 @@ impl Device {
                     .map(|binding| {
                         let data = &binding.data.unwrap();
                         let buffer = vk::DescriptorBufferInfo::builder()
-                            .buffer(*data)
+                            .buffer(data.0)
                             .offset(0)
-                            .range(vk::WHOLE_SIZE)
+                            .range(data.1 as _)
                             .build();
 
                         vk::WriteDescriptorSet::builder()
@@ -595,7 +599,7 @@ impl Device {
                             .buffer_info(slice::from_ref(buffers.add(buffer)))
                             .dst_binding(binding.binding)
                             .dst_set(*descriptor.raw())
-                            .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                            .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                             .build()
                     })
                     .for_each(|x| writes.push(x));
@@ -604,9 +608,9 @@ impl Device {
                     .map(|binding| {
                         let data = &binding.data.unwrap();
                         let buffer = vk::DescriptorBufferInfo::builder()
-                            .buffer(*data)
+                            .buffer(data.0)
                             .offset(0)
-                            .range(vk::WHOLE_SIZE)
+                            .range(data.1 as _)
                             .build();
 
                         vk::WriteDescriptorSet::builder()
@@ -703,7 +707,7 @@ impl Device {
             .iter()
             .filter_map(|(index, ty)| {
                 if *ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC {
-                    Some(BindingPoint::<vk::Buffer> {
+                    Some(BindingPoint::<(vk::Buffer, usize)> {
                         binding: *index,
                         data: None,
                     })
@@ -731,7 +735,7 @@ impl Device {
             .iter()
             .filter_map(|(index, ty)| {
                 if *ty == vk::DescriptorType::STORAGE_BUFFER_DYNAMIC {
-                    Some(BindingPoint::<vk::Buffer> {
+                    Some(BindingPoint::<(vk::Buffer, usize)> {
                         binding: *index,
                         data: None,
                     })

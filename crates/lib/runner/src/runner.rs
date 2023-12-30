@@ -48,7 +48,7 @@ impl<T: Client> Runner<T> {
             .unwrap();
 
         let instance = Instance::new(
-            InstanceBuilder::default().debug(true),
+            InstanceBuilder::default().debug(false),
             window.raw_display_handle(),
         )
         .unwrap();
@@ -93,6 +93,7 @@ impl<T: Client> Runner<T> {
         event_loop
             .run(|event, elwt| {
                 elwt.set_control_flow(winit::event_loop::ControlFlow::Poll);
+                puffin::GlobalProfiler::lock().new_frame();
                 match event {
                     Event::Suspended => paused = true,
                     Event::Resumed => {
