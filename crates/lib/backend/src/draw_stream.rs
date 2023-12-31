@@ -77,6 +77,7 @@ pub struct DrawStream {
     mask: u16,
 }
 
+#[derive(Debug)]
 pub enum DrawStreamError {
     EndOfStream,
     InvalidHandle,

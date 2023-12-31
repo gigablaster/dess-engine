@@ -678,6 +678,7 @@ impl Device {
             usage: location,
             memory_types: requirements.memory_type_bits,
         };
+        dbg!(&request);
 
         Ok(if dedicated {
             unsafe {

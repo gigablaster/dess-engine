@@ -74,7 +74,7 @@ impl<'a> ClearBackbuffer<'a> {
     async fn create_draw_stream(&self, context: &RenderContext<'a>, x: f32, y: f32) -> DrawStream {
         puffin::profile_function!();
         let mut stream = DrawStream::new(self.scene_bind_group);
-        for z in -20..20 {
+        for z in -80..80 {
             stream.bind_pipeline(self.pipeline);
             for model in self.model.models.values() {
                 let mut bones = Vec::with_capacity(model.bones.len());
@@ -134,11 +134,16 @@ impl<'a> Client for ClearBackbuffer<'a> {
                 },
             )
             .unwrap();
-        let color_target = RenderTarget::new(context.frame.target_view, ImageLayout::ColorTarget)
-            .store_output()
-            .clear_input(ClearRenderTarget::Color([0.125, 0.25, 0.5, 1.0]));
-        let depth_target = RenderTarget::new(depth.view(), ImageLayout::DepthStencilTarget)
-            .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
+        let color_target = RenderTarget::new(
+            Format::BGRA8_UNORM,
+            context.frame.target_view,
+            ImageLayout::ColorTarget,
+        )
+        .store_output()
+        .clear_input(ClearRenderTarget::Color([0.125, 0.25, 0.5, 1.0]));
+        let depth_target =
+            RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
+                .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
         context
             .device
             .with_bind_groups(|ctx| {
@@ -161,8 +166,8 @@ impl<'a> Client for ClearBackbuffer<'a> {
             })
             .unwrap();
         let streams = ComputeTaskPool::get().scope(|s| {
-            for x in -20..20 {
-                for y in -20..20 {
+            for x in -10..10 {
+                for y in -10..10 {
                     s.spawn(self.create_draw_stream(&context, x as f32, y as f32))
                 }
             }

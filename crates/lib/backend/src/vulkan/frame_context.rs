@@ -13,12 +13,15 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::marker::PhantomData;
+
 use arrayvec::ArrayVec;
 use ash::vk::{self};
+use bevy_tasks::ComputeTaskPool;
 use parking_lot::Mutex;
 
 use crate::{
-    barrier, BackendError, BackendResult, DeferedPass, DrawStream, ImageLayout, ImageView,
+    barrier, BackendError, BackendResult, DeferedPass, DrawStream, Format, ImageLayout, ImageView,
     RenderArea,
 };
 
@@ -82,6 +85,7 @@ impl From<ClearRenderTarget> for vk::ClearValue {
 
 #[derive(Clone, Copy)]
 pub struct RenderTarget {
+    pub format: Format,
     pub target: ImageView,
     pub layout: ImageLayout,
     pub load: RenderTargetLoadOp,
@@ -90,8 +94,9 @@ pub struct RenderTarget {
 }
 
 impl RenderTarget {
-    pub fn new(target: ImageView, layout: ImageLayout) -> Self {
+    pub fn new(format: Format, target: ImageView, layout: ImageLayout) -> Self {
         Self {
+            format,
             target,
             layout,
             load: RenderTargetLoadOp::default(),
@@ -137,15 +142,66 @@ impl RenderTarget {
 const MAX_BARRIERS: usize = 32;
 pub const MAX_COLOR_ATTACHMENTS: usize = 8;
 
-pub(crate) struct Pass {
+pub(crate) struct Pass<'a> {
     color_attachments: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
     depth_attachment: Option<RenderTarget>,
-    rende_area: RenderArea,
+    render_area: RenderArea,
     streams: Vec<DrawStream>,
     barriers: ArrayVec<ImageBarrier, MAX_BARRIERS>,
+    _marker: PhantomData<&'a ()>,
 }
 
-impl DeferedPass for Pass {
+impl<'a> Pass<'a> {
+    async fn submit_one_stream(
+        &self,
+        context: &'a ExecutionContext<'a>,
+        color_attachments: &[vk::Format],
+        depth_attachment: Option<vk::Format>,
+        stream: &DrawStream,
+    ) -> vk::CommandBuffer {
+        let cb = context
+            .frame
+            .get_or_create_secondary_buffer(&context.device.raw, context.device.queue_familt_index);
+        let mut inheretence = vk::CommandBufferInheritanceRenderingInfo::builder()
+            .color_attachment_formats(color_attachments)
+            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
+        if let Some(format) = depth_attachment {
+            inheretence = inheretence.depth_attachment_format(format);
+        }
+        unsafe {
+            context.device.raw.begin_command_buffer(
+                cb,
+                &vk::CommandBufferBeginInfo::builder()
+                    .flags(
+                        vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT
+                            | vk::CommandBufferUsageFlags::RENDER_PASS_CONTINUE,
+                    )
+                    .inheritance_info(
+                        &vk::CommandBufferInheritanceInfo::builder()
+                            .push_next(&mut inheretence)
+                            .build(),
+                    )
+                    .build(),
+            )
+        }
+        .unwrap();
+        unsafe {
+            context
+                .device
+                .raw
+                .cmd_set_viewport(cb, 0, &[self.render_area.into()]);
+            context
+                .device
+                .raw
+                .cmd_set_scissor(cb, 0, &[self.render_area.into()]);
+        }
+
+        stream.execute(context, cb).unwrap();
+        unsafe { context.device.raw.end_command_buffer(cb).unwrap() };
+        cb
+    }
+}
+impl<'a> DeferedPass for Pass<'a> {
     fn execute(&self, context: &ExecutionContext) -> BackendResult<()> {
         puffin::profile_function!();
         let color_attachments = self
@@ -172,8 +228,9 @@ impl DeferedPass for Pass {
         };
 
         let info = vk::RenderingInfo::builder()
-            .render_area(self.rende_area.into())
+            .render_area(self.render_area.into())
             .color_attachments(&color_attachments)
+            .flags(vk::RenderingFlags::CONTENTS_SECONDARY_COMMAND_BUFFERS)
             .layer_count(1);
         let info = if let Some(depth_attachment) = depth_attachment.as_ref() {
             info.depth_attachment(depth_attachment)
@@ -186,20 +243,33 @@ impl DeferedPass for Pass {
                 .raw
                 .cmd_begin_rendering(context.frame.main_cb.raw, &info)
         };
-        unsafe {
-            context.device.raw.cmd_set_viewport(
-                context.frame.main_cb.raw,
-                0,
-                &[self.rende_area.into()],
-            );
-            context.device.raw.cmd_set_scissor(
-                context.frame.main_cb.raw,
-                0,
-                &[self.rende_area.into()],
-            );
-        }
-        for stream in &self.streams {
-            stream.execute(context, context.frame.main_cb.raw)?;
+        let color_attachments = self
+            .color_attachments
+            .iter()
+            .map(|x| x.format.into())
+            .collect::<Vec<_>>();
+        let depth_attachment = self.depth_attachment.map(|x| x.format.into());
+        let cbs = {
+            puffin::profile_scope!("Generate comand buffers");
+            ComputeTaskPool::get().scope(|s| {
+                for stream in &self.streams {
+                    s.spawn(self.submit_one_stream(
+                        context,
+                        &color_attachments,
+                        depth_attachment,
+                        stream,
+                    ))
+                }
+            })
+        };
+        {
+            puffin::profile_scope!("Execute command buffers");
+            unsafe {
+                context
+                    .device
+                    .raw
+                    .cmd_execute_commands(context.frame.main_cb.raw, &cbs)
+            };
         }
 
         unsafe {
@@ -340,12 +410,13 @@ impl<'a> FrameContext<'a> {
                 .copied()
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
             depth_attachment,
-            rende_area: area,
+            render_area: area,
             streams: streams.collect(),
             barriers: barriers
                 .iter()
                 .copied()
                 .collect::<ArrayVec<_, MAX_BARRIERS>>(),
+            _marker: PhantomData,
         };
         self.passes.lock().push(Box::new(pass));
     }
