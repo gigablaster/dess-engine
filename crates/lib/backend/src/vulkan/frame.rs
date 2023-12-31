@@ -17,7 +17,7 @@ use std::{
     cell::Cell,
     collections::HashMap,
     ptr::{copy_nonoverlapping, NonNull},
-    thread::{self, ThreadId},
+    thread::{self},
 };
 
 use ash::vk::{self};
@@ -30,7 +30,7 @@ use super::{CommandBuffer, DescriptorAllocator, DropList, GpuAllocator, UniformS
 
 pub(crate) const MAX_TEMP_MEMORY: usize = 16 * 1024 * 1024;
 const ALIGMENT: usize = 256;
-const PREALLOCATED_COMMAND_BUFFERS: usize = 4;
+const PREALLOCATED_COMMAND_BUFFERS: usize = 8;
 
 struct SecondaryCommandBufferPool {
     pool: vk::CommandPool,
@@ -57,9 +57,9 @@ impl SecondaryCommandBufferPool {
         })
     }
 
-    pub fn get_or_create(&mut self, device: &ash::Device) -> vk::CommandBuffer {
+    pub fn get_or_create(&mut self, device: &ash::Device) -> BackendResult<vk::CommandBuffer> {
         if let Some(cb) = self.free.pop() {
-            cb
+            Ok(cb)
         } else {
             let mut buffers = unsafe {
                 device.allocate_command_buffers(
@@ -68,24 +68,22 @@ impl SecondaryCommandBufferPool {
                         .command_buffer_count(PREALLOCATED_COMMAND_BUFFERS as _)
                         .level(vk::CommandBufferLevel::SECONDARY),
                 )
-            }
-            .unwrap();
+            }?;
             self.buffers.append(&mut buffers.clone());
             self.free.append(&mut buffers);
             let cb = self.free.pop().unwrap();
 
-            cb
+            Ok(cb)
         }
     }
 
     pub fn reset(&mut self, device: &ash::Device) {
-        unsafe { device.free_command_buffers(self.pool, &self.buffers) };
-        unsafe {
-            device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::RELEASE_RESOURCES)
-        }
-        .unwrap();
+        unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }
+            .unwrap();
         self.free.clear();
-        self.buffers.clear();
+        for it in &self.buffers {
+            self.free.push(*it);
+        }
     }
 
     pub fn free(&self, device: &ash::Device) {
@@ -119,7 +117,7 @@ impl Frame {
             let pool = device.create_command_pool(
                 &vk::CommandPoolCreateInfo::builder()
                     .queue_family_index(queue_family_index)
-                    .flags(vk::CommandPoolCreateFlags::empty())
+                    .flags(vk::CommandPoolCreateFlags::TRANSIENT)
                     .build(),
                 None,
             )?;
@@ -206,7 +204,7 @@ impl Frame {
         &self,
         device: &ash::Device,
         queue_family_index: u32,
-    ) -> vk::CommandBuffer {
+    ) -> BackendResult<vk::CommandBuffer> {
         let thread_id = thread::current().id();
         let mut pools = self.per_thread_buffers.lock();
         if let Some(pool) = pools.get_mut(&thread_id) {

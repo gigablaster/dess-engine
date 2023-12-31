@@ -158,10 +158,11 @@ impl<'a> Pass<'a> {
         color_attachments: &[vk::Format],
         depth_attachment: Option<vk::Format>,
         stream: &DrawStream,
-    ) -> vk::CommandBuffer {
-        let cb = context
-            .frame
-            .get_or_create_secondary_buffer(&context.device.raw, context.device.queue_familt_index);
+    ) -> BackendResult<vk::CommandBuffer> {
+        let cb = context.frame.get_or_create_secondary_buffer(
+            &context.device.raw,
+            context.device.queue_familt_index,
+        )?;
         let mut inheretence = vk::CommandBufferInheritanceRenderingInfo::builder()
             .color_attachment_formats(color_attachments)
             .rasterization_samples(vk::SampleCountFlags::TYPE_1);
@@ -198,7 +199,7 @@ impl<'a> Pass<'a> {
 
         stream.execute(context, cb).unwrap();
         unsafe { context.device.raw.end_command_buffer(cb).unwrap() };
-        cb
+        Ok(cb)
     }
 }
 impl<'a> DeferedPass for Pass<'a> {
@@ -267,7 +268,7 @@ impl<'a> DeferedPass for Pass<'a> {
                             depth_attachment,
                             stream,
                         );
-                        cbs.lock()[index] = cb;
+                        cbs.lock()[index] = cb.unwrap();
                     })
                 }
             });
