@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::marker::PhantomData;
+use std::{marker::PhantomData, mem, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
@@ -152,7 +152,7 @@ pub(crate) struct Pass<'a> {
 }
 
 impl<'a> Pass<'a> {
-    async fn submit_one_stream(
+    fn submit_one_stream(
         &self,
         context: &'a ExecutionContext<'a>,
         color_attachments: &[vk::Format],
@@ -249,18 +249,28 @@ impl<'a> DeferedPass for Pass<'a> {
             .map(|x| x.format.into())
             .collect::<Vec<_>>();
         let depth_attachment = self.depth_attachment.map(|x| x.format.into());
-        let cbs = {
+        let cbs = Arc::new(Mutex::new(vec![
+            vk::CommandBuffer::null();
+            self.streams.len()
+        ]));
+
+        {
             puffin::profile_scope!("Generate comand buffers");
-            ComputeTaskPool::get().scope(|s| {
-                for stream in &self.streams {
-                    s.spawn(self.submit_one_stream(
-                        context,
-                        &color_attachments,
-                        depth_attachment,
-                        stream,
-                    ))
+            rayon::scope(|s| {
+                for (index, stream) in self.streams.iter().enumerate() {
+                    let cbs = cbs.clone();
+                    let color_attachments = color_attachments.clone();
+                    s.spawn(move |_| {
+                        let cb = self.submit_one_stream(
+                            context,
+                            &color_attachments,
+                            depth_attachment,
+                            stream,
+                        );
+                        cbs.lock()[index] = cb;
+                    })
                 }
-            })
+            });
         };
         {
             puffin::profile_scope!("Execute command buffers");
@@ -268,7 +278,7 @@ impl<'a> DeferedPass for Pass<'a> {
                 context
                     .device
                     .raw
-                    .cmd_execute_commands(context.frame.main_cb.raw, &cbs)
+                    .cmd_execute_commands(context.frame.main_cb.raw, &cbs.lock())
             };
         }
 

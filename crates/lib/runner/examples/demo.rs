@@ -1,6 +1,5 @@
 use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 
-use bevy_tasks::ComputeTaskPool;
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
@@ -14,6 +13,7 @@ use dess_engine::{
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
 use glam::vec3;
+use parking_lot::Mutex;
 
 #[derive(Default)]
 struct ClearBackbuffer<'a> {
@@ -71,7 +71,7 @@ struct SceneUniform {
 }
 
 impl<'a> ClearBackbuffer<'a> {
-    async fn create_draw_stream(&self, context: &RenderContext<'a>, x: f32, y: f32) -> DrawStream {
+    fn create_draw_stream(&self, context: &RenderContext<'a>, x: f32, y: f32) -> DrawStream {
         puffin::profile_function!();
         let mut stream = DrawStream::new(self.scene_bind_group);
         for z in -80..80 {
@@ -165,18 +165,29 @@ impl<'a> Client for ClearBackbuffer<'a> {
                 Ok(())
             })
             .unwrap();
-        let streams = ComputeTaskPool::get().scope(|s| {
-            for x in -10..10 {
-                for y in -10..10 {
-                    s.spawn(self.create_draw_stream(&context, x as f32, y as f32))
+        let streams = Arc::new(Mutex::new(vec![Option::<DrawStream>::None; 20 * 20]));
+        {
+            puffin::profile_scope!("Generate draw calls");
+            rayon::scope(|s| {
+                for x in 0..20 {
+                    for y in 0..20 {
+                        let context = &context;
+                        let streams = streams.clone();
+                        s.spawn(move |_| {
+                            let index = x + y * 20;
+                            let stream =
+                                self.create_draw_stream(context, (x - 10) as f32, (y - 10) as f32);
+                            streams.lock()[index as usize] = Some(stream);
+                        })
+                    }
                 }
-            }
-        });
+            });
+        }
         context.frame.execute(
             context.frame.render_area,
             &[color_target],
             Some(depth_target),
-            streams.into_iter(),
+            streams.lock().drain(..).filter_map(|x| x),
             &[],
         );
 

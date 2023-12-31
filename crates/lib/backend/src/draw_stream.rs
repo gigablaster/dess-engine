@@ -69,7 +69,7 @@ const FIRST_INSTANCE: u16 = INSTANCE_COUNT << 1;
 /// for command buffer. All commands are stored in some sort of delta-compressed
 /// storage and then decoded during render. Allows engine to store few draw calls per
 /// one CPU cache line.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct DrawStream {
     pass_descriptor_set: BindGroupHandle,
     stream: Vec<u16>,
