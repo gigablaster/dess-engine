@@ -13,11 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{marker::PhantomData, mem, sync::Arc};
+use std::{marker::PhantomData, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
-use bevy_tasks::ComputeTaskPool;
 use parking_lot::Mutex;
 
 use crate::{

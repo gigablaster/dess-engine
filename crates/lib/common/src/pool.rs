@@ -437,10 +437,12 @@ where
 
     pub fn push(&mut self, hot: T, cold: U) -> Handle<T> {
         let hot_handle = self.hot.push(hot);
-        let cold_handle = self.cold.push(cold);
         #[cfg(debug_assertions)]
-        if hot_handle.data != cold_handle.data {
-            panic!("Mismatched handles");
+        {
+            let cold_handle = self.cold.push(cold);
+            if hot_handle.data != cold_handle.data {
+                panic!("Mismatched handles");
+            }
         }
 
         hot_handle

@@ -82,11 +82,8 @@ impl<'a> ClearBackbuffer<'a> {
                     let parent = model.bone_parents[index];
                     if parent == u32::MAX {
                         bones.push(
-                            glam::Mat4::from_translation(vec3(
-                                x as f32 * 0.1,
-                                y as f32 * 0.1,
-                                z as f32 * 0.1,
-                            )) * glam::Mat4::from(*bone),
+                            glam::Mat4::from_translation(vec3(x * 0.1, y * 0.1, z as f32 * 0.1))
+                                * glam::Mat4::from(*bone),
                         );
                     } else {
                         bones.push(bones[parent as usize] * glam::Mat4::from(*bone))
@@ -187,7 +184,7 @@ impl<'a> Client for ClearBackbuffer<'a> {
             context.frame.render_area,
             &[color_target],
             Some(depth_target),
-            streams.lock().drain(..).filter_map(|x| x),
+            streams.lock().drain(..).flatten(),
             &[],
         );
 

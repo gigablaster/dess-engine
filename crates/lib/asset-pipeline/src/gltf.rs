@@ -81,6 +81,7 @@ struct SceneProcessingContext<'a> {
     unique_materials: HashMap<MeshMaterial, u32>,
 }
 
+#[allow(dead_code)]
 fn quantize_values(data: &[f32]) -> (f32, f32, Vec<u16>) {
     let min = data
         .iter()
@@ -102,6 +103,7 @@ fn quantize_values(data: &[f32]) -> (f32, f32, Vec<u16>) {
     (min as f32, max as f32, result)
 }
 
+#[allow(dead_code)]
 fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, f32, Vec<[u16; N]>) {
     let mut data = Vec::with_capacity(input.len() * N);
     input
@@ -122,14 +124,17 @@ fn quantize_input<const N: usize>(input: &[[f32; N]]) -> (f32, f32, Vec<[u16; N]
     (min, max, result)
 }
 
+#[allow(dead_code)]
 pub(crate) fn quantize_positions(input: &[[f32; 3]]) -> (f32, f32, Vec<[u16; 3]>) {
     quantize_input(input)
 }
 
+#[allow(dead_code)]
 pub(crate) fn quantize_uvs(input: &[[f32; 2]]) -> (f32, f32, Vec<[u16; 2]>) {
     quantize_input(input)
 }
 
+#[allow(dead_code)]
 pub(crate) fn quantize_normalized(input: &[[f32; 3]]) -> Vec<[u16; 2]> {
     let data = input.iter().flatten().collect::<Vec<_>>();
     let result = data

@@ -19,7 +19,6 @@ pub use gltf::*;
 pub use image::*;
 use log::{error, info};
 use parking_lot::Mutex;
-pub use shader::*;
 
 #[derive(Debug)]
 pub enum Error {
