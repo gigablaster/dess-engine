@@ -32,8 +32,8 @@ use crate::{
 
 use super::{GpuAllocator, GpuMemory, Instance, PhysicalDevice};
 
-const STAGES: usize = 2;
-const BUFFER_SIZE: usize = 64 * 1024 * 1024;
+const STAGES: usize = 4;
+const BUFFER_SIZE: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy2, vk::ImageSubresourceRange);
