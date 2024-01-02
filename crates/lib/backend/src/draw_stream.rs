@@ -20,7 +20,7 @@ use crate::vulkan::{
     BindGroupHandle, BufferHandle, BufferSlice, ExecutionContext, RasterPipelineHandle,
 };
 
-pub(crate) const MAX_VERTEX_STREAMS: usize = 3;
+pub(crate) const MAX_VERTEX_STREAMS: usize = 2;
 pub(crate) const MAX_DESCRIPTOR_SETS: usize = 3;
 pub(crate) const MAX_DYNAMIC_OFFSETS: usize = 4;
 
@@ -35,6 +35,7 @@ struct Draw {
     index_count: u32,
     instance_count: u32,
     first_instance: u32,
+    vertex_offset: u32,
 }
 
 impl Default for Draw {
@@ -49,6 +50,7 @@ impl Default for Draw {
             index_count: u32::MAX,
             instance_count: u32::MAX,
             first_instance: u32::MAX,
+            vertex_offset: u32::MAX,
         }
     }
 }
@@ -62,6 +64,7 @@ const INDEX_COUNT: u16 = DS1 << MAX_DESCRIPTOR_SETS;
 const FIRST_INDEX: u16 = INDEX_COUNT << 1;
 const INSTANCE_COUNT: u16 = FIRST_INDEX << 1;
 const FIRST_INSTANCE: u16 = INSTANCE_COUNT << 1;
+const VERTEX_OFFSET: u16 = FIRST_INSTANCE << 1;
 
 /// Collect draw calls
 ///
@@ -162,6 +165,7 @@ impl DrawStream {
     pub fn draw(
         &mut self,
         first_index: u32,
+        vertex_offset: u32,
         index_count: u32,
         instance_count: u32,
         first_instance: u32,
@@ -187,6 +191,10 @@ impl DrawStream {
         if self.current.first_instance != first_instance {
             self.current.first_instance = first_instance;
             self.mask |= FIRST_INSTANCE;
+        }
+        if self.current.vertex_offset != vertex_offset {
+            self.current.vertex_offset = vertex_offset;
+            self.mask |= VERTEX_OFFSET;
         }
         self.stream.push(self.mask);
         if self.mask & PIPELINE != 0 {
@@ -222,6 +230,9 @@ impl DrawStream {
         if self.mask & FIRST_INSTANCE != 0 {
             self.write_u32(self.current.first_instance);
         }
+        if self.mask & VERTEX_OFFSET != 0 {
+            self.write_u32(self.current.vertex_offset);
+        }
         self.mask = 0;
     }
 
@@ -248,6 +259,7 @@ impl DrawStream {
         let mut index_count = 0u32;
         let mut instance_count = 0u32;
         let mut first_instance = 0u32;
+        let mut vertex_offset = 0u32;
         descriptors[0] = context
             .descriptors
             .get(self.pass_descriptor_set)
@@ -387,6 +399,9 @@ impl DrawStream {
             if mask & FIRST_INSTANCE != 0 {
                 first_instance = stream.read_u32()?;
             }
+            if mask & VERTEX_OFFSET != 0 {
+                vertex_offset = stream.read_u32()?;
+            }
             if rebind_all_descriptors {
                 let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
                 for offset_index in 0..MAX_DYNAMIC_OFFSETS {
@@ -431,7 +446,7 @@ impl DrawStream {
                     index_count,
                     instance_count,
                     first_index,
-                    0,
+                    vertex_offset as _,
                     first_instance,
                 )
             }

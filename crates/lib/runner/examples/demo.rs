@@ -102,7 +102,7 @@ impl<'a> ClearBackbuffer<'a> {
                             Some(mesh.resolved_materials[submesh.material_index].main_bind_group),
                         );
                         stream.set_bind_group(2, Some(submesh.object_bind_group));
-                        stream.draw(submesh.first_index, submesh.index_count, 1, *bone_idx);
+                        stream.draw(submesh.first_index, 0, submesh.index_count, 1, *bone_idx);
                     }
                 }
             }
