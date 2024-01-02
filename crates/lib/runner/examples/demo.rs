@@ -91,17 +91,17 @@ impl<'a> ClearBackbuffer<'a> {
                 }
                 let temp = context.frame.temp_allocate(&bones).unwrap();
                 stream.set_dynamic_buffer_offset(0, Some(temp.offset));
-                stream.bind_descriptor_set(3, Some(self.draw_bind_group));
+                stream.set_bind_group(3, Some(self.draw_bind_group));
                 for (bone_idx, mesh_idx) in &model.instances {
                     let mesh = &model.static_meshes[*mesh_idx as usize];
                     stream.bind_vertex_buffer(0, Some(mesh.vertices));
                     stream.bind_index_buffer(Some(mesh.indices));
                     for submesh in &mesh.submeshes {
-                        stream.bind_descriptor_set(
+                        stream.set_bind_group(
                             1,
                             Some(mesh.resolved_materials[submesh.material_index].main_bind_group),
                         );
-                        stream.bind_descriptor_set(2, Some(submesh.object_bind_group));
+                        stream.set_bind_group(2, Some(submesh.object_bind_group));
                         stream.draw(submesh.first_index, submesh.index_count, 1, *bone_idx);
                     }
                 }

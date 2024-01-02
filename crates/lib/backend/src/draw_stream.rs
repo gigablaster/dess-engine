@@ -140,7 +140,7 @@ impl DrawStream {
         }
     }
 
-    pub fn bind_descriptor_set(&mut self, slot: usize, ds: Option<BindGroupHandle>) {
+    pub fn set_bind_group(&mut self, slot: usize, ds: Option<BindGroupHandle>) {
         debug_assert!((1..=MAX_DESCRIPTOR_SETS).contains(&slot));
         let slot = slot - 1;
         let ds = ds.unwrap_or_default();
