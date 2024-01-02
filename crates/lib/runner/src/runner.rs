@@ -48,7 +48,8 @@ impl<T: Client> Runner<T> {
             .unwrap();
 
         let instance = Instance::new(
-            InstanceBuilder::default().debug(false),
+            #[cfg(debug_assertions)]
+            InstanceBuilder::default().debug(true),
             window.raw_display_handle(),
         )
         .unwrap();
