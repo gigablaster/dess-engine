@@ -75,7 +75,7 @@ impl<'a> ClearBackbuffer<'a> {
         puffin::profile_function!();
         let mut stream = DrawStream::new(self.scene_bind_group);
         for z in -80..80 {
-            stream.bind_pipeline(self.pipeline);
+            stream.set_pipeline(self.pipeline);
             for model in self.model.models.values() {
                 let mut bones = Vec::with_capacity(model.bones.len());
                 for (index, bone) in model.bones.iter().enumerate() {
@@ -94,8 +94,8 @@ impl<'a> ClearBackbuffer<'a> {
                 stream.set_bind_group(3, Some(self.draw_bind_group));
                 for (bone_idx, mesh_idx) in &model.instances {
                     let mesh = &model.static_meshes[*mesh_idx as usize];
-                    stream.bind_vertex_buffer(0, Some(mesh.vertices));
-                    stream.bind_index_buffer(Some(mesh.indices));
+                    stream.set_vertex_buffer(0, Some(mesh.vertices));
+                    stream.set_index_buffer(Some(mesh.indices));
                     for submesh in &mesh.submeshes {
                         stream.set_bind_group(
                             1,

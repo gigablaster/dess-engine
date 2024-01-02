@@ -119,14 +119,14 @@ impl DrawStream {
         }
     }
 
-    pub fn bind_pipeline(&mut self, handle: RasterPipelineHandle) {
+    pub fn set_pipeline(&mut self, handle: RasterPipelineHandle) {
         if self.current.pipeline != handle {
             self.mask |= PIPELINE;
             self.current.pipeline = handle;
         }
     }
 
-    pub fn bind_vertex_buffer(&mut self, slot: usize, buffer: Option<BufferSlice>) {
+    pub fn set_vertex_buffer(&mut self, slot: usize, buffer: Option<BufferSlice>) {
         debug_assert!(slot < MAX_VERTEX_STREAMS);
         let buffer = buffer.unwrap_or_default();
         if self.current.vertex_buffers[slot] != buffer {
@@ -135,7 +135,7 @@ impl DrawStream {
         }
     }
 
-    pub fn bind_index_buffer(&mut self, buffer: Option<BufferSlice>) {
+    pub fn set_index_buffer(&mut self, buffer: Option<BufferSlice>) {
         let buffer = buffer.unwrap_or_default();
         if self.current.index_buffer != buffer {
             self.mask |= INDEX_BUFFER;
