@@ -351,16 +351,20 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
             .collect::<Vec<_>>();
         let processed = process_geometry(&positions, &normals, &tangents, &uvs1, &uvs2);
 
-        // let (total_vertex_count, remap) =
-        //     meshopt::generate_vertex_remap(&processed.vertices, Some(&indices));
-        // let mut vertices =
-        //     meshopt::remap_vertex_buffer(&processed.vertices, total_vertex_count, &remap);
-        // let mut indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
-        // meshopt::optimize_vertex_cache_in_place(&indices, vertices.len());
+        let (total_vertex_count, remap) = meshopt::generate_vertex_remap_multi::<()>(
+            processed.vertices.len(),
+            &[
+                meshopt::VertexStream::new(processed.vertices.as_ptr()),
+                meshopt::VertexStream::new(processed.attributes.as_ptr()),
+            ],
+            Some(&indices),
+        );
+        let mut vertices =
+            meshopt::remap_vertex_buffer(&processed.vertices, total_vertex_count, &remap);
+        let mut attributes =
+            meshopt::remap_vertex_buffer(&processed.attributes, total_vertex_count, &remap);
+        let mut indices = meshopt::remap_index_buffer(Some(&indices), total_vertex_count, &remap);
 
-        let mut indices = indices.clone();
-        let mut attributes = processed.attributes;
-        let mut vertices = processed.vertices;
         let first_index = mesh_indices.len() as u32;
         let index_count = indices.len() as u32;
         let material = process_material(ctx, &prim.material());
@@ -374,8 +378,8 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
             material,
         });
     }
-    // let remap = meshopt::optimize_vertex_fetch_remap(&mesh_indices, mesh_attributes.len());
-    // mesh_attributes = meshopt::remap_vertex_buffer(&mesh_attributes, mesh_attributes.len(), &remap);
+    let remap = meshopt::optimize_vertex_fetch_remap(&mesh_indices, mesh_attributes.len());
+    mesh_attributes = meshopt::remap_vertex_buffer(&mesh_attributes, mesh_attributes.len(), &remap);
     let mut mesh_indices = mesh_indices.iter().map(|x| *x as u16).collect::<Vec<_>>();
     target.vertex_offset = ctx.model.attributes.len() as u32;
     target.index_offset = ctx.model.indices.len() as u32;
