@@ -17,12 +17,16 @@ mod renderworld;
 
 use std::mem;
 
-use dess_assets::StaticMeshVertex;
-use dess_backend::{Format, InputVertexAttributeDesc, InputVertexStreamDesc, PipelineVertex};
+use dess_assets::{MeshVertexAttributes, StaticMeshVertex};
+use dess_backend::{Format, InputVertexAttributeDesc, InputVertexStreamDesc};
 
 #[repr(C, packed)]
 pub struct BasicMeshVertex {
     pub position: [f32; 3],
+}
+
+#[repr(C, packed)]
+pub struct BasicMeshAttribute {
     pub normal: [f32; 3],
     pub tangent: [f32; 3],
     pub uv1: [f32; 2],
@@ -34,72 +38,58 @@ pub struct BasicVertex {
     pub uv: [f32; 2],
 }
 
-impl PipelineVertex for BasicMeshVertex {
-    fn vertex_streams() -> &'static [InputVertexStreamDesc] {
-        &[InputVertexStreamDesc {
-            attributes: &[
-                InputVertexAttributeDesc {
-                    format: Format::RGB32_SFLOAT,
-                    locaion: 0,
-                    binding: 0,
-                    offset: 0,
-                },
-                InputVertexAttributeDesc {
-                    format: Format::RGB32_SFLOAT,
-                    locaion: 1,
-                    binding: 0,
-                    offset: 12,
-                },
-                InputVertexAttributeDesc {
-                    format: Format::RGB32_SFLOAT,
-                    locaion: 2,
-                    binding: 0,
-                    offset: 24,
-                },
-                InputVertexAttributeDesc {
-                    format: Format::RG32_SFLOAT,
-                    locaion: 3,
-                    binding: 0,
-                    offset: 36,
-                },
-                InputVertexAttributeDesc {
-                    format: Format::RG32_SFLOAT,
-                    locaion: 4,
-                    binding: 0,
-                    offset: 44,
-                },
-            ],
-            stride: mem::size_of::<BasicMeshVertex>(),
-        }]
-    }
-}
-
-impl PipelineVertex for BasicVertex {
-    fn vertex_streams() -> &'static [InputVertexStreamDesc] {
-        &[InputVertexStreamDesc {
-            attributes: &[
-                InputVertexAttributeDesc {
-                    format: Format::RGB32_SFLOAT,
-                    locaion: 0,
-                    binding: 0,
-                    offset: 0,
-                },
-                InputVertexAttributeDesc {
-                    format: Format::RG32_SFLOAT,
-                    locaion: 1,
-                    binding: 0,
-                    offset: 12,
-                },
-            ],
-            stride: mem::size_of::<BasicVertex>(),
-        }]
-    }
-}
+pub const BASIC_MESH_LAYOUT: [InputVertexStreamDesc; 2] = [
+    InputVertexStreamDesc {
+        attributes: &[InputVertexAttributeDesc {
+            format: Format::RGB32_SFLOAT,
+            locaion: 0,
+            binding: 0,
+            offset: 0,
+        }],
+        stride: mem::size_of::<BasicMeshVertex>(),
+    },
+    InputVertexStreamDesc {
+        attributes: &[
+            InputVertexAttributeDesc {
+                format: Format::RGB32_SFLOAT,
+                locaion: 1,
+                binding: 1,
+                offset: 0,
+            },
+            InputVertexAttributeDesc {
+                format: Format::RGB32_SFLOAT,
+                locaion: 2,
+                binding: 1,
+                offset: 12,
+            },
+            InputVertexAttributeDesc {
+                format: Format::RG32_SFLOAT,
+                locaion: 3,
+                binding: 1,
+                offset: 24,
+            },
+            InputVertexAttributeDesc {
+                format: Format::RG32_SFLOAT,
+                locaion: 4,
+                binding: 1,
+                offset: 32,
+            },
+        ],
+        stride: mem::size_of::<BasicMeshAttribute>(),
+    },
+];
 
 impl From<StaticMeshVertex> for BasicMeshVertex {
     fn from(value: StaticMeshVertex) -> Self {
         Self {
             position: value.position,
+        }
+    }
+}
+
+impl From<MeshVertexAttributes> for BasicMeshAttribute {
+    fn from(value: MeshVertexAttributes) -> Self {
+        Self {
             normal: value.normal,
             tangent: value.tangent,
             uv1: value.uv1,

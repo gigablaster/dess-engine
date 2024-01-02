@@ -6,8 +6,8 @@ use std::{
 
 use dess_assets::{
     get_absolute_asset_path, get_relative_asset_path, AssetRef, Bone, GltfSource, ImageSource,
-    ImageSourceDesc, MeshBlendMode, MeshData, MeshMaterial, ModelAsset, ModelCollectionAsset,
-    StaticMeshVertex, SubMesh,
+    ImageSourceDesc, MeshBlendMode, MeshData, MeshMaterial, MeshVertexAttributes, ModelAsset,
+    ModelCollectionAsset, StaticMeshVertex, SubMesh,
 };
 use gltf::mesh::Mode;
 use normalize_path::NormalizePath;
@@ -151,6 +151,7 @@ fn process_model(ctx: &mut SceneProcessingContext, root: gltf::Node) {
 
 struct ProcessedGeometry {
     pub vertices: Vec<StaticMeshVertex>,
+    pub attributes: Vec<MeshVertexAttributes>,
 }
 
 fn process_geometry(
@@ -162,18 +163,19 @@ fn process_geometry(
 ) -> ProcessedGeometry {
     let count = positions.len();
     let mut vertices = Vec::with_capacity(count);
+    let mut attributes = Vec::with_capacity(count);
     for index in 0..count {
-        let vertex = StaticMeshVertex::new(
-            positions[index],
-            normals[index],
-            tangents[index],
-            uv1[index],
-            uv2[index],
-        );
+        let vertex = StaticMeshVertex::new(positions[index]);
+        let attribute =
+            MeshVertexAttributes::new(normals[index], tangents[index], uv1[index], uv2[index]);
         vertices.push(vertex);
+        attributes.push(attribute);
     }
 
-    ProcessedGeometry { vertices }
+    ProcessedGeometry {
+        attributes,
+        vertices,
+    }
 }
 
 fn process_texture(
@@ -290,6 +292,7 @@ fn process_material(ctx: &mut SceneProcessingContext, material: &gltf::Material)
 fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
     let mut target = MeshData::default();
     let mut mesh_indices = Vec::new();
+    let mut mesh_attributes = Vec::new();
     let mut mesh_vertices = Vec::new();
     for prim in mesh.primitives() {
         assert_eq!(prim.mode(), Mode::Triangles);
@@ -356,11 +359,13 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
         // meshopt::optimize_vertex_cache_in_place(&indices, vertices.len());
 
         let mut indices = indices.clone();
-        let mut vertices = processed.vertices.clone();
+        let mut attributes = processed.attributes;
+        let mut vertices = processed.vertices;
         let first_index = mesh_indices.len() as u32;
         let index_count = indices.len() as u32;
         let material = process_material(ctx, &prim.material());
         mesh_indices.append(&mut indices);
+        mesh_attributes.append(&mut attributes);
         mesh_vertices.append(&mut vertices);
         target.submeshes.push(SubMesh {
             first_index,
@@ -369,13 +374,14 @@ fn process_mesh(ctx: &mut SceneProcessingContext, mesh: &gltf::Mesh) {
             material,
         });
     }
-    let remap = meshopt::optimize_vertex_fetch_remap(&mesh_indices, mesh_vertices.len());
-    mesh_vertices = meshopt::remap_vertex_buffer(&mesh_vertices, mesh_vertices.len(), &remap);
+    // let remap = meshopt::optimize_vertex_fetch_remap(&mesh_indices, mesh_attributes.len());
+    // mesh_attributes = meshopt::remap_vertex_buffer(&mesh_attributes, mesh_attributes.len(), &remap);
     let mut mesh_indices = mesh_indices.iter().map(|x| *x as u16).collect::<Vec<_>>();
-    target.vertex_offset = ctx.model.vertices.len() as u32;
+    target.vertex_offset = ctx.model.attributes.len() as u32;
     target.index_offset = ctx.model.indices.len() as u32;
-    ctx.model.vertices.append(&mut mesh_vertices);
+    ctx.model.attributes.append(&mut mesh_attributes);
     ctx.model.indices.append(&mut mesh_indices);
+    ctx.model.vertices.append(&mut mesh_vertices);
     ctx.scene.static_meshes.push(target);
 }
 

@@ -50,22 +50,26 @@ impl ContentSource for GltfSource {
 #[repr(C)]
 pub struct StaticMeshVertex {
     pub position: [f32; 3],
+}
+
+impl StaticMeshVertex {
+    pub fn new(position: [f32; 3]) -> Self {
+        Self { position }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Default, Readable, Writable)]
+#[repr(C)]
+pub struct MeshVertexAttributes {
     pub normal: [f32; 3],
     pub tangent: [f32; 3],
     pub uv1: [f32; 2],
     pub uv2: [f32; 2],
 }
 
-impl StaticMeshVertex {
-    pub fn new(
-        position: [f32; 3],
-        normal: [f32; 3],
-        tangent: [f32; 3],
-        uv1: [f32; 2],
-        uv2: [f32; 2],
-    ) -> Self {
+impl MeshVertexAttributes {
+    pub fn new(normal: [f32; 3], tangent: [f32; 3], uv1: [f32; 2], uv2: [f32; 2]) -> Self {
         Self {
-            position,
             normal,
             tangent,
             uv1,
@@ -152,6 +156,7 @@ pub struct ModelAsset {
 #[derive(Debug, Default, Readable, Writable)]
 pub struct ModelCollectionAsset {
     pub vertices: Vec<StaticMeshVertex>,
+    pub attributes: Vec<MeshVertexAttributes>,
     pub indices: Vec<u16>,
     pub materials: Vec<MeshMaterial>,
     pub models: HashMap<String, ModelAsset>,

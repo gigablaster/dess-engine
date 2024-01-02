@@ -8,7 +8,7 @@ use dess_backend::{
 };
 use dess_common::GameTime;
 use dess_engine::{
-    render::BasicMeshVertex, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
+    render::BASIC_MESH_LAYOUT, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
     MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
@@ -95,6 +95,7 @@ impl<'a> ClearBackbuffer<'a> {
                 for (bone_idx, mesh_idx) in &model.instances {
                     let mesh = &model.static_meshes[*mesh_idx as usize];
                     stream.set_vertex_buffer(0, Some(mesh.vertices));
+                    stream.set_vertex_buffer(1, Some(mesh.attributes));
                     stream.set_index_buffer(Some(mesh.indices));
                     for submesh in &mesh.submeshes {
                         stream.set_bind_group(
@@ -205,10 +206,11 @@ impl<'a> Client for ClearBackbuffer<'a> {
         self.pipeline = context
             .pipeline_cache
             .get_or_register_raster_pipeline(
-                RasterPipelineCreateDesc::new::<BasicMeshVertex>(
+                RasterPipelineCreateDesc::new(
                     program,
                     &PASS_LAYOUT,
                     &DRAW_PIPELINE_LAYOUT,
+                    &BASIC_MESH_LAYOUT,
                 )
                 .depth_test(DepthCompareOp::LessOrEqual)
                 .cull(dess_backend::CullMode::Back)

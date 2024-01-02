@@ -69,13 +69,6 @@ impl BufferSlice {
     pub fn is_valid(&self) -> bool {
         self.handle.is_valid()
     }
-
-    pub fn part(&self, offset: u32) -> Self {
-        Self {
-            handle: self.handle,
-            offset: self.offset + offset,
-        }
-    }
 }
 
 pub(crate) type ImageStorage = HotColdPool<vk::Image, Image, SentinelPoolStrategy<vk::Image>>;

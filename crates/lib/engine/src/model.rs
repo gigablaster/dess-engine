@@ -38,6 +38,7 @@ struct ObjectScaleUniform {
 pub struct SubMesh {
     pub first_index: u32,
     pub index_count: u32,
+    pub vertex_offset: u32,
     pub bounds: (glam::Vec3, glam::Vec3),
     pub object_bind_group: BindGroupHandle,
     pub material_index: usize,
@@ -47,6 +48,7 @@ pub struct SubMesh {
 #[derive(Debug, Default)]
 pub struct StaticMesh {
     pub vertices: BufferSlice,
+    pub attributes: BufferSlice,
     pub indices: BufferSlice,
     pub submeshes: Vec<SubMesh>,
     pub materials: Vec<ResourceHandle<Material>>,
@@ -68,17 +70,17 @@ impl StaticMesh {
         device: &Device,
         asset: MeshData,
         vertices: BufferSlice,
+        attributes: BufferSlice,
         indices: BufferSlice,
         materials: &[ResourceHandle<Material>],
     ) -> Self {
-        let geometry = vertices.part(asset.vertex_offset);
-        let indices = indices.part(asset.index_offset);
         let submeshes = asset
             .submeshes
             .iter()
             .enumerate()
             .map(|(index, submesh)| SubMesh {
-                first_index: submesh.first_index,
+                first_index: submesh.first_index + asset.index_offset,
+                vertex_offset: asset.vertex_offset,
                 index_count: submesh.index_count,
                 bounds: (
                     glam::Vec3::from_array(submesh.bounds.0),
@@ -107,7 +109,8 @@ impl StaticMesh {
             .unwrap();
 
         Self {
-            vertices: geometry,
+            vertices,
+            attributes,
             indices,
             submeshes,
             resolved_materials: Vec::with_capacity(materials.len()),
@@ -173,6 +176,7 @@ impl Model {
         devce: &Device,
         asset: ModelAsset,
         vertices: BufferSlice,
+        attributes: BufferSlice,
         indices: BufferSlice,
         materials: &[ResourceHandle<Material>],
     ) -> Self {
@@ -195,7 +199,7 @@ impl Model {
         let static_meshes = asset
             .static_meshes
             .into_iter()
-            .map(|mesh| StaticMesh::new(devce, mesh, vertices, indices, materials))
+            .map(|mesh| StaticMesh::new(devce, mesh, vertices, attributes, indices, materials))
             .collect::<Vec<_>>();
         Self {
             bones,
@@ -243,6 +247,7 @@ impl ModelCollection {
         buffers: &BufferPool,
     ) -> Result<Self, Error> {
         let vertices = buffers.allocate(&asset.vertices)?;
+        let attributes = buffers.allocate(&asset.attributes)?;
         let indices = buffers.allocate(&asset.indices)?;
         let materials = asset
             .materials
@@ -255,7 +260,14 @@ impl ModelCollection {
             .map(|(name, model)| {
                 (
                     name.into(),
-                    Model::new(loader.render_device(), model, vertices, indices, &materials),
+                    Model::new(
+                        loader.render_device(),
+                        model,
+                        vertices,
+                        attributes,
+                        indices,
+                        &materials,
+                    ),
                 )
             })
             .collect::<HashMap<_, _>>();

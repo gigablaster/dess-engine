@@ -175,15 +175,12 @@ pub struct RasterPipelineCreateDesc {
     pub streams: &'static [InputVertexStreamDesc],
 }
 
-pub trait PipelineVertex: Sized {
-    fn vertex_streams() -> &'static [InputVertexStreamDesc];
-}
-
 impl RasterPipelineCreateDesc {
-    pub fn new<T: PipelineVertex>(
+    pub fn new(
         program: ProgramHandle,
         pass_layout: &'static RenderPassLayout,
         pipeline_layout: &'static [BindGroupLayoutDesc],
+        streams: &'static [InputVertexStreamDesc],
     ) -> Self {
         Self {
             program,
@@ -193,7 +190,7 @@ impl RasterPipelineCreateDesc {
             cull: None,
             depth_test: None,
             depth_write: false,
-            streams: T::vertex_streams(),
+            streams,
         }
     }
 
