@@ -452,7 +452,7 @@ impl Device {
             frame_fn(&context)?;
         }
         // Upload staging and descriptor sets
-        let staging_semaphore = self.staging.lock().upload(self)?;
+        let staging_semaphore = self.staging.lock().upload(self, true)?;
         self.update_descriptor_sets()?;
         {
             puffin::profile_scope!("Execute recorded frame");

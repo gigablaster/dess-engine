@@ -32,8 +32,8 @@ use crate::{
 
 use super::{GpuAllocator, GpuMemory, Instance, PhysicalDevice};
 
-const STAGES: usize = 4;
-const BUFFER_SIZE: usize = 32 * 1024 * 1024;
+const STAGES: usize = 2;
+const BUFFER_SIZE: usize = 64 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy2, vk::ImageSubresourceRange);
@@ -124,7 +124,7 @@ impl Staging {
             pool,
             tranfser_cbs,
             allocator: BumpAllocator::new(
-                BUFFER_SIZE * STAGES,
+                BUFFER_SIZE,
                 pdevice.properties.limits.buffer_image_granularity.max(512) as _,
             ),
             upload_buffers: HashMap::with_capacity(64),
@@ -160,7 +160,7 @@ impl Staging {
             if current_offset == data_len {
                 return Ok(());
             } else {
-                self.upload(device)?;
+                self.upload(device, false)?;
             }
         }
     }
@@ -173,7 +173,7 @@ impl Staging {
     ) -> BackendResult<()> {
         for (mip, data) in data.iter().enumerate() {
             while !self.try_push_mip(target, mip as _, data)? {
-                self.upload(device)?;
+                self.upload(device, false)?;
             }
         }
         Ok(())
@@ -185,16 +185,17 @@ impl Staging {
         mip: u32,
         data: &ImageSubresourceData,
     ) -> BackendResult<bool> {
-        if data.data.len() > BUFFER_SIZE {
+        let size = data.data.len();
+        if size > BUFFER_SIZE {
             return Err(BackendError::TooBig);
         }
-        if let Some(allocated) = self.allocator.allocate(data.data.len()) {
-            let buffer_offset = BUFFER_SIZE * self.current + allocated;
+        if let Some(allocated_offset) = self.allocator.allocate(size) {
+            let buffer_offset = BUFFER_SIZE * self.current + allocated_offset;
             unsafe {
                 copy_nonoverlapping(
                     data.data.as_ptr(),
                     self.mapping.as_ptr().add(buffer_offset),
-                    data.data.len(),
+                    size,
                 )
             };
             let op = vk::BufferImageCopy2::builder()
@@ -255,6 +256,7 @@ impl Staging {
     pub fn upload(
         &mut self,
         device: &Device,
+        will_wait: bool,
     ) -> BackendResult<(vk::Semaphore, vk::PipelineStageFlags2)> {
         puffin::profile_function!();
         let cb = &self.tranfser_cbs[self.current];
@@ -286,33 +288,20 @@ impl Staging {
         }
         let semaphore = self.semaphores[self.current];
         let render_semaphore = self.render_semaphores[self.current];
+        let mut triggers = ArrayVec::<_, 2>::new();
+        triggers.push((semaphore, vk::PipelineStageFlags2::TRANSFER));
+        if will_wait {
+            triggers.push((render_semaphore, vk::PipelineStageFlags2::TRANSFER));
+        }
 
         if let Some(last) = self.last {
             device.submit(
                 cb,
                 &[(self.semaphores[last], vk::PipelineStageFlags2::TRANSFER)],
-                &[
-                    (semaphore, vk::PipelineStageFlags2::TRANSFER),
-                    (
-                        render_semaphore,
-                        vk::PipelineStageFlags2::VERTEX_INPUT
-                            | vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                    ),
-                ],
+                &triggers,
             )?;
         } else {
-            device.submit(
-                cb,
-                &[],
-                &[
-                    (semaphore, vk::PipelineStageFlags2::TRANSFER),
-                    (
-                        render_semaphore,
-                        vk::PipelineStageFlags2::VERTEX_INPUT
-                            | vk::PipelineStageFlags2::FRAGMENT_SHADER,
-                    ),
-                ],
-            )?;
+            device.submit(cb, &[], &triggers)?;
         }
 
         self.last = Some(self.current);
