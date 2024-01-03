@@ -14,12 +14,15 @@ use dess_engine::{
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
 use glam::vec3;
 
+const MAX_MATRICES_PER_DRAW: usize = 256;
+
 #[derive(Default)]
-struct ClearBackbuffer<'a> {
+struct RenderDemo<'a> {
     model: Arc<ModelCollection>,
     pipeline: RasterPipelineHandle,
     scene_bind_group: BindGroupHandle,
     draw_bind_group: BindGroupHandle,
+    rotation: f32,
     _phantom: PhantomData<&'a ()>,
 }
 
@@ -39,6 +42,12 @@ const PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
         },
         BindingDesc {
             slot: 1,
+            name: "light",
+            ty: BindType::UniformBuffer,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 32,
             name: "base_sampler",
             ty: BindType::Sampler,
             count: 1,
@@ -51,7 +60,7 @@ const DRAW_CALL_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     set: &[BindingDesc {
         slot: 0,
         name: "draw",
-        ty: BindType::DynamicUniformBuffer,
+        ty: BindType::DynamicStorageBuffer,
         count: 1,
     }],
 };
@@ -67,9 +76,18 @@ const DRAW_PIPELINE_LAYOUT: [BindGroupLayoutDesc; 4] = [
 struct SceneUniform {
     pub view: glam::Mat4,
     pub projection: glam::Mat4,
+    pub eye_position: glam::Vec3,
 }
 
-impl<'a> ClearBackbuffer<'a> {
+#[repr(C, align(16))]
+struct DirectioanLightUniform {
+    pub direction: glam::Vec3,
+    _pad1: f32,
+    pub color: glam::Vec3,
+    _pad: f32,
+}
+
+impl<'a> RenderDemo<'a> {
     fn create_draw_stream(&self, context: &RenderContext<'a>, rotation: f32) -> DrawStream {
         puffin::profile_function!();
         let mut stream = DrawStream::new(self.scene_bind_group);
@@ -79,7 +97,7 @@ impl<'a> ClearBackbuffer<'a> {
             for (index, bone) in model.bones.iter().enumerate() {
                 let parent = model.bone_parents[index];
                 if parent == u32::MAX {
-                    bones.push(glam::Mat4::from_rotation_z(rotation) * glam::Mat4::from(*bone));
+                    bones.push(glam::Mat4::from_rotation_y(rotation) * glam::Mat4::from(*bone));
                 } else {
                     bones.push(bones[parent as usize] * glam::Mat4::from(*bone))
                 }
@@ -111,8 +129,9 @@ impl<'a> ClearBackbuffer<'a> {
         stream
     }
 }
-impl<'a> Client for ClearBackbuffer<'a> {
-    fn tick(&mut self, _context: UpdateContext, _dt: GameTime) -> dess_runner::ClientState {
+impl<'a> Client for RenderDemo<'a> {
+    fn tick(&mut self, _context: UpdateContext, dt: GameTime) -> dess_runner::ClientState {
+        self.rotation += 0.1 * dt.delta_time;
         dess_runner::ClientState::Continue
     }
 
@@ -138,32 +157,38 @@ impl<'a> Client for ClearBackbuffer<'a> {
             ImageLayout::ColorTarget,
         )
         .store_output()
-        .clear_input(ClearRenderTarget::Color([0.125, 0.125, 0.125, 1.0]));
+        .clear_input(ClearRenderTarget::Color([0.2, 0.2, 0.3, 1.0]));
         let depth_target =
             RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
                 .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
+        let eye_position = vec3(0.0, 0.2, 0.75);
         context
             .device
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
-                    view: glam::Mat4::look_at_rh(
-                        vec3(0.0, 0.25, 0.2),
-                        glam::Vec3::ZERO,
-                        glam::Vec3::Z,
-                    ),
+                    view: glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.1, 0.0), glam::Vec3::Z),
                     projection: glam::Mat4::perspective_rh(
-                        PI / 2.0,
+                        PI / 3.0,
                         context.frame.render_area.aspect_ratio(),
                         0.1,
                         100.0,
                     ),
+                    eye_position,
                 };
                 ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
+                let light = DirectioanLightUniform {
+                    direction: glam::Quat::from_rotation_y(self.rotation * PI * 5.0)
+                        * -vec3(-1.0, -1.0, -0.5).normalize(),
+                    _pad1: 0.0,
+                    color: glam::Vec3::ONE,
+                    _pad: 0.0,
+                };
+                ctx.bind_uniform(self.scene_bind_group, 1, &light)?;
 
                 Ok(())
             })
             .unwrap();
-        let stream = self.create_draw_stream(&context, 0.0);
+        let stream = self.create_draw_stream(&context, self.rotation);
         context.frame.execute(
             context.frame.render_area,
             &[color_target],
@@ -181,8 +206,8 @@ impl<'a> Client for ClearBackbuffer<'a> {
         let program = context
             .resource_manager
             .get_or_load_program(&[
-                ShaderSource::vertex("shaders/unlit_vs.hlsl"),
-                ShaderSource::fragment("shaders/unlit_ps.hlsl"),
+                ShaderSource::vertex("shaders/pbr_vs.hlsl"),
+                ShaderSource::fragment("shaders/pbr_ps.hlsl"),
             ])
             .unwrap();
 
@@ -221,11 +246,11 @@ impl<'a> Client for ClearBackbuffer<'a> {
         context
             .render_device
             .with_bind_groups(|ctx| {
-                ctx.bind_dynamic_uniform_buffer(
+                ctx.bind_dynamic_storage_buffer(
                     self.draw_bind_group,
                     0,
                     context.render_device.temp_buffer(),
-                    mem::size_of::<glam::Mat4>(),
+                    mem::size_of::<glam::Mat4>() * MAX_MATRICES_PER_DRAW,
                 )
             })
             .unwrap();
@@ -237,7 +262,7 @@ fn main() {
     let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
     puffin::set_scopes_on(true);
     let mut runner = Runner::new(
-        ClearBackbuffer::default(),
+        RenderDemo::default(),
         "Dess Engine - Clear backbuffer example",
     );
     runner.run();

@@ -235,9 +235,9 @@ fn create_pbr_material(
         process_placeholder(
             ctx,
             [
-                material.pbr_metallic_roughness().metallic_factor(),
-                material.pbr_metallic_roughness().roughness_factor(),
                 0.0,
+                material.pbr_metallic_roughness().roughness_factor(),
+                material.pbr_metallic_roughness().metallic_factor(),
                 1.0,
             ],
             ImageSourceDesc::non_color(),
@@ -247,7 +247,7 @@ fn create_pbr_material(
     let occlusion = if let Some(texture) = material.occlusion_texture() {
         process_texture(ctx, &texture.texture(), ImageSourceDesc::non_color())
     } else {
-        process_placeholder(ctx, [0.0, 0.0, 1.0, 1.0], ImageSourceDesc::non_color())
+        process_placeholder(ctx, [1.0, 0.0, 0.0, 1.0], ImageSourceDesc::non_color())
     };
 
     let normals = if let Some(texture) = material.normal_texture() {
