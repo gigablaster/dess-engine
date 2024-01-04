@@ -149,6 +149,11 @@ impl<T: Client> Runner<T> {
                                 }
                                 swapchain = None;
                             }
+                            if event.physical_key == PhysicalKey::Code(KeyCode::F11)
+                                && event.state.is_pressed()
+                            {
+                                resource_manager.reload_programs();
+                            }
                         }
                         _ => {}
                     },

@@ -443,29 +443,37 @@ impl Device {
     pub async fn compile_raster_pipelines(&self) {
         let compiled = AsyncComputeTaskPool::get().scope(|s| {
             let programs = self.program_storage.read();
-            self.pipelines
-                .read()
-                .enumerate()
-                .for_each(|(handle, (pipeline, _), desc)| {
-                    if *pipeline == vk::Pipeline::null() {
-                        let program = programs
-                            .get(desc.program.index())
-                            .ok_or(BackendError::InvalidHandle)
-                            .unwrap();
-                        let shaders = program
-                            .shaders
-                            .iter()
-                            .cloned()
-                            .collect::<ArrayVec<_, MAX_SHADERS>>();
-                        s.spawn(self.compile_raster_pipeline(handle, shaders, *desc));
-                    }
+            let pipelines = self.pipelines.read();
+            self.raster_pipelines_to_rebuild
+                .lock()
+                .drain()
+                .for_each(|handle| {
+                    let desc = pipelines.get_cold(handle).unwrap();
+                    let program = programs
+                        .get(desc.program.index())
+                        .ok_or(BackendError::InvalidHandle)
+                        .unwrap();
+                    let shaders = program
+                        .shaders
+                        .iter()
+                        .cloned()
+                        .collect::<ArrayVec<_, MAX_SHADERS>>();
+                    s.spawn(self.compile_raster_pipeline(handle, shaders, *desc));
                 })
         });
         let mut pipelines = self.pipelines.write();
         for it in compiled {
             match it {
                 Ok((handle, pipeline, layout)) => {
-                    pipelines.replace(handle, (pipeline, layout));
+                    let old = pipelines.replace(handle, (pipeline, layout));
+                    if let Some((pipeline, layout)) = old {
+                        if layout != vk::PipelineLayout::null() {
+                            unsafe { self.raw.destroy_pipeline_layout(layout, None) };
+                        }
+                        if pipeline != vk::Pipeline::null() {
+                            unsafe { self.raw.destroy_pipeline(pipeline, None) };
+                        }
+                    }
                 }
                 Err(err) => error!("Failed to compiled pipeline: {:?}", err),
             }
@@ -483,6 +491,7 @@ impl Device {
 
         let mut pipelines = self.pipelines.write();
         let handle = pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()), desc);
+        self.raster_pipelines_to_rebuild.lock().insert(handle);
 
         Ok(handle)
     }

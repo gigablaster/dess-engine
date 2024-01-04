@@ -27,7 +27,7 @@ use dess_backend::{
     MAX_SHADERS,
 };
 use dess_common::{Handle, Pool};
-use log::{debug, error};
+use log::{debug, error, info};
 use parking_lot::{Mutex, RwLock, RwLockUpgradableReadGuard};
 use siphasher::sip128::Hasher128;
 
@@ -284,7 +284,7 @@ impl ResourceManager {
         self.models.maintain(&context);
     }
 
-    pub fn get_or_load_shader_code(&self, source: &ShaderSource) -> Result<Bytes, Error> {
+    fn get_or_load_shader_code(&self, source: &ShaderSource) -> Result<Bytes, Error> {
         // Shaders are relatively small and fast to load. So we load all shaders at start of the
         // game and don't bother with it anymore.
         let shaders = self.shaders.upgradable_read();
@@ -300,6 +300,31 @@ impl ResourceManager {
                 shaders.insert(source.clone(), shader.code.clone());
                 Ok(shader.code)
             }
+        }
+    }
+
+    pub fn reload_programs(&self) {
+        info!("Reloading all shaders");
+        // First - collect all loaded programs and clear program and shader cache
+        let mut programs = self.programs.write();
+        let loaded = programs.drain().collect::<Vec<_>>();
+        self.shaders.write().clear();
+        // Now reload and update all programs
+        for (key, handle) in loaded {
+            let mut loaded = ArrayVec::<_, MAX_SHADERS>::new();
+            for shader in key.iter() {
+                loaded.push(self.get_or_load_shader_code(&shader).unwrap());
+            }
+            let shaders = key
+                .iter()
+                .zip(loaded.iter())
+                .map(|(source, code)| ShaderDesc {
+                    stage: source.stage,
+                    entry: "main",
+                    code,
+                })
+                .collect::<ArrayVec<_, MAX_SHADERS>>();
+            self.device.update_program(handle, &shaders).unwrap();
         }
     }
 

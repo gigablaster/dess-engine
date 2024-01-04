@@ -286,4 +286,26 @@ impl Device {
         programs.push(program);
         Ok(Index::new(index))
     }
+
+    pub fn update_program(
+        &self,
+        handle: ProgramHandle,
+        shaders: &[ShaderDesc],
+    ) -> BackendResult<()> {
+        let program = Program::new(&self.raw, shaders)?;
+        let mut programs = self.program_storage.write();
+        programs[handle.index()].free(&self.raw);
+        programs[handle.index()] = program;
+        // Send all pipelines that use this program to rebuild
+        let pipelines = self.pipelines.read();
+        let mut to_rebuild = self.raster_pipelines_to_rebuild.lock();
+        pipelines.enumerate().for_each(|(pipeline_handle, ..)| {
+            let desc = pipelines.get_cold(pipeline_handle).unwrap();
+            if desc.program == handle {
+                to_rebuild.insert(pipeline_handle);
+            }
+        });
+        unsafe { self.raw.device_wait_idle() }?;
+        Ok(())
+    }
 }

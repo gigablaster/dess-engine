@@ -7,7 +7,7 @@ use std::{
 };
 
 use bevy_tasks::{AsyncComputeTaskPool, TaskPool};
-use clap::{Arg, ArgAction, ValueHint};
+use clap::{Arg, ArgAction};
 use dess_asset_pipeline::{ContentProcessor, ImportContext};
 use dess_assets::{GltfSource, ShaderSource, ROOT_DATA_PATH};
 use log::info;
@@ -68,6 +68,7 @@ fn main() {
                 .unwrap();
             thread::sleep(Duration::from_secs(1));
             if need_reimport.load(std::sync::atomic::Ordering::Acquire) {
+                let processor = ContentProcessor::default();
                 collect(&processor, Path::new(ROOT_DATA_PATH)).unwrap();
                 processor.process();
                 need_reimport.store(false, std::sync::atomic::Ordering::Release);

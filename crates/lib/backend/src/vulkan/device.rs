@@ -158,6 +158,7 @@ pub struct Device {
     temp_buffer_memory: Option<GpuMemory>,
     temp_buffer_handle: BufferHandle,
     pub(crate) descriptor_layouts: Mutex<HashMap<BindGroupLayoutDesc, BindGroupLayout>>,
+    pub(crate) raster_pipelines_to_rebuild: Mutex<HashSet<RasterPipelineHandle>>,
 }
 
 impl Debug for Device {
@@ -350,6 +351,7 @@ impl Device {
             temp_buffer_memory: Some(temp_buffer_memory),
             temp_buffer_handle,
             descriptor_layouts: Mutex::default(),
+            raster_pipelines_to_rebuild: Mutex::default(),
         }))
     }
 
