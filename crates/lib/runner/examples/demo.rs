@@ -12,7 +12,7 @@ use dess_engine::{
     MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
-use glam::{vec3, vec3a};
+use glam::{vec3, vec3a, Quat};
 
 const MAX_MATRICES_PER_DRAW: usize = 256;
 
@@ -174,7 +174,7 @@ impl<'a> Client for RenderDemo<'a> {
         let depth_target =
             RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
                 .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
-        let eye_position = vec3(0.2, 0.3, 1.5);
+        let eye_position = vec3(0.0, 0.3, 1.8);
         context
             .device
             .with_bind_groups(|ctx| {
@@ -191,16 +191,16 @@ impl<'a> Client for RenderDemo<'a> {
                 ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
                 let light = LightUniform {
                     main: DirectionalLight {
-                        direction: vec3a(0.0, 1.5, 0.2).normalize(),
-                        color: vec3a(0.9, 0.9, 1.0),
+                        direction: vec3a(0.0, 1.0, 1.0).normalize(),
+                        color: vec3a(0.8, 0.8, 1.0),
                     },
                     fill: DirectionalLight {
-                        direction: vec3a(0.5, 0.0, 1.0).normalize(),
-                        color: vec3a(0.7, 0.5, 0.5),
+                        direction: vec3a(1.0, 1.0, 0.0).normalize(),
+                        color: vec3a(0.6, 0.5, 0.5),
                     },
                     back: DirectionalLight {
-                        direction: vec3a(-1.0, 1.0, 1.0).normalize(),
-                        color: vec3a(0.4, 0.3, 0.3),
+                        direction: vec3a(-1.0, 1.0, -1.0).normalize(),
+                        color: vec3a(0.3, 0.3, 0.3),
                     },
                     ambient: AmbientLight {
                         top: vec3a(0.3, 0.3, 0.5),

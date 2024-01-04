@@ -135,7 +135,7 @@ float4 main(VsOut psin) : SV_TARGET {
         Lo += bdrf(N, V, albedo, f0, metallic, roughness, ao, lights.dir[i].direction, lights.dir[i].color);
     }
     float3 diffuse_ambient = ambient_light(N);
-    float3 specular_ambient = ambient_light(reflect(-V, N));
+    float3 specular_ambient = ambient_light(-reflect(V, N));
     float3 ambient = lerp(diffuse_ambient * albedo * ao, lerp(specular_ambient, diffuse_ambient, roughness * roughness) * f0, metallic);
     float3 color = ambient + Lo;
 
