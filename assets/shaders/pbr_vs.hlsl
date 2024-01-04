@@ -36,12 +36,13 @@ VsOut main(VsIn vsin) {
 
     float4x4 model = transforms[vsin.id].model;
     float4x4 mvp = mul(pass_data.projection, mul(pass_data.view, model));
+    float3 world_pos = mul(model, float4(vsin.pos, 1.0)).xyz;
     float4 pos = mul(mvp, float4(vsin.pos, 1.0));
-    float3 binormal = cross(vsin.normal, vsin.tangent);
+    float3 binormal = normalize(cross(vsin.normal, vsin.tangent));
     float3x3 tbn = float3x3(vsin.tangent, binormal, vsin.normal);
     float3x3 tangent_basis = mul((float3x3)model, transpose(tbn));
 
-    vsout.pos = pos.xyz;
+    vsout.pos = world_pos;
     vsout.position = pos;
     vsout.tangent_basis = tangent_basis;
     vsout.uv1 = vsin.uv1;

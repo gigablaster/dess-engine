@@ -63,9 +63,7 @@ float distribution_ggx(float NdotH, float roughness) {
     return num / denom;
 }
 
-float geometry_shlick_ggx(float cos_theta, float roughness) {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
+float geometry_shlick_ggx(float cos_theta, float k) {
     float num = cos_theta;
     float denom = cos_theta * (1.0 - k) + k;
 
@@ -73,10 +71,12 @@ float geometry_shlick_ggx(float cos_theta, float roughness) {
 }
 
 float3 frensel_shlick(float cos_theta, float3 f0) {
-    return f0 + (1.0 - f0) * pow(1.0 - cos_theta, 5.0);
+    return f0 + (1.0 - f0) * pow(2, (-5.55473 * cos_theta - 6.98316 * cos_theta));
 }
 
-float geometry_smith(float NdotV, float NdotL, float k) {
+float geometry_smith(float NdotV, float NdotL, float roughness) {
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
     float ggx1 = geometry_shlick_ggx(NdotV, k);
     float ggx2 = geometry_shlick_ggx(NdotL, k);
 
