@@ -306,8 +306,8 @@ impl ResourceManager {
     pub fn reload_programs(&self) {
         info!("Reloading all shaders");
         // First - collect all loaded programs and clear program and shader cache
-        let mut programs = self.programs.write();
-        let loaded = programs.drain().collect::<Vec<_>>();
+        let programs = self.programs.write();
+        let loaded = programs.iter().collect::<Vec<_>>();
         self.shaders.write().clear();
         // Now reload and update all programs
         for (key, handle) in loaded {
@@ -324,7 +324,7 @@ impl ResourceManager {
                     code,
                 })
                 .collect::<ArrayVec<_, MAX_SHADERS>>();
-            self.device.update_program(handle, &shaders).unwrap();
+            self.device.update_program(*handle, &shaders).unwrap();
         }
     }
 
