@@ -123,7 +123,10 @@ impl ContentProcessor {
     async fn do_process(&self, content: Box<dyn AssetImporter>) {
         match self.do_process_impl(content.as_ref()).await {
             Ok(_) => info!("Processed {:?}", content),
-            Err(err) => error!("Failed to process {:?} - {:?}", content, err),
+            Err(err) => match err {
+                Error::Io(io) => eprintln!("IO error: {:?}", io),
+                Error::ProcessingFailed(desc) => eprintln!("{}", desc),
+            },
         }
     }
 
