@@ -109,6 +109,9 @@ impl ContentProcessor {
         let path = get_cached_asset_path(content.get_ref());
         if path.exists() {
             if let Ok(metadata) = fs::metadata(path) {
+                if let Ok(modified) = metadata.modified() {
+                    return content.is_changed(modified);
+                }
                 if let Ok(created) = metadata.created() {
                     return content.is_changed(created);
                 }

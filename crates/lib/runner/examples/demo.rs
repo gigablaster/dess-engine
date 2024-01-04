@@ -174,12 +174,12 @@ impl<'a> Client for RenderDemo<'a> {
         let depth_target =
             RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
                 .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
-        let eye_position = vec3(0.1, 0.666, 0.80);
+        let eye_position = vec3(0.2, 0.3, 1.5);
         context
             .device
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
-                    view: glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.4, 0.0), -glam::Vec3::Y),
+                    view: glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.0, 0.0), -glam::Vec3::Y),
                     projection: glam::Mat4::perspective_rh(
                         PI / 4.0,
                         context.frame.render_area.aspect_ratio(),
@@ -191,7 +191,7 @@ impl<'a> Client for RenderDemo<'a> {
                 ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
                 let light = LightUniform {
                     main: DirectionalLight {
-                        direction: vec3a(0.0, 1.5, 0.5).normalize(),
+                        direction: vec3a(0.0, 1.5, 0.2).normalize(),
                         color: vec3a(0.9, 0.9, 1.0),
                     },
                     fill: DirectionalLight {
@@ -199,13 +199,13 @@ impl<'a> Client for RenderDemo<'a> {
                         color: vec3a(0.7, 0.5, 0.5),
                     },
                     back: DirectionalLight {
-                        direction: vec3a(-1.0, -1.0, 1.0).normalize(),
+                        direction: vec3a(-1.0, 1.0, 1.0).normalize(),
                         color: vec3a(0.4, 0.3, 0.3),
                     },
                     ambient: AmbientLight {
-                        top: vec3a(0.5, 0.5, 0.5),
-                        middle: vec3a(0.3, 0.3, 0.3),
-                        bottom: vec3a(0.5, 0.3, 0.3),
+                        top: vec3a(0.3, 0.3, 0.5),
+                        middle: vec3a(0.2, 0.2, 0.2),
+                        bottom: vec3a(0.3, 0.25, 0.25),
                     },
                 };
                 ctx.bind_uniform(self.scene_bind_group, 1, &light)?;
@@ -252,7 +252,7 @@ impl<'a> Client for RenderDemo<'a> {
             .unwrap();
         let model = context
             .resource_manager
-            .request_model(GltfSource::new("models/FlightHelmet/FlightHelmet.gltf").get_ref());
+            .request_model(GltfSource::new("models/PBR/gun.gltf").get_ref());
         context
             .resource_manager
             .with_context(|ctx| {
