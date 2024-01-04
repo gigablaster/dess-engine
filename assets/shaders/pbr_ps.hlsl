@@ -9,8 +9,15 @@ struct DirectionalLight {
     float3 color;
 };
 
+struct HemisphericalAmbient {
+    float3 top;
+    float3 middle;
+    float3 bottom;
+};
+
 struct LightData {
     DirectionalLight dir[3];
+    HemisphericalAmbient ambient;
 };
 
 struct VsOut {
@@ -76,7 +83,12 @@ float geometry_smith(float NdotV, float NdotL, float k) {
     return ggx1 * ggx2;
 }
 
-float3 bdrf(float3 N, float3 V, float3 albedo, float metallic, float roughness, float ao, float3 light_dir, float3 light_color) {
+float3 ambient_light(float3 dir) {
+    float3 target = dir.y < 0.0 ? lights.ambient.bottom : lights.ambient.top;
+    return lerp(lights.ambient.middle, target, dir.y);
+}
+
+float3 bdrf(float3 N, float3 V, float3 albedo, float3 f0, float metallic, float roughness, float ao, float3 light_dir, float3 light_color) {
     float3 L = normalize(light_dir);
     float3 H = normalize(L + V);
 
@@ -85,8 +97,6 @@ float3 bdrf(float3 N, float3 V, float3 albedo, float metallic, float roughness, 
     float NdotV = saturate(dot(N, V));
     float HdotV = saturate(dot(H, V));
 
-    float3 f0 = float3(0.04, 0.04, 0.04);
-    f0 = lerp(f0, albedo, metallic);
     float3 F = frensel_shlick(HdotV, f0);
     float NDF = distribution_ggx(NdotH, roughness);
     float G = geometry_smith(NdotV, NdotL, roughness);
@@ -110,18 +120,23 @@ float4 main(VsOut psin) : SV_TARGET {
     float metallic = mr.b;
     float roughness = mr.g;
     float3 normal = unpack_normal(normals.Sample(base_sampler, psin.uv1));
+    float3 world_normal = mul(psin.tangent_basis, normal);
 
     roughness = max(roughness, 0.0001);
 
-    float3 N = normalize(mul(psin.tangent_basis, normal));
+    float3 N = normalize(world_normal);
     float3 V = normalize(pass_data.eye_position - psin.pos);
     
+    float3 f0 = float3(0.04, 0.04, 0.04);
+    f0 = lerp(f0, albedo, metallic);
+
     float3 Lo = float3(0, 0, 0);
     for (int i = 0; i < 3; i++) {
-        Lo += bdrf(N, V, albedo, metallic, roughness, ao, lights.dir[i].direction, lights.dir[i].color);
+        Lo += bdrf(N, V, albedo, f0, metallic, roughness, ao, lights.dir[i].direction, lights.dir[i].color);
     }
-    float3 ambient = float3(0.05, 0.05, 0.05) * albedo * ao;
-    float3 color = ambient + Lo;
+    float3 diffuse_ambient = ambient_light(world_normal);
+    float3 specular_ambient = ambient_light(-reflect(V, world_normal));
+    float3 color = lerp(diffuse_ambient * albedo * ao, lerp(specular_ambient, diffuse_ambient, roughness) * f0, metallic) + Lo;
 
     return float4(color, 1.0);
 }

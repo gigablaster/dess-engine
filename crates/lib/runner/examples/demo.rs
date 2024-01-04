@@ -12,7 +12,7 @@ use dess_engine::{
     MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
-use glam::vec3;
+use glam::{vec3, vec3a};
 
 const MAX_MATRICES_PER_DRAW: usize = 256;
 
@@ -80,18 +80,24 @@ struct SceneUniform {
 }
 
 #[repr(C, align(16))]
-struct DirectioanLight {
-    pub direction: glam::Vec3,
-    _pad1: f32,
-    pub color: glam::Vec3,
-    _pad2: f32,
+struct DirectionalLight {
+    pub direction: glam::Vec3A,
+    pub color: glam::Vec3A,
+}
+
+#[repr(C, align(16))]
+struct AmbientLight {
+    pub top: glam::Vec3A,
+    pub middle: glam::Vec3A,
+    pub bottom: glam::Vec3A,
 }
 
 #[repr(C, align(16))]
 struct LightUniform {
-    pub main: DirectioanLight,
-    pub fill: DirectioanLight,
-    pub back: DirectioanLight,
+    pub main: DirectionalLight,
+    pub fill: DirectionalLight,
+    pub back: DirectionalLight,
+    pub ambient: AmbientLight,
 }
 
 impl<'a> RenderDemo<'a> {
@@ -168,14 +174,14 @@ impl<'a> Client for RenderDemo<'a> {
         let depth_target =
             RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
                 .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
-        let eye_position = vec3(0.1, 0.75, 0.80);
+        let eye_position = vec3(0.1, 0.666, 0.80);
         context
             .device
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
                     view: glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.4, 0.0), -glam::Vec3::Y),
                     projection: glam::Mat4::perspective_rh(
-                        PI / 3.0,
+                        PI / 4.0,
                         context.frame.render_area.aspect_ratio(),
                         0.1,
                         100.0,
@@ -184,23 +190,22 @@ impl<'a> Client for RenderDemo<'a> {
                 };
                 ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
                 let light = LightUniform {
-                    main: DirectioanLight {
-                        direction: vec3(0.0, 1.5, 0.5).normalize(),
-                        _pad1: 0.0,
-                        color: vec3(0.9, 0.9, 1.0),
-                        _pad2: 0.0,
+                    main: DirectionalLight {
+                        direction: vec3a(0.0, 1.5, 0.5).normalize(),
+                        color: vec3a(0.9, 0.9, 1.0),
                     },
-                    fill: DirectioanLight {
-                        direction: vec3(0.5, 0.0, 1.0).normalize(),
-                        _pad1: 0.0,
-                        color: vec3(0.7, 0.5, 0.5),
-                        _pad2: 0.0,
+                    fill: DirectionalLight {
+                        direction: vec3a(0.5, 0.0, 1.0).normalize(),
+                        color: vec3a(0.7, 0.5, 0.5),
                     },
-                    back: DirectioanLight {
-                        direction: vec3(-1.0, -1.0, 1.0).normalize(),
-                        _pad1: 0.0,
-                        color: vec3(0.4, 0.3, 0.3),
-                        _pad2: 0.0,
+                    back: DirectionalLight {
+                        direction: vec3a(-1.0, -1.0, 1.0).normalize(),
+                        color: vec3a(0.4, 0.3, 0.3),
+                    },
+                    ambient: AmbientLight {
+                        top: vec3a(0.5, 0.5, 0.5),
+                        middle: vec3a(0.3, 0.3, 0.3),
+                        bottom: vec3a(0.5, 0.3, 0.3),
                     },
                 };
                 ctx.bind_uniform(self.scene_bind_group, 1, &light)?;
