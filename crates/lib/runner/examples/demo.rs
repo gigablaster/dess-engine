@@ -80,11 +80,18 @@ struct SceneUniform {
 }
 
 #[repr(C, align(16))]
-struct DirectioanLightUniform {
+struct DirectioanLight {
     pub direction: glam::Vec3,
     _pad1: f32,
     pub color: glam::Vec3,
-    _pad: f32,
+    _pad2: f32,
+}
+
+#[repr(C, align(16))]
+struct LightUniform {
+    pub main: DirectioanLight,
+    pub fill: DirectioanLight,
+    pub back: DirectioanLight,
 }
 
 impl<'a> RenderDemo<'a> {
@@ -131,7 +138,7 @@ impl<'a> RenderDemo<'a> {
 }
 impl<'a> Client for RenderDemo<'a> {
     fn tick(&mut self, _context: UpdateContext, dt: GameTime) -> dess_runner::ClientState {
-        self.rotation += 0.1 * dt.delta_time;
+        self.rotation += 0.25 * dt.delta_time;
         dess_runner::ClientState::Continue
     }
 
@@ -161,12 +168,12 @@ impl<'a> Client for RenderDemo<'a> {
         let depth_target =
             RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
                 .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
-        let eye_position = vec3(0.0, 0.2, 0.75);
+        let eye_position = vec3(0.1, 0.75, 0.80);
         context
             .device
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
-                    view: glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.1, 0.0), glam::Vec3::Z),
+                    view: glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.4, 0.0), -glam::Vec3::Y),
                     projection: glam::Mat4::perspective_rh(
                         PI / 3.0,
                         context.frame.render_area.aspect_ratio(),
@@ -176,12 +183,25 @@ impl<'a> Client for RenderDemo<'a> {
                     eye_position,
                 };
                 ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
-                let light = DirectioanLightUniform {
-                    direction: glam::Quat::from_rotation_y(self.rotation * PI * 5.0)
-                        * -vec3(-1.0, -1.0, -0.5).normalize(),
-                    _pad1: 0.0,
-                    color: glam::Vec3::ONE,
-                    _pad: 0.0,
+                let light = LightUniform {
+                    main: DirectioanLight {
+                        direction: vec3(0.0, 1.5, 0.5).normalize(),
+                        _pad1: 0.0,
+                        color: vec3(0.9, 0.9, 1.0),
+                        _pad2: 0.0,
+                    },
+                    fill: DirectioanLight {
+                        direction: vec3(0.5, 0.0, 1.0).normalize(),
+                        _pad1: 0.0,
+                        color: vec3(0.7, 0.5, 0.5),
+                        _pad2: 0.0,
+                    },
+                    back: DirectioanLight {
+                        direction: vec3(-1.0, -1.0, 1.0).normalize(),
+                        _pad1: 0.0,
+                        color: vec3(0.4, 0.3, 0.3),
+                        _pad2: 0.0,
+                    },
                 };
                 ctx.bind_uniform(self.scene_bind_group, 1, &light)?;
 
@@ -220,14 +240,14 @@ impl<'a> Client for RenderDemo<'a> {
                     &DRAW_PIPELINE_LAYOUT,
                     &BASIC_MESH_LAYOUT,
                 )
-                .depth_test(DepthCompareOp::LessOrEqual)
+                .depth_test(DepthCompareOp::Less)
                 .cull(dess_backend::CullMode::Back)
                 .depth_write(),
             )
             .unwrap();
         let model = context
             .resource_manager
-            .request_model(GltfSource::new("models/PBR/ABeautifulGame.gltf").get_ref());
+            .request_model(GltfSource::new("models/FlightHelmet/FlightHelmet.gltf").get_ref());
         context
             .resource_manager
             .with_context(|ctx| {
@@ -261,9 +281,6 @@ fn main() {
     let server_addr = format!("127.0.0.1:{}", puffin_http::DEFAULT_PORT);
     let _puffin_server = puffin_http::Server::new(&server_addr).unwrap();
     puffin::set_scopes_on(true);
-    let mut runner = Runner::new(
-        RenderDemo::default(),
-        "Dess Engine - Clear backbuffer example",
-    );
+    let mut runner = Runner::new(RenderDemo::default(), "Dess Engine - Test demo");
     runner.run();
 }
