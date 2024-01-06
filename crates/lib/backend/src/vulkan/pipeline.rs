@@ -353,9 +353,7 @@ impl Device {
             .polygon_mode(vk::PolygonMode::FILL)
             .line_width(1.0)
             .depth_bias_clamp(0.0)
-            .depth_bias_slope_factor(0.0);
-
-        let rasterizer_state = rasterizer_state
+            .depth_bias_slope_factor(0.0)
             .cull_mode(
                 desc.cull
                     .map(|x| x.into())

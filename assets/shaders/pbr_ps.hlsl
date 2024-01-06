@@ -29,7 +29,6 @@ float3 unpack_normal(float4 tx) {
     return float3(normal_xy, normal_z);
 }
 
-
 float4 main(VsOut psin) : SV_TARGET {
     float3 albedo = base.Sample(base_sampler, psin.uv1).rgb;
     float3 mr = metallic_roughness.Sample(base_sampler, psin.uv1).rgb;

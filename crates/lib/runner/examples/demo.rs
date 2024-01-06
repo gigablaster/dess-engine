@@ -273,7 +273,7 @@ impl<'a> RenderDemo<'a> {
         stream
     }
 
-    fn draw_skybox(&self, context: &RenderContext, eye_position: glam::Vec3) -> DrawStream {
+    fn draw_skybox(&self, context: &RenderContext, view: glam::Mat4) -> DrawStream {
         let mut stream = DrawStream::new(self.skybox_bind_group);
         let mut vertices = Vec::new();
         for index in FACES {
@@ -293,9 +293,13 @@ impl<'a> RenderDemo<'a> {
         }
         let vb = context.frame.temp_allocate(&vertices).unwrap();
         let ib = context.frame.temp_allocate(&indices).unwrap();
+        let (_, rotation, translation) = view.inverse().to_scale_rotation_translation();
         let offset = context
             .frame
-            .temp_allocate(&[glam::Mat4::from_scale(vec3(99.0, 99.0, 99.0))])
+            .temp_allocate(
+                &[glam::Mat4::from_rotation_translation(rotation, translation)
+                    * glam::Mat4::from_scale(vec3(99.0, 99.0, 99.0))],
+            )
             .unwrap()
             .offset;
         stream.set_pipeline(self.skybox_pipeline);
@@ -345,12 +349,13 @@ impl<'a> Client for RenderDemo<'a> {
         let depth_target =
             RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
                 .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
-        let eye_position = vec3(0.0, 0.3, 1.8);
+        let eye_position = vec3(0.0, 0.15, 0.6);
+        let view = glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.0, 0.0), -glam::Vec3::Y);
         context
             .device
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
-                    view: glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.0, 0.0), -glam::Vec3::Y),
+                    view,
                     projection: glam::Mat4::perspective_rh(
                         PI / 4.0,
                         context.frame.render_area.aspect_ratio(),
@@ -362,21 +367,21 @@ impl<'a> Client for RenderDemo<'a> {
                 ctx.bind_uniform(self.scene_bind_group, 0, &scene)?;
                 let light = LightUniform {
                     main: DirectionalLight {
-                        direction: vec3a(0.0, 1.0, 1.0).normalize(),
-                        color: vec3a(75.0, 90.0, 100.0),
+                        direction: vec3a(0.0, 1.0, -4.0).normalize(),
+                        color: vec3a(10.0, 10.0, 20.0),
                     },
                     fill: DirectionalLight {
-                        direction: vec3a(1.0, 1.0, 0.0).normalize(),
-                        color: vec3a(50.0, 50.0, 75.0),
+                        direction: vec3a(1.0, 4.0, 0.0).normalize(),
+                        color: vec3a(15.0, 10.0, 10.0),
                     },
                     back: DirectionalLight {
-                        direction: vec3a(-1.0, 1.0, -1.0).normalize(),
-                        color: vec3a(20.0, 20.0, 20.0),
+                        direction: vec3a(-1.0, 1.0, 1.0).normalize(),
+                        color: vec3a(5.0, 5.0, 5.0),
                     },
                     ambient: AmbientLight {
-                        top: vec3a(50.0, 50.0, 75.0),
-                        middle: vec3a(20.0, 50.0, 30.0),
-                        bottom: vec3a(10.0, 10.0, 10.0),
+                        top: vec3a(5.0, 5.0, 10.0),
+                        middle: vec3a(1.0, 1.0, 1.0),
+                        bottom: vec3a(8.0, 2.0, 2.0),
                     },
                 };
                 ctx.bind_uniform(self.scene_bind_group, 1, &light)?;
@@ -390,7 +395,7 @@ impl<'a> Client for RenderDemo<'a> {
                 ctx.bind_uniform(
                     self.tonemapping_bind_group,
                     1,
-                    &Tonemapping { expouse: 0.02 },
+                    &Tonemapping { expouse: 0.05 },
                 )?;
 
                 ctx.bind_uniform(self.skybox_bind_group, 0, &scene)?;
@@ -400,7 +405,7 @@ impl<'a> Client for RenderDemo<'a> {
             })
             .unwrap();
         let main_stream = self.create_draw_stream(&context, self.rotation);
-        let skybox = self.draw_skybox(&context, eye_position);
+        let skybox = self.draw_skybox(&context, view);
         let tonemapping =
             self.full_screen_quad(&context, self.tonemapping, self.tonemapping_bind_group);
         context.frame.execute(
@@ -456,7 +461,7 @@ impl<'a> Client for RenderDemo<'a> {
             .unwrap();
         let model = context
             .resource_manager
-            .request_model(GltfSource::new("models/PBR/gun.gltf").get_ref());
+            .request_model(GltfSource::new("models/ABeautifulGame/ABeautifulGame.gltf").get_ref());
         context
             .resource_manager
             .with_context(|ctx| {
@@ -482,15 +487,12 @@ impl<'a> Client for RenderDemo<'a> {
             .unwrap();
         self.tonemapping = context
             .pipeline_cache
-            .get_or_register_raster_pipeline(
-                RasterPipelineCreateDesc::new(
-                    program,
-                    &TONEMAPPING_PASS_LAYOUT,
-                    &POSTPORCESSING_PIPELINE_LAYOUT,
-                    &BASIC_VERTEX_LAYOUT,
-                )
-                .depth_test(DepthCompareOp::Greater),
-            )
+            .get_or_register_raster_pipeline(RasterPipelineCreateDesc::new(
+                program,
+                &TONEMAPPING_PASS_LAYOUT,
+                &POSTPORCESSING_PIPELINE_LAYOUT,
+                &BASIC_VERTEX_LAYOUT,
+            ))
             .unwrap();
         self.tonemapping_bind_group = context
             .render_device
@@ -506,13 +508,17 @@ impl<'a> Client for RenderDemo<'a> {
             .unwrap();
         self.skybox_pipeline = context
             .pipeline_cache
-            .get_or_register_raster_pipeline(RasterPipelineCreateDesc::new(
-                program,
-                &MAIN_PASS_LAYOUT,
-                &SKYBOX_PIPELINE_LAYOUT,
-                &SKY_VERTEX_LAYOUT,
-            ))
+            .get_or_register_raster_pipeline(
+                RasterPipelineCreateDesc::new(
+                    program,
+                    &MAIN_PASS_LAYOUT,
+                    &SKYBOX_PIPELINE_LAYOUT,
+                    &SKY_VERTEX_LAYOUT,
+                )
+                .depth_test(DepthCompareOp::Less),
+            )
             .unwrap();
+
         self.skybox_bind_group = context
             .render_device
             .create_bind_group(&SKYBOX_BIND_LAYOUT)

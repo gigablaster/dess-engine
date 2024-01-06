@@ -35,9 +35,8 @@ float geometry_smith(float NdotV, float NdotL, float roughness) {
 }
 
 float3 ambient_light(float3 dir, HemisphericalAmbient ambient) {
-    float f = dot(dir, float3(0, 1, 0));
-    float3 target = f < 0.0 ? ambient.bottom : ambient.top;
-    return lerp(ambient.middle, target, abs(f));
+    float3 target = dir.y < 0.0 ? ambient.bottom : ambient.top;
+    return lerp(ambient.middle, target, abs(dir.y));
 }
 
 float3 bdrf(float3 N, float3 V, float3 albedo, float3 f0, float metallic, float roughness, float ao, float3 light_dir, float3 light_color) {
