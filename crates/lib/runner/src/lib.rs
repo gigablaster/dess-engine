@@ -8,8 +8,8 @@ use dess_common::GameTime;
 mod runner;
 
 use dess_engine::{
-    BufferPool, Error, PipelineCache, PoolImageDesc, RelativeImageSize, ResourceManager,
-    TemporaryImage, TemporaryImagePool,
+    BufferPool, PipelineCache, PoolImageDesc, RelativeImageSize, ResourceManager, TemporaryImage,
+    TemporaryImagePool,
 };
 pub use runner::*;
 

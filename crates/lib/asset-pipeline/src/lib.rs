@@ -17,7 +17,7 @@ use bevy_tasks::AsyncComputeTaskPool;
 use dess_assets::{get_absolute_asset_path, get_cached_asset_path, Asset, AssetRef, ContentSource};
 pub use gltf::*;
 pub use image::*;
-use log::{error, info};
+use log::info;
 use parking_lot::Mutex;
 
 #[derive(Debug)]

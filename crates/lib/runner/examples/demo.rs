@@ -3,18 +3,18 @@ use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
-    Format, Image, ImageAspect, ImageBarrier, ImageLayout, ImageUsage, InputVertexAttributeDesc,
+    Format, ImageAspect, ImageBarrier, ImageLayout, ImageUsage, InputVertexAttributeDesc,
     InputVertexStreamDesc, RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassLayout,
     ShaderStage, EMPTY_BIND_LAYOUT, {BindGroupHandle, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
     render::{BasicVertex, BASIC_MESH_LAYOUT, BASIC_VERTEX_LAYOUT},
-    ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader, MESH_PBR_MATERIAL_LAYOUT,
+    ModelCollection, RelativeImageSize, ResourceLoader, MESH_PBR_MATERIAL_LAYOUT,
     PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
-use glam::{vec2, vec3, vec3a, Quat, Vec3};
+use glam::{vec2, vec3, vec3a};
 
 const MAX_MATRICES_PER_DRAW: usize = 256;
 

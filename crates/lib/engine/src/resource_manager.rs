@@ -313,7 +313,7 @@ impl ResourceManager {
         for (key, handle) in loaded {
             let mut loaded = ArrayVec::<_, MAX_SHADERS>::new();
             for shader in key.iter() {
-                loaded.push(self.get_or_load_shader_code(&shader).unwrap());
+                loaded.push(self.get_or_load_shader_code(shader).unwrap());
             }
             let shaders = key
                 .iter()
