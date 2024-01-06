@@ -140,12 +140,14 @@ impl ContentProcessor {
 }
 
 pub(crate) fn is_asset_changed<P: AsRef<Path>>(path: P, timestamp: SystemTime) -> bool {
-    if let Ok(metadata) = fs::metadata(get_absolute_asset_path(path).unwrap()) {
-        if let Ok(modified) = metadata.modified() {
-            return modified > timestamp;
-        }
-        if let Ok(created) = metadata.created() {
-            return created > timestamp;
+    if let Ok(path) = get_absolute_asset_path(path) {
+        if let Ok(metadata) = fs::metadata(path) {
+            if let Ok(modified) = metadata.modified() {
+                return modified > timestamp;
+            }
+            if let Ok(created) = metadata.created() {
+                return created > timestamp;
+            }
         }
     }
     false

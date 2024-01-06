@@ -3,9 +3,9 @@ use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
-    Format, Image, ImageAspect, ImageBarrier, ImageLayout, ImageUsage, RasterPipelineCreateDesc,
-    RasterPipelineHandle, RenderPassLayout, ShaderStage, EMPTY_BIND_LAYOUT,
-    {BindGroupHandle, RenderTarget},
+    Format, Image, ImageAspect, ImageBarrier, ImageLayout, ImageUsage, InputVertexAttributeDesc,
+    InputVertexStreamDesc, RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassLayout,
+    ShaderStage, EMPTY_BIND_LAYOUT, {BindGroupHandle, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -26,6 +26,8 @@ struct RenderDemo<'a> {
     scene_bind_group: BindGroupHandle,
     draw_bind_group: BindGroupHandle,
     tonemapping_bind_group: BindGroupHandle,
+    skybox_pipeline: RasterPipelineHandle,
+    skybox_bind_group: BindGroupHandle,
     rotation: f32,
     _phantom: PhantomData<&'a ()>,
 }
@@ -59,6 +61,24 @@ const MAIN_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
             slot: 32,
             name: "base_sampler",
             ty: BindType::Sampler,
+            count: 1,
+        },
+    ],
+};
+
+const SKYBOX_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::Graphics,
+    set: &[
+        BindingDesc {
+            slot: 0,
+            name: "pass",
+            ty: BindType::UniformBuffer,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 1,
+            name: "light",
+            ty: BindType::UniformBuffer,
             count: 1,
         },
     ],
@@ -112,6 +132,13 @@ const POSTPORCESSING_PIPELINE_LAYOUT: [BindGroupLayoutDesc; 4] = [
     EMPTY_BIND_LAYOUT,
 ];
 
+const SKYBOX_PIPELINE_LAYOUT: [BindGroupLayoutDesc; 4] = [
+    SKYBOX_BIND_LAYOUT,
+    EMPTY_BIND_LAYOUT,
+    EMPTY_BIND_LAYOUT,
+    DRAW_CALL_BIND_LAYOUT,
+];
+
 #[repr(C, align(16))]
 struct SceneUniform {
     pub view: glam::Mat4,
@@ -144,6 +171,41 @@ struct LightUniform {
 struct Tonemapping {
     pub expouse: f32,
 }
+
+const CORNERS: [glam::Vec3; 8] = [
+    vec3(-1.0, -1.0, -1.0),
+    vec3(-1.0, 1.0, -1.0),
+    vec3(1.0, 1.0, -1.0),
+    vec3(1.0, -1.0, -1.0),
+    vec3(1.0, -1.0, 1.0),
+    vec3(1.0, 1.0, 1.0),
+    vec3(-1.0, 1.0, 1.0),
+    vec3(-1.0, -1.0, 1.0),
+];
+
+const FACES: [[u16; 4]; 6] = [
+    [0, 1, 2, 3],
+    [4, 5, 6, 7],
+    [4, 3, 2, 5],
+    [0, 7, 6, 1],
+    [1, 6, 5, 2],
+    [7, 0, 3, 4],
+];
+
+#[repr(C, packed)]
+struct SkyboxVertex {
+    positon: glam::Vec3,
+}
+
+pub const SKY_VERTEX_LAYOUT: [InputVertexStreamDesc; 1] = [InputVertexStreamDesc {
+    attributes: &[InputVertexAttributeDesc {
+        format: Format::RGB32_SFLOAT,
+        locaion: 0,
+        binding: 0,
+        offset: 0,
+    }],
+    stride: mem::size_of::<SkyboxVertex>(),
+}];
 
 impl<'a> RenderDemo<'a> {
     fn create_draw_stream(&self, context: &RenderContext<'a>, rotation: f32) -> DrawStream {
@@ -210,7 +272,46 @@ impl<'a> RenderDemo<'a> {
 
         stream
     }
+
+    fn draw_skybox(&self, context: &RenderContext, eye_position: glam::Vec3) -> DrawStream {
+        let mut stream = DrawStream::new(self.skybox_bind_group);
+        let mut vertices = Vec::new();
+        for index in FACES {
+            vertices.push(CORNERS[index[0] as usize]);
+            vertices.push(CORNERS[index[1] as usize]);
+            vertices.push(CORNERS[index[2] as usize]);
+            vertices.push(CORNERS[index[3] as usize]);
+        }
+        let mut indices = Vec::new();
+        for face in FACES {
+            indices.push(face[0]);
+            indices.push(face[1]);
+            indices.push(face[2]);
+            indices.push(face[0]);
+            indices.push(face[3]);
+            indices.push(face[2]);
+        }
+        let vb = context.frame.temp_allocate(&vertices).unwrap();
+        let ib = context.frame.temp_allocate(&indices).unwrap();
+        let offset = context
+            .frame
+            .temp_allocate(&[glam::Mat4::from_scale(vec3(99.0, 99.0, 99.0))])
+            .unwrap()
+            .offset;
+        stream.set_pipeline(self.skybox_pipeline);
+        stream.set_bind_group(1, None);
+        stream.set_bind_group(2, None);
+        stream.set_bind_group(3, Some(self.draw_bind_group));
+        stream.set_dynamic_buffer_offset(0, Some(offset));
+        stream.set_vertex_buffer(0, Some(vb));
+        stream.set_vertex_buffer(1, None);
+        stream.set_index_buffer(Some(ib));
+        stream.draw(0, 0, indices.len() as _, 1, 0);
+
+        stream
+    }
 }
+
 impl<'a> Client for RenderDemo<'a> {
     fn tick(&mut self, _context: UpdateContext, dt: GameTime) -> dess_runner::ClientState {
         self.rotation += 0.25 * dt.delta_time;
@@ -292,17 +393,21 @@ impl<'a> Client for RenderDemo<'a> {
                     &Tonemapping { expouse: 0.02 },
                 )?;
 
+                ctx.bind_uniform(self.skybox_bind_group, 0, &scene)?;
+                ctx.bind_uniform(self.skybox_bind_group, 1, &light)?;
+
                 Ok(())
             })
             .unwrap();
         let main_stream = self.create_draw_stream(&context, self.rotation);
+        let skybox = self.draw_skybox(&context, eye_position);
         let tonemapping =
             self.full_screen_quad(&context, self.tonemapping, self.tonemapping_bind_group);
         context.frame.execute(
             context.frame.render_area,
             &[color_target],
             Some(depth_target),
-            [main_stream].into_iter(),
+            [main_stream, skybox].into_iter(),
             &[ImageBarrier::color_to_attachment(color.image())],
         );
 
@@ -367,17 +472,6 @@ impl<'a> Client for RenderDemo<'a> {
             .render_device
             .create_bind_group(&DRAW_CALL_BIND_LAYOUT)
             .unwrap();
-        context
-            .render_device
-            .with_bind_groups(|ctx| {
-                ctx.bind_dynamic_storage_buffer(
-                    self.draw_bind_group,
-                    0,
-                    context.render_device.temp_buffer(),
-                    mem::size_of::<glam::Mat4>() * MAX_MATRICES_PER_DRAW,
-                )
-            })
-            .unwrap();
 
         let program = context
             .resource_manager
@@ -388,16 +482,61 @@ impl<'a> Client for RenderDemo<'a> {
             .unwrap();
         self.tonemapping = context
             .pipeline_cache
-            .get_or_register_raster_pipeline(RasterPipelineCreateDesc::new(
-                program,
-                &TONEMAPPING_PASS_LAYOUT,
-                &POSTPORCESSING_PIPELINE_LAYOUT,
-                &BASIC_VERTEX_LAYOUT,
-            ))
+            .get_or_register_raster_pipeline(
+                RasterPipelineCreateDesc::new(
+                    program,
+                    &TONEMAPPING_PASS_LAYOUT,
+                    &POSTPORCESSING_PIPELINE_LAYOUT,
+                    &BASIC_VERTEX_LAYOUT,
+                )
+                .depth_test(DepthCompareOp::Greater),
+            )
             .unwrap();
         self.tonemapping_bind_group = context
             .render_device
             .create_bind_group(&TONEMAPPING_PASS_BIND_LAYOUT)
+            .unwrap();
+
+        let program = context
+            .resource_manager
+            .get_or_load_program(&[
+                ShaderSource::vertex("shaders/sky_vs.hlsl"),
+                ShaderSource::fragment("shaders/sky_ps.hlsl"),
+            ])
+            .unwrap();
+        self.skybox_pipeline = context
+            .pipeline_cache
+            .get_or_register_raster_pipeline(RasterPipelineCreateDesc::new(
+                program,
+                &MAIN_PASS_LAYOUT,
+                &SKYBOX_PIPELINE_LAYOUT,
+                &SKY_VERTEX_LAYOUT,
+            ))
+            .unwrap();
+        self.skybox_bind_group = context
+            .render_device
+            .create_bind_group(&SKYBOX_BIND_LAYOUT)
+            .unwrap();
+
+        context
+            .render_device
+            .with_bind_groups(|ctx| {
+                ctx.bind_dynamic_storage_buffer(
+                    self.draw_bind_group,
+                    0,
+                    context.render_device.temp_buffer(),
+                    mem::size_of::<glam::Mat4>() * MAX_MATRICES_PER_DRAW,
+                )?;
+
+                ctx.bind_dynamic_storage_buffer(
+                    self.skybox_bind_group,
+                    0,
+                    context.render_device.temp_buffer(),
+                    mem::size_of::<glam::Mat4>(),
+                )?;
+
+                Ok(())
+            })
             .unwrap();
     }
 }

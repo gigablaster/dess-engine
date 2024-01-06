@@ -1,14 +1,6 @@
-struct PassData {
-    float4x4 view;
-    float4x4 projection;
-    float3 eye_position;
-};
+#include "include/common.hlsl"
 
 struct ObjectData {};
-
-struct InstanceTransform {
-    float4x4 model;
-};
 
 struct VsOut {
     float4 position: SV_Position;
