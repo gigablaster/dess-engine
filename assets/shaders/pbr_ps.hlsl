@@ -139,5 +139,5 @@ float4 main(VsOut psin) : SV_TARGET {
     float3 ambient = lerp(diffuse_ambient * albedo * ao, lerp(specular_ambient, diffuse_ambient, roughness * roughness) * f0, metallic);
     float3 color = ambient + Lo;
 
-    return float4(pow(color, 1/2.2), 1.0);
+    return float4(color, 1.0);
 }

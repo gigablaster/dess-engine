@@ -74,6 +74,12 @@ const TONEMAPPING_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
             count: 1,
         },
         BindingDesc {
+            slot: 1,
+            name: "params",
+            ty: BindType::UniformBuffer,
+            count: 1,
+        },
+        BindingDesc {
             slot: 32,
             name: "sampler",
             ty: BindType::Sampler,
@@ -132,6 +138,11 @@ struct LightUniform {
     pub fill: DirectionalLight,
     pub back: DirectionalLight,
     pub ambient: AmbientLight,
+}
+
+#[repr(C, align(16))]
+struct Tonemapping {
+    pub expouse: f32,
 }
 
 impl<'a> RenderDemo<'a> {
@@ -251,20 +262,20 @@ impl<'a> Client for RenderDemo<'a> {
                 let light = LightUniform {
                     main: DirectionalLight {
                         direction: vec3a(0.0, 1.0, 1.0).normalize(),
-                        color: vec3a(0.8, 0.8, 1.0),
+                        color: vec3a(75.0, 90.0, 100.0),
                     },
                     fill: DirectionalLight {
                         direction: vec3a(1.0, 1.0, 0.0).normalize(),
-                        color: vec3a(0.6, 0.5, 0.5),
+                        color: vec3a(50.0, 50.0, 75.0),
                     },
                     back: DirectionalLight {
                         direction: vec3a(-1.0, 1.0, -1.0).normalize(),
-                        color: vec3a(0.3, 0.3, 0.3),
+                        color: vec3a(20.0, 20.0, 20.0),
                     },
                     ambient: AmbientLight {
-                        top: vec3a(0.7, 0.7, 0.9),
-                        middle: vec3a(0.4, 0.6, 0.4),
-                        bottom: vec3a(0.5, 0.4, 0.3),
+                        top: vec3a(50.0, 50.0, 75.0),
+                        middle: vec3a(20.0, 50.0, 30.0),
+                        bottom: vec3a(10.0, 10.0, 10.0),
                     },
                 };
                 ctx.bind_uniform(self.scene_bind_group, 1, &light)?;
@@ -274,6 +285,11 @@ impl<'a> Client for RenderDemo<'a> {
                     0,
                     color.image(),
                     ImageLayout::ShaderRead,
+                )?;
+                ctx.bind_uniform(
+                    self.tonemapping_bind_group,
+                    1,
+                    &Tonemapping { expouse: 0.02 },
                 )?;
 
                 Ok(())
