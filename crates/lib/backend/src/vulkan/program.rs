@@ -250,6 +250,10 @@ impl Shader {
 
 pub const MAX_SHADERS: usize = 3;
 
+pub const EMPTY_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::None,
+    set: &[],
+};
 /// Shader program similar to what we had in OpenGL.
 ///
 /// Contains shader modules and layouts needed to create PSOs and descriptor sets.

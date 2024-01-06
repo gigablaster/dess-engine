@@ -120,9 +120,7 @@ impl<T: Client> Runner<T> {
                                         let context = RenderContext {
                                             device: &device,
                                             frame: context,
-                                            resource_pool: &resource_pool,
-                                            buffer_pool: &buffer_pool,
-                                            pipeline_cache: &pipeline_cache,
+                                            temporary_image_pool: &resource_pool,
                                         };
                                         self.client.render(context)
                                     })

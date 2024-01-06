@@ -357,6 +357,7 @@ impl From<Format> for vk::Format {
 bitflags! {
 #[derive(Debug, Default, Hash, Eq, PartialEq, Clone, Copy)]
 pub struct ShaderStage: u32 {
+    const None = 0;
     const Vertex = 1;
     const Fragment = 2;
     const Graphics = 3;

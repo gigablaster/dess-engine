@@ -33,9 +33,19 @@ pub struct BasicMeshAttribute {
     pub uv2: [f32; 2],
 }
 
+#[repr(C, packed)]
 pub struct BasicVertex {
     pub position: [f32; 3],
     pub uv: [f32; 2],
+}
+
+impl BasicVertex {
+    pub fn new(position: glam::Vec3, uv: glam::Vec2) -> Self {
+        Self {
+            position: position.to_array(),
+            uv: uv.to_array(),
+        }
+    }
 }
 
 pub const BASIC_MESH_LAYOUT: [InputVertexStreamDesc; 2] = [
@@ -78,6 +88,24 @@ pub const BASIC_MESH_LAYOUT: [InputVertexStreamDesc; 2] = [
         stride: mem::size_of::<BasicMeshAttribute>(),
     },
 ];
+
+pub const BASIC_VERTEX_LAYOUT: [InputVertexStreamDesc; 1] = [InputVertexStreamDesc {
+    attributes: &[
+        InputVertexAttributeDesc {
+            format: Format::RGB32_SFLOAT,
+            locaion: 0,
+            binding: 0,
+            offset: 0,
+        },
+        InputVertexAttributeDesc {
+            format: Format::RG32_SFLOAT,
+            locaion: 1,
+            binding: 0,
+            offset: 12,
+        },
+    ],
+    stride: mem::size_of::<BasicVertex>(),
+}];
 
 impl From<StaticMeshVertex> for BasicMeshVertex {
     fn from(value: StaticMeshVertex) -> Self {

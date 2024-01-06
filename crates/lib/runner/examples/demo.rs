@@ -3,16 +3,18 @@ use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
-    Format, ImageAspect, ImageLayout, ImageUsage, RasterPipelineCreateDesc, RasterPipelineHandle,
-    RenderPassLayout, ShaderStage, {BindGroupHandle, RenderTarget},
+    Format, Image, ImageAspect, ImageBarrier, ImageLayout, ImageUsage, RasterPipelineCreateDesc,
+    RasterPipelineHandle, RenderPassLayout, ShaderStage, EMPTY_BIND_LAYOUT,
+    {BindGroupHandle, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
-    render::BASIC_MESH_LAYOUT, ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader,
-    MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
+    render::{BasicVertex, BASIC_MESH_LAYOUT, BASIC_VERTEX_LAYOUT},
+    ModelCollection, PoolImageDesc, RelativeImageSize, ResourceLoader, MESH_PBR_MATERIAL_LAYOUT,
+    PACKED_MESH_OBJECT_LAYOUT,
 };
 use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
-use glam::{vec3, vec3a, Quat};
+use glam::{vec2, vec3, vec3a, Quat, Vec3};
 
 const MAX_MATRICES_PER_DRAW: usize = 256;
 
@@ -20,18 +22,25 @@ const MAX_MATRICES_PER_DRAW: usize = 256;
 struct RenderDemo<'a> {
     model: Arc<ModelCollection>,
     pipeline: RasterPipelineHandle,
+    tonemapping: RasterPipelineHandle,
     scene_bind_group: BindGroupHandle,
     draw_bind_group: BindGroupHandle,
+    tonemapping_bind_group: BindGroupHandle,
     rotation: f32,
     _phantom: PhantomData<&'a ()>,
 }
 
-static PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color_attachments: &[Format::BGRA8_UNORM],
+static MAIN_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color_attachments: &[Format::RGBA16_SFLOAT],
     depth_attachment: Some(Format::D24),
 };
 
-const PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+static TONEMAPPING_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
+    color_attachments: &[Format::BGRA8_UNORM],
+    depth_attachment: None,
+};
+
+const MAIN_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[
         BindingDesc {
@@ -55,6 +64,24 @@ const PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     ],
 };
 
+const TONEMAPPING_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
+    stage: ShaderStage::Graphics,
+    set: &[
+        BindingDesc {
+            slot: 0,
+            name: "hdr",
+            ty: BindType::SampledImage,
+            count: 1,
+        },
+        BindingDesc {
+            slot: 32,
+            name: "sampler",
+            ty: BindType::Sampler,
+            count: 1,
+        },
+    ],
+};
+
 const DRAW_CALL_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[BindingDesc {
@@ -66,10 +93,17 @@ const DRAW_CALL_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
 };
 
 const DRAW_PIPELINE_LAYOUT: [BindGroupLayoutDesc; 4] = [
-    PASS_BIND_LAYOUT,
+    MAIN_PASS_BIND_LAYOUT,
     MESH_PBR_MATERIAL_LAYOUT,
     PACKED_MESH_OBJECT_LAYOUT,
     DRAW_CALL_BIND_LAYOUT,
+];
+
+const POSTPORCESSING_PIPELINE_LAYOUT: [BindGroupLayoutDesc; 4] = [
+    TONEMAPPING_PASS_BIND_LAYOUT,
+    EMPTY_BIND_LAYOUT,
+    EMPTY_BIND_LAYOUT,
+    EMPTY_BIND_LAYOUT,
 ];
 
 #[repr(C, align(16))]
@@ -141,6 +175,30 @@ impl<'a> RenderDemo<'a> {
         }
         stream
     }
+
+    fn full_screen_quad(
+        &self,
+        context: &RenderContext,
+        pipeline: RasterPipelineHandle,
+        bind_group: BindGroupHandle,
+    ) -> DrawStream {
+        let mut stream = DrawStream::new(bind_group);
+        let vertices = [
+            BasicVertex::new(vec3(-1.0, -1.0, 0.0), vec2(0.0, 0.0)),
+            BasicVertex::new(vec3(1.0, -1.0, 0.0), vec2(1.0, 0.0)),
+            BasicVertex::new(vec3(1.0, 1.0, 0.0), vec2(1.0, 1.0)),
+            BasicVertex::new(vec3(-1.0, 1.0, 0.0), vec2(0.0, 1.0)),
+        ];
+        let indices = [0u16, 1u16, 2u16, 0u16, 3u16, 2u16];
+        let vb = context.frame.temp_allocate(&vertices).unwrap();
+        let ib = context.frame.temp_allocate(&indices).unwrap();
+        stream.set_vertex_buffer(0, Some(vb));
+        stream.set_index_buffer(Some(ib));
+        stream.set_pipeline(pipeline);
+        stream.draw(0, 0, 6, 1, 0);
+
+        stream
+    }
 }
 impl<'a> Client for RenderDemo<'a> {
     fn tick(&mut self, _context: UpdateContext, dt: GameTime) -> dess_runner::ClientState {
@@ -149,28 +207,29 @@ impl<'a> Client for RenderDemo<'a> {
     }
 
     fn render(&self, context: RenderContext) -> Result<(), dess_backend::BackendError> {
+        let color = context
+            .get_temporary_render_target(
+                Format::RGBA16_SFLOAT,
+                ImageUsage::ColorTarget | ImageUsage::Sampled,
+                ImageAspect::Color,
+                RelativeImageSize::Backbuffer,
+            )
+            .unwrap();
         let depth = context
-            .resource_pool
-            .temp_image(
-                [
-                    context.frame.render_area.width,
-                    context.frame.render_area.height,
-                ],
-                PoolImageDesc {
-                    format: Format::D24,
-                    aspect: ImageAspect::Depth,
-                    usage: ImageUsage::DepthStencilTarget,
-                    resolution: RelativeImageSize::Backbuffer,
-                },
+            .get_temporary_render_target(
+                Format::D24,
+                ImageUsage::DepthStencilTarget,
+                ImageAspect::Depth,
+                RelativeImageSize::Backbuffer,
             )
             .unwrap();
         let color_target = RenderTarget::new(
-            Format::BGRA8_UNORM,
-            context.frame.target_view,
+            Format::RGBA16_SFLOAT,
+            color.view(),
             ImageLayout::ColorTarget,
         )
         .store_output()
-        .clear_input(ClearRenderTarget::Color([0.2, 0.2, 0.3, 1.0]));
+        .clear_input(ClearRenderTarget::Color([0.0, 0.0, 0.0, 1.0]));
         let depth_target =
             RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
                 .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
@@ -203,23 +262,47 @@ impl<'a> Client for RenderDemo<'a> {
                         color: vec3a(0.3, 0.3, 0.3),
                     },
                     ambient: AmbientLight {
-                        top: vec3a(0.3, 0.3, 0.5),
-                        middle: vec3a(0.2, 0.2, 0.2),
-                        bottom: vec3a(0.3, 0.25, 0.25),
+                        top: vec3a(0.7, 0.7, 0.9),
+                        middle: vec3a(0.4, 0.6, 0.4),
+                        bottom: vec3a(0.5, 0.4, 0.3),
                     },
                 };
                 ctx.bind_uniform(self.scene_bind_group, 1, &light)?;
 
+                ctx.bind_image(
+                    self.tonemapping_bind_group,
+                    0,
+                    color.image(),
+                    ImageLayout::ShaderRead,
+                )?;
+
                 Ok(())
             })
             .unwrap();
-        let stream = self.create_draw_stream(&context, self.rotation);
+        let main_stream = self.create_draw_stream(&context, self.rotation);
+        let tonemapping =
+            self.full_screen_quad(&context, self.tonemapping, self.tonemapping_bind_group);
         context.frame.execute(
             context.frame.render_area,
             &[color_target],
             Some(depth_target),
-            [stream].into_iter(),
-            &[],
+            [main_stream].into_iter(),
+            &[ImageBarrier::color_to_attachment(color.image())],
+        );
+
+        let backbuffer = RenderTarget::new(
+            Format::BGRA8_UNORM,
+            context.frame.target_view,
+            ImageLayout::ColorTarget,
+        )
+        .store_output();
+
+        context.frame.execute(
+            context.frame.render_area,
+            &[backbuffer],
+            None,
+            [tonemapping].into_iter(),
+            &[ImageBarrier::color_attachment_to_sampled(color.image())],
         );
 
         Ok(())
@@ -241,7 +324,7 @@ impl<'a> Client for RenderDemo<'a> {
             .get_or_register_raster_pipeline(
                 RasterPipelineCreateDesc::new(
                     program,
-                    &PASS_LAYOUT,
+                    &MAIN_PASS_LAYOUT,
                     &DRAW_PIPELINE_LAYOUT,
                     &BASIC_MESH_LAYOUT,
                 )
@@ -262,7 +345,7 @@ impl<'a> Client for RenderDemo<'a> {
             .unwrap();
         self.scene_bind_group = context
             .render_device
-            .create_bind_group(&PASS_BIND_LAYOUT)
+            .create_bind_group(&MAIN_PASS_BIND_LAYOUT)
             .unwrap();
         self.draw_bind_group = context
             .render_device
@@ -278,6 +361,27 @@ impl<'a> Client for RenderDemo<'a> {
                     mem::size_of::<glam::Mat4>() * MAX_MATRICES_PER_DRAW,
                 )
             })
+            .unwrap();
+
+        let program = context
+            .resource_manager
+            .get_or_load_program(&[
+                ShaderSource::vertex("shaders/screen_quad_vs.hlsl"),
+                ShaderSource::fragment("shaders/tonemapping_ps.hlsl"),
+            ])
+            .unwrap();
+        self.tonemapping = context
+            .pipeline_cache
+            .get_or_register_raster_pipeline(RasterPipelineCreateDesc::new(
+                program,
+                &TONEMAPPING_PASS_LAYOUT,
+                &POSTPORCESSING_PIPELINE_LAYOUT,
+                &BASIC_VERTEX_LAYOUT,
+            ))
+            .unwrap();
+        self.tonemapping_bind_group = context
+            .render_device
+            .create_bind_group(&TONEMAPPING_PASS_BIND_LAYOUT)
             .unwrap();
     }
 }

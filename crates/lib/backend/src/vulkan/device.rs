@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use arrayvec::ArrayVec;
+use ash::vk::{DescriptorPoolCreateInfo, DescriptorSetLayoutCreateInfo};
 use ash::{extensions::khr, vk};
 use bevy_tasks::block_on;
 use dess_common::{Handle, HotColdPool, SentinelPoolStrategy};
@@ -159,6 +160,9 @@ pub struct Device {
     temp_buffer_handle: BufferHandle,
     pub(crate) descriptor_layouts: Mutex<HashMap<BindGroupLayoutDesc, BindGroupLayout>>,
     pub(crate) raster_pipelines_to_rebuild: Mutex<HashSet<RasterPipelineHandle>>,
+    empty_ds_layout: vk::DescriptorSetLayout,
+    empty_ds_pool: vk::DescriptorPool,
+    pub(crate) empty_ds: vk::DescriptorSet,
 }
 
 impl Debug for Device {
@@ -320,6 +324,22 @@ impl Device {
             },
         );
 
+        let empty_ds_pool = unsafe {
+            device.create_descriptor_pool(
+                &DescriptorPoolCreateInfo::builder().max_sets(1).build(),
+                None,
+            )
+        }?;
+        let empty_ds_layout = unsafe {
+            device.create_descriptor_set_layout(&DescriptorSetLayoutCreateInfo::default(), None)
+        }?;
+        let mut empty_ds_allocate_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(empty_ds_pool)
+            .set_layouts(slice::from_ref(&empty_ds_layout));
+        empty_ds_allocate_info.descriptor_set_count = 1;
+        let empty_ds =
+            unsafe { device.allocate_descriptor_sets(&empty_ds_allocate_info.build()) }?[0];
+
         Ok(Arc::new(Self {
             staging: Mutex::new(Staging::new(
                 &instance,
@@ -352,6 +372,9 @@ impl Device {
             temp_buffer_handle,
             descriptor_layouts: Mutex::default(),
             raster_pipelines_to_rebuild: Mutex::default(),
+            empty_ds_pool,
+            empty_ds_layout,
+            empty_ds,
         }))
     }
 
@@ -789,6 +812,9 @@ impl Drop for Device {
         }
 
         unsafe {
+            self.raw.destroy_descriptor_pool(self.empty_ds_pool, None);
+            self.raw
+                .destroy_descriptor_set_layout(self.empty_ds_layout, None);
             descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.raw));
             memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
             self.raw.destroy_pipeline_cache(self.pipeline_cache, None);

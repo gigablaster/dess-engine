@@ -253,7 +253,7 @@ impl DrawStream {
         let mut rebind_all_descriptors = true;
         let mut dynamic_offset_changed = false;
         let mut current_layout = vk::PipelineLayout::null();
-        let mut descriptors = [vk::DescriptorSet::null(); MAX_DESCRIPTOR_SETS + 1];
+        let mut descriptors = [context.device.empty_ds; MAX_DESCRIPTOR_SETS + 1];
         let mut dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
         let mut first_index = 0u32;
         let mut index_count = 0u32;
@@ -350,7 +350,7 @@ impl DrawStream {
                             .copied()
                             .ok_or(DrawStreamError::InvalidHandle)?;
                     } else {
-                        descriptors[index] = vk::DescriptorSet::null();
+                        descriptors[index] = context.device.empty_ds;
                     }
                     if !rebind_all_descriptors {
                         let ds = descriptors[index];
