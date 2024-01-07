@@ -24,6 +24,7 @@ mod instance;
 mod physical_device;
 mod pipeline;
 mod program;
+mod render_pass;
 mod staging;
 mod swapchain;
 mod temp_images;

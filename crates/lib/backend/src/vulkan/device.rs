@@ -34,6 +34,7 @@ use crate::vulkan::frame::MAX_TEMP_MEMORY;
 use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};
 use crate::{BackendError, BackendResult, BufferUsage};
 
+use super::render_pass::RenderPass;
 use super::temp_images::TempImageDesc;
 use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
@@ -48,6 +49,7 @@ pub type ImageHandle = Handle<vk::Image>;
 pub type BufferHandle = Handle<vk::Buffer>;
 pub type ProgramHandle = Index<Program>;
 pub type RasterPipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
+pub type RenderPassHandle = Index<RenderPass>;
 
 pub enum FrameResult {
     Rendered,
@@ -78,6 +80,7 @@ pub(crate) type BufferStorage = HotColdPool<vk::Buffer, Buffer, SentinelPoolStra
 pub(crate) type ProgramStorage = Vec<Program>;
 pub(crate) type RasterPipelineStorage =
     HotColdPool<(vk::Pipeline, vk::PipelineLayout), RasterPipelineCreateDesc>;
+pub(crate) type RenderPassStorage = Vec<RenderPass>;
 
 pub(crate) struct CommandBuffer {
     pub raw: vk::CommandBuffer,
@@ -153,6 +156,7 @@ pub struct Device {
     pub(crate) staging: Mutex<Staging>,
     pub(crate) universal_queue: Mutex<vk::Queue>,
     pub(crate) pipelines: RwLock<RasterPipelineStorage>,
+    pub(crate) render_pass_storage: Mutex<RenderPassStorage>,
     pub(crate) pipeline_cache: vk::PipelineCache,
     pub queue_familt_index: u32,
     current_cpu_frame: AtomicUsize,
@@ -369,6 +373,7 @@ impl Device {
             empty_ds,
             temp_images: Mutex::default(),
             free_temp_images: Mutex::default(),
+            render_pass_storage: Mutex::default(),
         }))
     }
 
@@ -817,6 +822,11 @@ impl Drop for Device {
 
         self.temp_images.lock().clear();
         self.free_temp_images.lock().clear();
+
+        self.render_pass_storage
+            .lock()
+            .drain(..)
+            .for_each(|x| x.free(&self.raw));
 
         unsafe {
             self.raw.destroy_descriptor_pool(self.empty_ds_pool, None);
