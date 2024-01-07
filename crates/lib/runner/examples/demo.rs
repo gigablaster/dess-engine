@@ -301,12 +301,9 @@ impl<'a> RenderDemo<'a> {
             )
             .unwrap();
         stream.set_pipeline(self.skybox_pipeline);
-        stream.set_bind_group(1, None);
-        stream.set_bind_group(2, None);
         stream.set_bind_group(3, Some(self.draw_bind_group));
         stream.set_dynamic_buffer_offset(0, Some(offset));
         stream.set_vertex_buffer(0, Some(vb));
-        stream.set_vertex_buffer(1, None);
         stream.set_index_buffer(Some(ib));
         stream.draw(0, 0, indices.len() as _, 1, 0);
 
