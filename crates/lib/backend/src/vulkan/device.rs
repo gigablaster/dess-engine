@@ -469,15 +469,22 @@ impl Device {
             frame_fn(&context)?;
         }
         // Upload staging and descriptor sets
-        let staging_semaphore = self.staging.lock().upload(self, true)?;
+        let mut staging = self.staging.lock();
+        let staging_semaphore = staging.upload(self, true)?;
         self.update_descriptor_sets()?;
+
+        let info = vk::CommandBufferBeginInfo::builder()
+            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+            .build();
+
+        unsafe { self.raw.begin_command_buffer(frame.main_cb.raw, &info) }?;
+        staging.execute_pending_barriers(&self.raw, frame.main_cb.raw);
+
+        drop(staging);
+
         {
             puffin::profile_scope!("Execute recorded frame");
-            let info = vk::CommandBufferBeginInfo::builder()
-                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
-                .build();
 
-            unsafe { self.raw.begin_command_buffer(frame.main_cb.raw, &info) }?;
             let _ = self.scoped_label(frame.main_cb.raw, "Render");
 
             let execution_context = ExecutionContext {
@@ -538,7 +545,7 @@ impl Device {
         let wait_stages = wait.iter().map(|x| x.1).collect::<ArrayVec<_, 8>>();
         let info = vk::SubmitInfo::builder()
             .command_buffers(slice::from_ref(&cb.raw))
-            .signal_semaphores(triggers)
+            .signal_semaphores(&triggers)
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .build();

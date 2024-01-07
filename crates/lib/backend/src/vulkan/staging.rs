@@ -52,6 +52,8 @@ pub struct Staging {
     last: Option<usize>,
     current: usize,
     queue_family_index: u32,
+    pending_buffer_barriers: Vec<vk::BufferMemoryBarrier>,
+    pending_image_barriers: Vec<vk::ImageMemoryBarrier>,
 }
 
 unsafe impl Send for Staging {}
@@ -137,6 +139,8 @@ impl Staging {
             last: None,
             current: 0,
             queue_family_index,
+            pending_buffer_barriers: Vec::default(),
+            pending_image_barriers: Vec::default(),
         })
     }
 
@@ -260,31 +264,33 @@ impl Staging {
     ) -> BackendResult<(vk::Semaphore, vk::PipelineStageFlags)> {
         puffin::profile_function!();
         let cb = &self.tranfser_cbs[self.current];
+        let fence = cb.fence;
+        let cb = cb.raw;
 
         unsafe {
             device
                 .raw
-                .wait_for_fences(slice::from_ref(&cb.fence), true, u64::MAX)?;
-            device.raw.reset_fences(slice::from_ref(&cb.fence))?;
+                .wait_for_fences(slice::from_ref(&fence), true, u64::MAX)?;
+            device.raw.reset_fences(slice::from_ref(&fence))?;
             device
                 .raw
-                .reset_command_buffer(cb.raw, vk::CommandBufferResetFlags::empty())?;
+                .reset_command_buffer(cb, vk::CommandBufferResetFlags::empty())?;
             let info = vk::CommandBufferBeginInfo::builder()
                 .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
                 .build();
-            device.raw.begin_command_buffer(cb.raw, &info)?;
+            device.raw.begin_command_buffer(cb, &info)?;
         };
 
         {
-            let _ = device.scoped_label(cb.raw, "Submit staged data");
-            self.barrier_before(&device.raw, cb.raw);
-            self.copy_buffers(&device.raw, cb.raw);
-            self.copy_images(&device.raw, cb.raw);
-            self.barrier_after(&device.raw, cb.raw);
+            let _ = device.scoped_label(cb, "Submit staged data");
+            self.barrier_before(&device.raw, cb);
+            self.copy_buffers(&device.raw, cb);
+            self.copy_images(&device.raw, cb);
+            self.barrier_after(&device.raw, cb);
         }
 
         {
-            unsafe { device.raw.end_command_buffer(cb.raw) }?;
+            unsafe { device.raw.end_command_buffer(cb) }?;
         }
         let semaphore = self.semaphores[self.current];
         let render_semaphore = self.render_semaphores[self.current];
@@ -296,12 +302,12 @@ impl Staging {
 
         if let Some(last) = self.last {
             device.submit(
-                cb,
+                &self.tranfser_cbs[self.current],
                 &[(self.semaphores[last], vk::PipelineStageFlags::TRANSFER)],
                 &triggers,
             )?;
         } else {
-            device.submit(cb, &[], &triggers)?;
+            device.submit(&self.tranfser_cbs[self.current], &[], &triggers)?;
         }
 
         self.last = Some(self.current);
@@ -312,6 +318,22 @@ impl Staging {
         self.upload_images.clear();
 
         Ok((render_semaphore, vk::PipelineStageFlags::TRANSFER))
+    }
+
+    pub fn execute_pending_barriers(&mut self, device: &ash::Device, cb: vk::CommandBuffer) {
+        unsafe {
+            device.cmd_pipeline_barrier(
+                cb,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::VERTEX_SHADER | vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &self.pending_buffer_barriers,
+                &self.pending_image_barriers,
+            );
+            self.pending_buffer_barriers.clear();
+            self.pending_image_barriers.clear();
+        };
     }
 
     fn barrier_before(&self, device: &ash::Device, cb: vk::CommandBuffer) {
@@ -363,9 +385,7 @@ impl Staging {
         // unsafe { device.cmd_pipeline_barrier2(cb, &dependencies) };
     }
 
-    fn barrier_after(&self, device: &ash::Device, cb: vk::CommandBuffer) {
-        let size = self.upload_buffers.iter().map(|x| x.1.len()).sum::<usize>();
-        let mut buffer_barriers = Vec::with_capacity(size);
+    fn barrier_after(&mut self, device: &ash::Device, cb: vk::CommandBuffer) {
         self.upload_buffers.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
                 let barrier = vk::BufferMemoryBarrier::builder()
@@ -377,11 +397,9 @@ impl Staging {
                     .offset(op.dst_offset)
                     .size(op.size)
                     .build();
-                buffer_barriers.push(barrier);
+                self.pending_buffer_barriers.push(barrier);
             })
         });
-        let size = self.upload_images.iter().map(|x| x.1.len()).sum::<usize>();
-        let mut image_barriers = Vec::with_capacity(size);
         self.upload_images.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
                 let barrier = vk::ImageMemoryBarrier::builder()
@@ -394,22 +412,9 @@ impl Staging {
                     .image(*x.0)
                     .subresource_range(op.1)
                     .build();
-                image_barriers.push(barrier);
+                self.pending_image_barriers.push(barrier);
             })
         });
-
-        unsafe {
-            device.cmd_pipeline_barrier(
-                cb,
-                vk::PipelineStageFlags::TRANSFER,
-                vk::PipelineStageFlags::VERTEX_SHADER | vk::PipelineStageFlags::FRAGMENT_SHADER,
-                vk::DependencyFlags::BY_REGION,
-                &[],
-                &buffer_barriers,
-                &image_barriers,
-            )
-        };
-        // unsafe { device.cmd_pipeline_barrier2(cb, &dependencies) };
     }
 
     fn copy_buffers(&self, device: &ash::Device, cb: vk::CommandBuffer) {
