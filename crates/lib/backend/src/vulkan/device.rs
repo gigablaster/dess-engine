@@ -189,7 +189,8 @@ impl Device {
 
         let device_extension_names = vec![
             khr::Swapchain::name().as_ptr(),
-            vk::KhrBufferDeviceAddressFn::name().as_ptr(),
+            khr::Maintenance1::name().as_ptr(),
+            khr::Maintenance3::name().as_ptr(),
         ];
 
         for ext in &device_extension_names {
@@ -204,11 +205,7 @@ impl Device {
             .ok_or(BackendError::NoSuitableQueue)?;
         let universal_queue_index = universal_queue.index;
 
-        let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
-
-        let mut features = vk::PhysicalDeviceFeatures2::builder()
-            .push_next(&mut buffer_device_address)
-            .build();
+        let mut features = vk::PhysicalDeviceFeatures2::builder().build();
 
         unsafe {
             instance

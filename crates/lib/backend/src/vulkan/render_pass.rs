@@ -217,7 +217,7 @@ impl RenderPass {
                 .is_some()
                 .then_some(vk::AttachmentReference {
                     attachment: color_attachments_count as u32,
-                    layout: vk::ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
+                    layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 });
         let mut subpasses = Vec::with_capacity(layout.subpasses.len());
         let mut last_modified = vec![vk::SUBPASS_EXTERNAL; render_pass_attachments.len()];

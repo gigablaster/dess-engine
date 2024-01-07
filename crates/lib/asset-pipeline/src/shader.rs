@@ -55,7 +55,7 @@ fn compile_shader(
         profile,
         &[
             "-spirv",
-            "-fspv-target-env=vulkan1.3",
+            "-fspv-target-env=vulkan1.1",
             "-WX",
             "-Ges",
             "-HV 2021",
