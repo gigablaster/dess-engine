@@ -340,7 +340,7 @@ impl<'a> Client for RenderDemo<'a> {
         let depth_target = RenderTarget::new(depth.as_depth().unwrap())
             .clear(ClearRenderTarget::DepthStencil(1.0, 0));
         let eye_position = vec3(0.0, 0.15, 0.6);
-        let view = glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.0, 0.0), -glam::Vec3::Y);
+        let view = glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.0, 0.0), glam::Vec3::Y);
         context
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
