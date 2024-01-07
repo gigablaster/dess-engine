@@ -212,23 +212,12 @@ impl Device {
         let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
         let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
         let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default();
-        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::builder()
-            .runtime_descriptor_array(true)
-            .descriptor_binding_partially_bound(true)
-            .shader_storage_buffer_array_non_uniform_indexing(true)
-            .shader_sampled_image_array_non_uniform_indexing(true)
-            .shader_storage_image_array_non_uniform_indexing(true)
-            .descriptor_binding_storage_buffer_update_after_bind(true)
-            .descriptor_binding_sampled_image_update_after_bind(true)
-            .descriptor_binding_storage_image_update_after_bind(true)
-            .build();
 
         let mut features = vk::PhysicalDeviceFeatures2::builder()
             .push_next(&mut dynamic_rendering)
             .push_next(&mut synchronization2)
             .push_next(&mut buffer_device_address)
             .push_next(&mut maintenance4)
-            .push_next(&mut descriptor_indexing)
             .build();
 
         unsafe {
