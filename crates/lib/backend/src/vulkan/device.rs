@@ -194,7 +194,6 @@ impl Device {
             vk::KhrSynchronization2Fn::name().as_ptr(),
             vk::KhrCopyCommands2Fn::name().as_ptr(),
             vk::KhrBufferDeviceAddressFn::name().as_ptr(),
-            vk::KhrMaintenance4Fn::name().as_ptr(),
         ];
 
         for ext in &device_extension_names {
@@ -213,12 +212,10 @@ impl Device {
 
         let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
         let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
-        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default();
 
         let mut features = vk::PhysicalDeviceFeatures2::builder()
             .push_next(&mut synchronization2)
             .push_next(&mut buffer_device_address)
-            .push_next(&mut maintenance4)
             .build();
 
         unsafe {
