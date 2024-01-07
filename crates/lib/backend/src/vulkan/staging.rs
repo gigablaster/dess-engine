@@ -36,7 +36,7 @@ const STAGES: usize = 4;
 const BUFFER_SIZE: usize = 32 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy)]
-struct ImageUploadRequest(vk::BufferImageCopy2, vk::ImageSubresourceRange);
+struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
 
 pub struct Staging {
     pool: vk::CommandPool,
@@ -198,7 +198,7 @@ impl Staging {
                     size,
                 )
             };
-            let op = vk::BufferImageCopy2::builder()
+            let op = vk::BufferImageCopy::builder()
                 .image_extent(vk::Extent3D {
                     width: target.desc.extent[0] >> mip,
                     height: target.desc.extent[1] >> mip,
@@ -417,13 +417,15 @@ impl Staging {
     fn copy_images(&self, device: &ash::Device, cb: vk::CommandBuffer) {
         self.upload_images.iter().for_each(|x| {
             let regions = x.1.iter().map(|x| x.0).collect::<Vec<_>>();
-            let info = vk::CopyBufferToImageInfo2::builder()
-                .src_buffer(self.buffer)
-                .dst_image(*x.0)
-                .regions(&regions)
-                .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .build();
-            unsafe { device.cmd_copy_buffer_to_image2(cb, &info) }
+            unsafe {
+                device.cmd_copy_buffer_to_image(
+                    cb,
+                    self.buffer,
+                    *x.0,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &regions,
+                )
+            }
         })
     }
 
