@@ -190,7 +190,6 @@ impl Device {
         let device_extension_names = vec![
             khr::Swapchain::name().as_ptr(),
             vk::KhrSynchronization2Fn::name().as_ptr(),
-            vk::KhrCopyCommands2Fn::name().as_ptr(),
             vk::KhrBufferDeviceAddressFn::name().as_ptr(),
         ];
 
