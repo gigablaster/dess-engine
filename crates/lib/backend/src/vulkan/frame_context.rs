@@ -21,12 +21,12 @@ use parking_lot::Mutex;
 
 use crate::{
     BackendError, BackendResult, ClearRenderTarget, DrawStream, FboKey, ImageView, RenderArea,
-    RenderPass, RenderPassHandle, RenderPassStorage, UpdateBindGroupsContext, MAX_ATTACHMENTS,
+    RenderPassHandle, RenderPassStorage, UpdateBindGroupsContext, MAX_ATTACHMENTS,
     MAX_COLOR_ATTACHMENTS,
 };
 
 use super::{
-    frame::Frame, BindGroupStorage, BufferHandle, BufferSlice, BufferStorage, Device, ImageStorage,
+    frame::Frame, BindGroupStorage, BufferHandle, BufferSlice, BufferStorage, Device,
     RasterPipelineStorage,
 };
 

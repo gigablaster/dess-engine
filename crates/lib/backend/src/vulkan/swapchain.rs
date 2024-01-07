@@ -29,7 +29,7 @@ use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
     vulkan::{Image, ImageDesc},
-    BackendError, BackendResult, Format, ImageType, ImageUsage, RenderArea,
+    BackendError, BackendResult, Format, ImageType, ImageUsage,
 };
 
 use super::{physical_device::PhysicalDevice, Device, Instance};

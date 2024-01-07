@@ -536,12 +536,9 @@ impl Device {
         puffin::profile_function!();
         let wait_semaphores = wait.iter().map(|x| x.0).collect::<ArrayVec<_, 8>>();
         let wait_stages = wait.iter().map(|x| x.1).collect::<ArrayVec<_, 8>>();
-        let command_buffers = vk::CommandBufferSubmitInfo::builder()
-            .command_buffer(cb.raw)
-            .build();
         let info = vk::SubmitInfo::builder()
             .command_buffers(slice::from_ref(&cb.raw))
-            .signal_semaphores(&triggers)
+            .signal_semaphores(triggers)
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .build();
