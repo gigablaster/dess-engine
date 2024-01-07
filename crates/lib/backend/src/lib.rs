@@ -13,22 +13,16 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-mod barrier;
 mod draw_stream;
 mod error;
 mod vulkan;
 
 pub use draw_stream::*;
 pub use error::*;
-use vulkan::ExecutionContext;
 
 pub use vulkan::*;
 
 pub type BackendResult<T> = Result<T, BackendError>;
-
-pub(crate) trait DeferedPass: Send + Sync {
-    fn execute(&self, contex: &ExecutionContext) -> BackendResult<()>;
-}
 
 pub trait BackendResultExt {
     fn ignore_invalid_handle(self) -> BackendResult<()>;

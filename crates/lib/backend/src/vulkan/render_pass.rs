@@ -13,7 +13,6 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use core::slice;
 use std::collections::HashMap;
 
 use arrayvec::ArrayVec;
@@ -21,7 +20,8 @@ use ash::vk::{self};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
 use crate::{
-    BackendResult, Device, Format, ImageLayout, ImageMultisampling, ImageView, RenderPassHandle,
+    AsVulkan, BackendResult, Device, Format, ImageLayout, ImageMultisampling, ImageView,
+    RenderPassHandle,
 };
 
 #[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
@@ -77,8 +77,8 @@ impl From<ClearRenderTarget> for vk::ClearValue {
     }
 }
 
-const MAX_COLOR_ATTACHMENTS: usize = 8;
-const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
+pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
+pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct RenderTargetDesc {
@@ -86,6 +86,7 @@ pub struct RenderTargetDesc {
     pub load_op: RenderTargetLoadOp,
     pub store_op: RenderTargetStoreOp,
     pub samples: ImageMultisampling,
+    pub from: Option<ImageLayout>,
     pub next: Option<ImageLayout>,
 }
 
@@ -111,6 +112,7 @@ impl RenderTargetDesc {
             load_op: RenderTargetLoadOp::default(),
             store_op: RenderTargetStoreOp::default(),
             samples: ImageMultisampling::default(),
+            from: None,
             next: None,
         }
     }
@@ -135,17 +137,23 @@ impl RenderTargetDesc {
         self
     }
 
+    pub fn initial_layout(mut self, layout: ImageLayout) -> Self {
+        self.from = Some(layout);
+        self
+    }
+
     fn build(
         &self,
         initial_layout: ImageLayout,
         final_layout: ImageLayout,
     ) -> vk::AttachmentDescription {
         vk::AttachmentDescription::builder()
-            .initial_layout(initial_layout.into())
+            .initial_layout(self.from.unwrap_or(initial_layout).into())
             .final_layout(self.next.unwrap_or(final_layout).into())
             .format(self.format.into())
             .load_op(self.load_op.into())
             .store_op(self.store_op.into())
+            .samples(self.samples.into())
             .build()
     }
 }
@@ -180,6 +188,12 @@ fn add_or_merge_dependency(
     }
 }
 
+impl AsVulkan<vk::RenderPass> for RenderPass {
+    fn as_vk(&self) -> vk::RenderPass {
+        self.raw
+    }
+}
+
 impl RenderPass {
     pub(crate) fn new(device: &ash::Device, layout: RenderPassLayout) -> BackendResult<Self> {
         let render_pass_attachments = layout
@@ -200,7 +214,7 @@ impl RenderPass {
         let depth_attachment_ref =
             layout
                 .depth_target
-                .is_none()
+                .is_some()
                 .then_some(vk::AttachmentReference {
                     attachment: color_attachments_count as u32,
                     layout: vk::ImageLayout::DEPTH_ATTACHMENT_STENCIL_READ_ONLY_OPTIMAL,
@@ -218,13 +232,13 @@ impl RenderPass {
                     layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 })
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>();
-            subpasses.push((
-                color_attachments_refs,
-                subpass.depth_write.then_some(
-                    depth_attachment_ref
-                        .expect("Need depth attachment to have depth write in subpass"),
-                ),
-            ));
+            let depth_ref = if subpass.depth_write {
+                assert!(depth_attachment_ref.is_some());
+                depth_attachment_ref
+            } else {
+                None
+            };
+            subpasses.push((color_attachments_refs, depth_ref));
             for index in subpass.color_reads.iter().copied() {
                 let dependency = vk::SubpassDependency {
                     src_subpass: last_modified[index],

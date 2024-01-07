@@ -307,8 +307,8 @@ impl<'a> Swapchain<'a> {
         prefered.into_iter().find(|format| formats.contains(format))
     }
 
-    pub fn render_area(&self) -> RenderArea {
-        RenderArea::new(0, 0, self.dims[0] as _, self.dims[1] as _)
+    pub fn dims(&self) -> [u32; 2] {
+        self.dims
     }
 
     fn free(&mut self, device: &ash::Device) {

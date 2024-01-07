@@ -16,7 +16,7 @@ use std::marker::PhantomData;
 
 use crate::{
     BackendResult, Device, Format, FrameContext, ImageCreateDesc, ImageHandle, ImageUsage,
-    ImageView, ImageViewDesc, RenderArea,
+    ImageView, ImageViewDesc,
 };
 
 #[derive(Debug, Default, Hash, PartialEq, Eq, Clone, Copy)]
@@ -28,10 +28,10 @@ pub enum TemporaryImageDims {
 }
 
 impl TemporaryImageDims {
-    fn to_actual(self, area: RenderArea) -> [u32; 2] {
+    fn to_actual(self, dims: [u32; 2]) -> [u32; 2] {
         match self {
-            Self::Backbuffer => [area.width, area.height],
-            Self::Divided(a) => [area.width / a, area.height / a],
+            Self::Backbuffer => dims,
+            Self::Divided(a) => [dims[0] / a, dims[1] / a],
             Self::Absolute(dims) => dims,
         }
     }
@@ -128,7 +128,7 @@ impl<'device, 'frame> FrameContext<'device, 'frame> {
         usage: ImageUsage,
         dims: TemporaryImageDims,
     ) -> BackendResult<TemporaryImage> {
-        let dims = dims.to_actual(self.render_area);
+        let dims = dims.to_actual(self.dims);
         let desc = TempImageDesc {
             format,
             usage,

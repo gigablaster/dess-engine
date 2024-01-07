@@ -584,10 +584,12 @@ impl Device {
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum ImageLayout {
+    None,
     ShaderRead,
     ColorTarget,
     DepthStencilTarget,
     DepthStencilRead,
+    Present,
     Destination,
     Source,
 }
@@ -595,10 +597,12 @@ pub enum ImageLayout {
 impl From<ImageLayout> for vk::ImageLayout {
     fn from(value: ImageLayout) -> Self {
         match value {
+            ImageLayout::None => vk::ImageLayout::UNDEFINED,
             ImageLayout::ShaderRead => vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             ImageLayout::ColorTarget => vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
             ImageLayout::DepthStencilTarget => vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
             ImageLayout::DepthStencilRead => vk::ImageLayout::DEPTH_STENCIL_READ_ONLY_OPTIMAL,
+            ImageLayout::Present => vk::ImageLayout::PRESENT_SRC_KHR,
             ImageLayout::Destination => vk::ImageLayout::TRANSFER_DST_OPTIMAL,
             ImageLayout::Source => vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
         }

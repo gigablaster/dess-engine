@@ -406,6 +406,7 @@ impl From<RenderArea> for vk::Viewport {
         }
     }
 }
+
 impl From<RenderArea> for vk::Rect2D {
     fn from(value: RenderArea) -> Self {
         Self {
@@ -418,6 +419,12 @@ impl From<RenderArea> for vk::Rect2D {
                 height: value.height,
             },
         }
+    }
+}
+
+impl From<[u32; 2]> for RenderArea {
+    fn from(value: [u32; 2]) -> Self {
+        RenderArea::new(0, 0, value[0], value[1])
     }
 }
 

@@ -16,8 +16,9 @@
 use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::vulkan::{
-    BindGroupHandle, BufferHandle, BufferSlice, ExecutionContext, RasterPipelineHandle,
+use crate::{
+    vulkan::{BindGroupHandle, BufferHandle, BufferSlice, ExecutionContext, RasterPipelineHandle},
+    RenderArea,
 };
 
 pub(crate) const MAX_VERTEX_STREAMS: usize = 2;
@@ -72,8 +73,10 @@ const VERTEX_OFFSET: u16 = FIRST_INSTANCE << 1;
 /// for command buffer. All commands are stored in some sort of delta-compressed
 /// storage and then decoded during render. Allows engine to store few draw calls per
 /// one CPU cache line.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DrawStream {
+    subpass: usize,
+    render_area: RenderArea,
     pass_descriptor_set: BindGroupHandle,
     stream: Vec<u16>,
     current: Draw,
@@ -110,8 +113,14 @@ impl<'a> DrawStreamReader<'a> {
 }
 
 impl DrawStream {
-    pub fn new(pass_descriptor_set: BindGroupHandle) -> Self {
+    pub fn new(
+        pass_descriptor_set: BindGroupHandle,
+        render_area: RenderArea,
+        subpass: usize,
+    ) -> Self {
         Self {
+            subpass,
+            render_area,
             pass_descriptor_set,
             stream: Vec::with_capacity(1024),
             current: Draw::default(),
@@ -236,6 +245,10 @@ impl DrawStream {
         self.mask = 0;
     }
 
+    pub(crate) fn get_subpass(&self) -> usize {
+        self.subpass
+    }
+
     #[allow(clippy::needless_range_loop)]
     pub(crate) fn execute(
         &self,
@@ -266,6 +279,16 @@ impl DrawStream {
             .copied()
             .ok_or(DrawStreamError::InvalidHandle)?;
 
+        unsafe {
+            context
+                .device
+                .raw
+                .cmd_set_viewport(cb, 0, &[self.render_area.into()]);
+            context
+                .device
+                .raw
+                .cmd_set_scissor(cb, 0, &[self.render_area.into()]);
+        }
         while let Some(mask) = stream.read() {
             if mask & PIPELINE != 0 {
                 let handle: RasterPipelineHandle = stream.read_u32()?.into();

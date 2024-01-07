@@ -474,7 +474,7 @@ impl Device {
         let context = FrameContext {
             device: self,
             frame: &frame,
-            render_area: swapchain.render_area(),
+            dims: swapchain.dims(),
             target_view: backbuffer
                 .image
                 .get_or_create_view(&self.raw, ImageViewDesc::color())?,
@@ -497,42 +497,15 @@ impl Device {
             unsafe { self.raw.begin_command_buffer(frame.main_cb.raw, &info) }?;
             let _ = self.scoped_label(frame.main_cb.raw, "Render");
 
-            let barrier = vk::ImageMemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::NONE)
-                .src_access_mask(vk::AccessFlags2::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                .dst_access_mask(vk::AccessFlags2::SHADER_WRITE)
-                .src_queue_family_index(self.queue_familt_index)
-                .dst_queue_family_index(self.queue_familt_index)
-                .image(backbuffer.image.raw)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .build();
-            let dependency = vk::DependencyInfo::builder()
-                .image_memory_barriers(slice::from_ref(&barrier))
-                .build();
-            unsafe {
-                self.raw
-                    .cmd_pipeline_barrier2(frame.main_cb.raw, &dependency)
-            };
-
             let execution_context = ExecutionContext {
-                universal_queue: self.queue_familt_index,
                 device: self,
                 frame: &frame,
-                images: &self.image_storage.read(),
                 buffers: &self.buffer_storage.read(),
                 pipelines: &self.pipelines.read(),
                 descriptors: &self.bind_groups_storage.read(),
+                render_passes: &self.render_pass_storage.lock(),
             };
-            execution_context.execute(context.passes.into_inner().iter())?;
+            execution_context.execute_rasterizing_passes(context.passes.into_inner().iter())?;
         }
         unsafe { self.raw.end_command_buffer(frame.main_cb.raw) }.unwrap();
 
@@ -546,53 +519,12 @@ impl Device {
                 ),
             ],
             &[(
-                frame.finished,
+                backbuffer.rendering_finished,
                 vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
             )],
         )?;
         {
             puffin::profile_scope!("Present");
-            unsafe {
-                self.raw.begin_command_buffer(
-                    frame.present_cb.raw,
-                    &vk::CommandBufferBeginInfo::builder()
-                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
-                        .build(),
-                )?;
-                let _ = self.scoped_label(frame.present_cb.raw, "Present");
-                let barrier = vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT)
-                    .src_access_mask(vk::AccessFlags2::COLOR_ATTACHMENT_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::ALL_GRAPHICS)
-                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                    .src_queue_family_index(self.queue_familt_index)
-                    .dst_queue_family_index(self.queue_familt_index)
-                    .image(backbuffer.image.raw)
-                    .old_layout(vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL)
-                    .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .build();
-                let dependency = vk::DependencyInfo::builder()
-                    .image_memory_barriers(slice::from_ref(&barrier))
-                    .build();
-                self.raw
-                    .cmd_pipeline_barrier2(frame.present_cb.raw, &dependency);
-                self.raw.end_command_buffer(frame.present_cb.raw)?;
-            };
-            self.submit(
-                &frame.present_cb,
-                &[(
-                    frame.finished,
-                    vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                )],
-                &[(backbuffer.rendering_finished, vk::PipelineStageFlags2::NONE)],
-            )?;
             swapchain.present_image(backbuffer, *self.universal_queue.lock());
         }
 

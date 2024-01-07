@@ -20,102 +20,58 @@ use ash::vk::{self};
 use parking_lot::Mutex;
 
 use crate::{
-    barrier, BackendError, BackendResult, ClearRenderTarget, DeferedPass, DrawStream, Format,
-    ImageLayout, ImageView, RenderArea, RenderTargetLoadOp, RenderTargetStoreOp,
-    UpdateBindGroupsContext,
+    BackendError, BackendResult, ClearRenderTarget, DrawStream, FboKey, ImageView, RenderArea,
+    RenderPass, RenderPassHandle, RenderPassStorage, UpdateBindGroupsContext, MAX_ATTACHMENTS,
+    MAX_COLOR_ATTACHMENTS,
 };
 
 use super::{
-    frame::Frame, BindGroupStorage, BufferHandle, BufferSlice, BufferStorage, Device, ImageHandle,
-    ImageStorage, RasterPipelineStorage,
+    frame::Frame, BindGroupStorage, BufferHandle, BufferSlice, BufferStorage, Device, ImageStorage,
+    RasterPipelineStorage,
 };
 
 #[derive(Clone, Copy)]
 pub struct RenderTarget {
-    pub format: Format,
     pub target: ImageView,
-    pub layout: ImageLayout,
-    pub load: RenderTargetLoadOp,
-    pub store: RenderTargetStoreOp,
     pub clear: Option<ClearRenderTarget>,
 }
 
 impl RenderTarget {
-    pub fn new(format: Format, target: ImageView, layout: ImageLayout) -> Self {
+    pub fn new(target: ImageView) -> Self {
         Self {
-            format,
             target,
-            layout,
-            load: RenderTargetLoadOp::default(),
-            store: RenderTargetStoreOp::default(),
             clear: None,
         }
     }
 
-    pub fn clear_input(mut self, color: ClearRenderTarget) -> Self {
-        self.load = RenderTargetLoadOp::Clear;
+    pub fn clear(mut self, color: ClearRenderTarget) -> Self {
         self.clear = Some(color);
 
         self
     }
-
-    pub fn load_input(mut self) -> Self {
-        self.load = RenderTargetLoadOp::Load;
-        self.clear = None;
-
-        self
-    }
-
-    pub fn store_output(mut self) -> Self {
-        self.store = RenderTargetStoreOp::Store;
-
-        self
-    }
-
-    fn build(&self) -> vk::RenderingAttachmentInfo {
-        let mut builder = vk::RenderingAttachmentInfo::builder()
-            .load_op(self.load.into())
-            .store_op(self.store.into())
-            .image_view(self.target)
-            .image_layout(self.layout.into());
-        if let Some(clear) = self.clear {
-            builder = builder.clear_value(clear.into());
-        }
-
-        builder.build()
-    }
 }
 
-const MAX_BARRIERS: usize = 32;
-pub const MAX_COLOR_ATTACHMENTS: usize = 8;
-
-pub(crate) struct Pass<'a> {
-    color_attachments: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
-    depth_attachment: Option<RenderTarget>,
-    render_area: RenderArea,
+pub(crate) struct RasterizerPass<'a> {
+    render_pass: RenderPassHandle,
+    color_targets: ArrayVec<RenderTarget, MAX_COLOR_ATTACHMENTS>,
+    depth_target: Option<RenderTarget>,
     streams: Vec<DrawStream>,
-    barriers: ArrayVec<ImageBarrier, MAX_BARRIERS>,
+    dims: [u32; 2],
     _marker: PhantomData<&'a ()>,
 }
 
-impl<'a> Pass<'a> {
+impl<'a> RasterizerPass<'a> {
     fn submit_one_stream(
         &self,
         context: &'a ExecutionContext<'a>,
-        color_attachments: &[vk::Format],
-        depth_attachment: Option<vk::Format>,
+        render_pass: vk::RenderPass,
+        fbo: vk::Framebuffer,
         stream: &DrawStream,
     ) -> BackendResult<vk::CommandBuffer> {
         let cb = context.frame.get_or_create_secondary_buffer(
             &context.device.raw,
             context.device.queue_familt_index,
         )?;
-        let mut inheretence = vk::CommandBufferInheritanceRenderingInfo::builder()
-            .color_attachment_formats(color_attachments)
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1);
-        if let Some(format) = depth_attachment {
-            inheretence = inheretence.depth_attachment_format(format);
-        }
         unsafe {
             context.device.raw.begin_command_buffer(
                 cb,
@@ -126,78 +82,65 @@ impl<'a> Pass<'a> {
                     )
                     .inheritance_info(
                         &vk::CommandBufferInheritanceInfo::builder()
-                            .push_next(&mut inheretence)
+                            .render_pass(render_pass)
+                            .framebuffer(fbo)
+                            .subpass(stream.get_subpass() as _)
                             .build(),
                     )
                     .build(),
             )
         }
         .unwrap();
-        unsafe {
-            context
-                .device
-                .raw
-                .cmd_set_viewport(cb, 0, &[self.render_area.into()]);
-            context
-                .device
-                .raw
-                .cmd_set_scissor(cb, 0, &[self.render_area.into()]);
-        }
-
-        stream.execute(context, cb).unwrap();
+        stream.execute(context, cb)?;
         unsafe { context.device.raw.end_command_buffer(cb).unwrap() };
         Ok(cb)
     }
-}
 
-impl<'a> DeferedPass for Pass<'a> {
     fn execute(&self, context: &ExecutionContext) -> BackendResult<()> {
         puffin::profile_function!();
-        let color_attachments = self
-            .color_attachments
+        let attachments = self
+            .color_targets
             .iter()
-            .map(RenderTarget::build)
-            .collect::<ArrayVec<_, 8>>();
-        let depth_attachment = self.depth_attachment.map(|x| x.build());
-        let mut image_barriers = ArrayVec::<_, MAX_BARRIERS>::new();
-        for barrier in &self.barriers {
-            image_barriers.push(barrier.build(context.images, context.universal_queue)?);
-        }
+            .chain(self.depth_target.iter())
+            .map(|x| x.target)
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+        let clear = self
+            .color_targets
+            .iter()
+            .chain(self.depth_target.iter())
+            .map(|x| {
+                x.clear
+                    .unwrap_or(ClearRenderTarget::Color([0.0, 0.0, 0.0, 0.0]))
+                    .into()
+            })
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
 
-        let dependency = vk::DependencyInfo::builder()
-            .image_memory_barriers(&image_barriers)
-            .dependency_flags(vk::DependencyFlags::BY_REGION)
+        let render_pass = context
+            .render_passes
+            .get(self.render_pass.index())
+            .ok_or(BackendError::InvalidHandle)?;
+        let fbo = render_pass.get_or_create_fbo(
+            &context.device.raw,
+            FboKey {
+                dims: self.dims,
+                attachments,
+            },
+        )?;
+
+        let begin_info = vk::RenderPassBeginInfo::builder()
+            .clear_values(&clear)
+            .framebuffer(fbo)
+            .render_area(RenderArea::new(0, 0, self.dims[0], self.dims[1]).into())
+            .render_pass(render_pass.raw)
             .build();
 
         unsafe {
-            context
-                .device
-                .raw
-                .cmd_pipeline_barrier2(context.frame.main_cb.raw, &dependency)
+            context.device.raw.cmd_begin_render_pass(
+                context.frame.main_cb.raw,
+                &begin_info,
+                vk::SubpassContents::SECONDARY_COMMAND_BUFFERS,
+            )
         };
-
-        let info = vk::RenderingInfo::builder()
-            .render_area(self.render_area.into())
-            .color_attachments(&color_attachments)
-            .flags(vk::RenderingFlags::CONTENTS_SECONDARY_COMMAND_BUFFERS)
-            .layer_count(1);
-        let info = if let Some(depth_attachment) = depth_attachment.as_ref() {
-            info.depth_attachment(depth_attachment)
-        } else {
-            info
-        };
-        unsafe {
-            context
-                .device
-                .raw
-                .cmd_begin_rendering(context.frame.main_cb.raw, &info)
-        };
-        let color_attachments = self
-            .color_attachments
-            .iter()
-            .map(|x| x.format.into())
-            .collect::<Vec<_>>();
-        let depth_attachment = self.depth_attachment.map(|x| x.format.into());
         let cbs = Arc::new(Mutex::new(vec![
             vk::CommandBuffer::null();
             self.streams.len()
@@ -208,14 +151,8 @@ impl<'a> DeferedPass for Pass<'a> {
             rayon::scope(|s| {
                 for (index, stream) in self.streams.iter().enumerate() {
                     let cbs = cbs.clone();
-                    let color_attachments = color_attachments.clone();
                     s.spawn(move |_| {
-                        let cb = self.submit_one_stream(
-                            context,
-                            &color_attachments,
-                            depth_attachment,
-                            stream,
-                        );
+                        let cb = self.submit_one_stream(context, render_pass.raw, fbo, stream);
                         cbs.lock()[index] = cb.unwrap();
                     })
                 }
@@ -235,7 +172,7 @@ impl<'a> DeferedPass for Pass<'a> {
             context
                 .device
                 .raw
-                .cmd_end_rendering(context.frame.main_cb.raw)
+                .cmd_end_render_pass(context.frame.main_cb.raw)
         };
 
         Ok(())
@@ -244,101 +181,11 @@ impl<'a> DeferedPass for Pass<'a> {
 
 pub struct FrameContext<'device, 'frame> {
     pub(crate) device: &'device Device,
-    pub render_area: RenderArea,
-    pub target_view: ImageView,
+    pub(crate) dims: [u32; 2],
+    pub(crate) target_view: ImageView,
     pub(crate) frame: &'frame Frame,
     pub(crate) temp_buffer_handle: BufferHandle,
-    pub(crate) passes: Mutex<Vec<Box<dyn DeferedPass>>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum BarrierType {
-    ColorToAttachment,
-    DepthToAttachment,
-    ColorFromAttachmentToSampled,
-    DepthFromAttachmentToSampled,
-    ColorAttachmentToAttachment,
-    DepthAttachmentToAttachment,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub struct ImageBarrier {
-    pub image: ImageHandle,
-    pub ty: BarrierType,
-}
-
-impl ImageBarrier {
-    pub fn depth_to_attachment(image: ImageHandle) -> Self {
-        Self {
-            image,
-            ty: BarrierType::DepthToAttachment,
-        }
-    }
-
-    pub fn color_to_attachment(image: ImageHandle) -> Self {
-        Self {
-            image,
-            ty: BarrierType::ColorToAttachment,
-        }
-    }
-
-    pub fn depth_attachment_to_sampled(image: ImageHandle) -> Self {
-        Self {
-            image,
-            ty: BarrierType::DepthFromAttachmentToSampled,
-        }
-    }
-
-    pub fn color_attachment_to_sampled(image: ImageHandle) -> Self {
-        Self {
-            image,
-            ty: BarrierType::ColorFromAttachmentToSampled,
-        }
-    }
-
-    pub fn depth_attachment_to_attachment(image: ImageHandle) -> Self {
-        Self {
-            image,
-            ty: BarrierType::DepthAttachmentToAttachment,
-        }
-    }
-
-    pub fn color_attachment_to_attachment(image: ImageHandle) -> Self {
-        Self {
-            image,
-            ty: BarrierType::ColorAttachmentToAttachment,
-        }
-    }
-
-    fn build(
-        &self,
-        images: &ImageStorage,
-        queue_family_index: u32,
-    ) -> BackendResult<vk::ImageMemoryBarrier2> {
-        let image = images.get(self.image).ok_or(BackendError::InvalidHandle)?;
-        let barrier = match self.ty {
-            BarrierType::ColorToAttachment => {
-                barrier::undefined_to_color_attachment(image, queue_family_index)
-            }
-            BarrierType::DepthToAttachment => {
-                barrier::undefined_to_depth_attachment(image, queue_family_index)
-            }
-            BarrierType::ColorFromAttachmentToSampled => {
-                barrier::color_attachment_to_sampled(image, queue_family_index)
-            }
-            BarrierType::DepthFromAttachmentToSampled => {
-                barrier::depth_attachment_to_sampled(image, queue_family_index)
-            }
-            BarrierType::ColorAttachmentToAttachment => {
-                barrier::color_write_to_write(image, queue_family_index)
-            }
-            BarrierType::DepthAttachmentToAttachment => {
-                barrier::depth_write_to_write(image, queue_family_index)
-            }
-        };
-
-        Ok(barrier)
-    }
+    pub(crate) passes: Mutex<Vec<RasterizerPass<'frame>>>,
 }
 
 impl<'device, 'frame> FrameContext<'device, 'frame> {
@@ -369,44 +216,55 @@ impl<'device, 'frame> FrameContext<'device, 'frame> {
     /// Actual recording is done later, might be multithreaded.
     pub fn execute(
         &self,
-        area: RenderArea,
-        color_attachments: &[RenderTarget],
-        depth_attachment: Option<RenderTarget>,
+        pass: RenderPassHandle,
+        color_targets: &[RenderTarget],
+        depth_target: Option<RenderTarget>,
+        dims: [u32; 2],
         streams: impl Iterator<Item = DrawStream>,
-        barriers: &[ImageBarrier],
     ) {
-        let pass = Pass {
-            color_attachments: color_attachments
+        let pass = RasterizerPass {
+            render_pass: pass,
+            dims,
+            color_targets: color_targets
                 .iter()
                 .copied()
                 .collect::<ArrayVec<_, MAX_COLOR_ATTACHMENTS>>(),
-            depth_attachment,
-            render_area: area,
+            depth_target,
             streams: streams.collect(),
-            barriers: barriers
-                .iter()
-                .copied()
-                .collect::<ArrayVec<_, MAX_BARRIERS>>(),
             _marker: PhantomData,
         };
-        self.passes.lock().push(Box::new(pass));
+        self.passes.lock().push(pass);
+    }
+
+    pub fn get_backbuffer(&self) -> RenderTarget {
+        RenderTarget {
+            target: self.target_view,
+            clear: None,
+        }
+    }
+
+    pub fn get_backbuffer_size(&self) -> [u32; 2] {
+        self.dims
+    }
+
+    pub fn get_backbuffer_aspect_ratio(&self) -> f32 {
+        (self.dims[0] as f32) / (self.dims[1] as f32)
     }
 }
 
 pub(crate) struct ExecutionContext<'a> {
-    pub universal_queue: u32,
     pub device: &'a Device,
     pub frame: &'a Frame,
-    pub images: &'a ImageStorage,
     pub buffers: &'a BufferStorage,
     pub pipelines: &'a RasterPipelineStorage,
     pub descriptors: &'a BindGroupStorage,
+    pub render_passes: &'a RenderPassStorage,
 }
 
 impl<'a> ExecutionContext<'a> {
-    pub fn execute<I>(&self, passes: I) -> BackendResult<()>
+    pub fn execute_rasterizing_passes<I>(&self, passes: I) -> BackendResult<()>
     where
-        I: Iterator<Item = &'a Box<dyn DeferedPass>>,
+        I: Iterator<Item = &'a RasterizerPass<'a>>,
     {
         puffin::profile_function!();
         for pass in passes {

@@ -3,9 +3,10 @@ use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
-    Format, FrameContext, ImageBarrier, ImageLayout, ImageUsage, InputVertexAttributeDesc,
-    InputVertexStreamDesc, RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassLayout,
-    ShaderStage, TemporaryImageDims, EMPTY_BIND_LAYOUT, {BindGroupHandle, RenderTarget},
+    Format, FrameContext, ImageLayout, ImageUsage, InputVertexAttributeDesc, InputVertexStreamDesc,
+    RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassHandle, RenderPassLayout,
+    RenderTargetDesc, ShaderStage, SubpassLayout, TemporaryImageDims, EMPTY_BIND_LAYOUT,
+    {BindGroupHandle, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -27,19 +28,11 @@ struct RenderDemo<'a> {
     tonemapping_bind_group: BindGroupHandle,
     skybox_pipeline: RasterPipelineHandle,
     skybox_bind_group: BindGroupHandle,
+    main_pass: RenderPassHandle,
+    tonemapping_pass: RenderPassHandle,
     rotation: f32,
     _phantom: PhantomData<&'a ()>,
 }
-
-static MAIN_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color_attachments: &[Format::RGBA16_SFLOAT],
-    depth_attachment: Some(Format::D24),
-};
-
-static TONEMAPPING_PASS_LAYOUT: RenderPassLayout = RenderPassLayout {
-    color_attachments: &[Format::BGRA8_UNORM],
-    depth_attachment: None,
-};
 
 const MAIN_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
@@ -209,7 +202,11 @@ pub const SKY_VERTEX_LAYOUT: [InputVertexStreamDesc; 1] = [InputVertexStreamDesc
 impl<'a> RenderDemo<'a> {
     fn create_draw_stream(&self, context: &FrameContext, rotation: f32) -> DrawStream {
         puffin::profile_function!();
-        let mut stream = DrawStream::new(self.scene_bind_group);
+        let mut stream = DrawStream::new(
+            self.scene_bind_group,
+            context.get_backbuffer_size().into(),
+            0,
+        );
         stream.set_pipeline(self.pipeline);
         for model in self.model.models.values() {
             let mut bones = Vec::with_capacity(model.bones.len());
@@ -254,7 +251,7 @@ impl<'a> RenderDemo<'a> {
         pipeline: RasterPipelineHandle,
         bind_group: BindGroupHandle,
     ) -> DrawStream {
-        let mut stream = DrawStream::new(bind_group);
+        let mut stream = DrawStream::new(bind_group, context.get_backbuffer_size().into(), 0);
         let vertices = [
             BasicVertex::new(vec3(-1.0, -1.0, 0.0), vec2(0.0, 0.0)),
             BasicVertex::new(vec3(1.0, -1.0, 0.0), vec2(1.0, 0.0)),
@@ -273,7 +270,11 @@ impl<'a> RenderDemo<'a> {
     }
 
     fn draw_skybox(&self, context: &FrameContext, view: glam::Mat4) -> DrawStream {
-        let mut stream = DrawStream::new(self.skybox_bind_group);
+        let mut stream = DrawStream::new(
+            self.skybox_bind_group,
+            context.get_backbuffer_size().into(),
+            0,
+        );
         let mut vertices = Vec::new();
         for index in FACES {
             vertices.push(CORNERS[index[0] as usize]);
@@ -334,19 +335,10 @@ impl<'a> Client for RenderDemo<'a> {
                 TemporaryImageDims::Backbuffer,
             )
             .unwrap();
-        let color_target = RenderTarget::new(
-            Format::RGBA16_SFLOAT,
-            color.as_color().unwrap(),
-            ImageLayout::ColorTarget,
-        )
-        .store_output()
-        .clear_input(ClearRenderTarget::Color([0.0, 0.0, 0.0, 1.0]));
-        let depth_target = RenderTarget::new(
-            Format::D24,
-            depth.as_depth().unwrap(),
-            ImageLayout::DepthStencilTarget,
-        )
-        .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
+        let color_target = RenderTarget::new(color.as_color().unwrap())
+            .clear(ClearRenderTarget::Color([0.0, 0.0, 0.0, 1.0]));
+        let depth_target = RenderTarget::new(depth.as_depth().unwrap())
+            .clear(ClearRenderTarget::DepthStencil(1.0, 0));
         let eye_position = vec3(0.0, 0.15, 0.6);
         let view = glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.0, 0.0), -glam::Vec3::Y);
         context
@@ -355,7 +347,7 @@ impl<'a> Client for RenderDemo<'a> {
                     view,
                     projection: glam::Mat4::perspective_rh(
                         PI / 4.0,
-                        context.render_area.aspect_ratio(),
+                        context.get_backbuffer_aspect_ratio(),
                         0.1,
                         100.0,
                     ),
@@ -406,26 +398,21 @@ impl<'a> Client for RenderDemo<'a> {
         let tonemapping =
             self.full_screen_quad(context, self.tonemapping, self.tonemapping_bind_group);
         context.execute(
-            context.render_area,
+            self.main_pass,
             &[color_target],
             Some(depth_target),
+            context.get_backbuffer_size(),
             [main_stream, skybox].into_iter(),
-            &[ImageBarrier::color_to_attachment(color.as_handle())],
         );
 
-        let backbuffer = RenderTarget::new(
-            Format::BGRA8_UNORM,
-            context.target_view,
-            ImageLayout::ColorTarget,
-        )
-        .store_output();
+        let backbuffer = context.get_backbuffer();
 
         context.execute(
-            context.render_area,
+            self.tonemapping_pass,
             &[backbuffer],
             None,
+            context.get_backbuffer_size(),
             [tonemapping].into_iter(),
-            &[ImageBarrier::color_attachment_to_sampled(color.as_handle())],
         );
 
         Ok(())
@@ -442,12 +429,34 @@ impl<'a> Client for RenderDemo<'a> {
             ])
             .unwrap();
 
+        self.main_pass = context
+            .render_device
+            .create_render_pass(RenderPassLayout {
+                depth_target: Some(
+                    RenderTargetDesc::new(Format::D24)
+                        .clear_input()
+                        .initial_layout(ImageLayout::None),
+                ),
+                color_targets: &[RenderTargetDesc::new(Format::RGBA16_SFLOAT)
+                    .clear_input()
+                    .store_output()
+                    .initial_layout(ImageLayout::None)
+                    .next_layout(ImageLayout::ShaderRead)],
+                subpasses: &[SubpassLayout {
+                    depth_write: true,
+                    depth_read: false,
+                    color_writes: &[0],
+                    color_reads: &[],
+                }],
+            })
+            .unwrap();
+
         self.pipeline = context
             .pipeline_cache
             .get_or_register_raster_pipeline(
                 RasterPipelineCreateDesc::new(
                     program,
-                    &MAIN_PASS_LAYOUT,
+                    self.main_pass,
                     &DRAW_PIPELINE_LAYOUT,
                     &BASIC_MESH_LAYOUT,
                 )
@@ -482,11 +491,27 @@ impl<'a> Client for RenderDemo<'a> {
                 ShaderSource::fragment("shaders/tonemapping_ps.hlsl"),
             ])
             .unwrap();
+        self.tonemapping_pass = context
+            .render_device
+            .create_render_pass(RenderPassLayout {
+                depth_target: None,
+                color_targets: &[RenderTargetDesc::new(Format::BGRA8_UNORM)
+                    .store_output()
+                    .initial_layout(ImageLayout::None)
+                    .next_layout(ImageLayout::Present)],
+                subpasses: &[SubpassLayout {
+                    depth_write: false,
+                    depth_read: false,
+                    color_writes: &[0],
+                    color_reads: &[],
+                }],
+            })
+            .unwrap();
         self.tonemapping = context
             .pipeline_cache
             .get_or_register_raster_pipeline(RasterPipelineCreateDesc::new(
                 program,
-                &TONEMAPPING_PASS_LAYOUT,
+                self.tonemapping_pass,
                 &POSTPORCESSING_PIPELINE_LAYOUT,
                 &BASIC_VERTEX_LAYOUT,
             ))
@@ -508,7 +533,7 @@ impl<'a> Client for RenderDemo<'a> {
             .get_or_register_raster_pipeline(
                 RasterPipelineCreateDesc::new(
                     program,
-                    &MAIN_PASS_LAYOUT,
+                    self.main_pass,
                     &SKYBOX_PIPELINE_LAYOUT,
                     &SKY_VERTEX_LAYOUT,
                 )

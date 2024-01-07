@@ -13,7 +13,8 @@ use speedy::{Context, Readable, Writable};
 use uuid::Uuid;
 
 use crate::{
-    BackendError, BackendResult, BindGroupLayout, BindGroupLayoutDesc, Format, MAX_BINDING_GROUPS,
+    AsVulkan, BackendError, BackendResult, BindGroupLayout, BindGroupLayoutDesc, Format,
+    RenderPassHandle, MAX_BINDING_GROUPS,
 };
 
 use super::{Device, PhysicalDevice, ProgramHandle, RasterPipelineHandle, Shader, MAX_SHADERS};
@@ -163,7 +164,7 @@ pub struct RasterPipelineCreateDesc {
     /// Associated program
     pub program: ProgramHandle,
     /// Render pass layout
-    pub pass_layout: &'static RenderPassLayout<'static>,
+    pub render_pass: RenderPassHandle,
     /// Pipeline layout
     pub pipeline_layout: &'static [BindGroupLayoutDesc],
     /// Blend data, None if opaque. Order: color, alpha
@@ -178,13 +179,13 @@ pub struct RasterPipelineCreateDesc {
 impl RasterPipelineCreateDesc {
     pub fn new(
         program: ProgramHandle,
-        pass_layout: &'static RenderPassLayout,
+        render_pass: RenderPassHandle,
         pipeline_layout: &'static [BindGroupLayoutDesc],
         streams: &'static [InputVertexStreamDesc],
     ) -> Self {
         Self {
             program,
-            pass_layout,
+            render_pass,
             pipeline_layout,
             blend: None,
             cull: None,
@@ -257,12 +258,6 @@ impl RasterPipelineCreateDesc {
 
         self
     }
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct RenderPassLayout<'a> {
-    pub color_attachments: &'a [Format],
-    pub depth_attachment: Option<Format>,
 }
 
 impl Device {
@@ -400,21 +395,16 @@ impl Device {
             .logic_op_enable(false)
             .build();
 
-        let color_attachments = desc
-            .pass_layout
-            .color_attachments
-            .iter()
-            .copied()
-            .map(|x| x.into())
-            .collect::<Vec<_>>();
-        let mut rendering_info =
-            vk::PipelineRenderingCreateInfo::builder().color_attachment_formats(&color_attachments);
-        if let Some(depth) = desc.pass_layout.depth_attachment {
-            rendering_info = rendering_info.depth_attachment_format(depth.into())
-        }
+        let render_pass = self
+            .render_pass_storage
+            .lock()
+            .get(desc.render_pass.index())
+            .ok_or(BackendError::InvalidHandle)?
+            .as_vk();
 
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
             .layout(pipeline_layout)
+            .render_pass(render_pass)
             .stages(&shader_create_info)
             .dynamic_state(&dynamic_state_create_info)
             .viewport_state(&viewport_state)
@@ -424,7 +414,6 @@ impl Device {
             .input_assembly_state(&assembly_state_create_info)
             .rasterization_state(&rasterizer_state)
             .depth_stencil_state(&depthstencil_state)
-            .push_next(&mut rendering_info)
             .build();
 
         let pipeline = unsafe {
