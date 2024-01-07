@@ -183,9 +183,7 @@ unsafe impl Sync for Device {}
 
 impl Device {
     pub fn new(instance: Instance, pdevice: PhysicalDevice) -> BackendResult<Arc<Self>> {
-        if !pdevice.is_queue_flag_supported(
-            vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
-        ) {
+        if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {
             return Err(BackendError::NoSuitableDevice);
         };
 
@@ -204,9 +202,7 @@ impl Device {
         }
 
         let universal_queue = pdevice
-            .get_queue(
-                vk::QueueFlags::GRAPHICS | vk::QueueFlags::TRANSFER | vk::QueueFlags::COMPUTE,
-            )
+            .get_queue(vk::QueueFlags::GRAPHICS)
             .ok_or(BackendError::NoSuitableQueue)?;
         let universal_queue_index = universal_queue.index;
 
