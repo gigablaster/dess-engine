@@ -20,10 +20,60 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{
-    BackendResult, Device, Format, ImageLayout, ImageMultisampling, RenderPassHandle,
-    RenderTargetLoadOp, RenderTargetStoreOp,
-};
+use crate::{BackendResult, Device, Format, ImageLayout, ImageMultisampling, RenderPassHandle};
+
+#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
+pub enum RenderTargetLoadOp {
+    Clear,
+    Load,
+    #[default]
+    Discard,
+}
+
+#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
+pub enum RenderTargetStoreOp {
+    Store,
+    #[default]
+    Discard,
+}
+
+impl From<RenderTargetLoadOp> for vk::AttachmentLoadOp {
+    fn from(value: RenderTargetLoadOp) -> Self {
+        match value {
+            RenderTargetLoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
+            RenderTargetLoadOp::Load => vk::AttachmentLoadOp::LOAD,
+            RenderTargetLoadOp::Discard => vk::AttachmentLoadOp::DONT_CARE,
+        }
+    }
+}
+
+impl From<RenderTargetStoreOp> for vk::AttachmentStoreOp {
+    fn from(value: RenderTargetStoreOp) -> Self {
+        match value {
+            RenderTargetStoreOp::Store => vk::AttachmentStoreOp::STORE,
+            RenderTargetStoreOp::Discard => vk::AttachmentStoreOp::DONT_CARE,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum ClearRenderTarget {
+    Color([f32; 4]),
+    DepthStencil(f32, u32),
+}
+
+impl From<ClearRenderTarget> for vk::ClearValue {
+    fn from(value: ClearRenderTarget) -> Self {
+        match value {
+            ClearRenderTarget::Color(color) => vk::ClearValue {
+                color: vk::ClearColorValue { float32: color },
+            },
+            ClearRenderTarget::DepthStencil(depth, stencil) => vk::ClearValue {
+                depth_stencil: vk::ClearDepthStencilValue { depth, stencil },
+            },
+        }
+    }
+}
 
 const MAX_COLOR_ATTACHMENTS: usize = 8;
 const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;

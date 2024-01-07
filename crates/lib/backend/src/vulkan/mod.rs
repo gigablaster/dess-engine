@@ -44,6 +44,7 @@ pub use instance::*;
 pub use physical_device::*;
 pub use pipeline::*;
 pub use program::*;
+pub use render_pass::*;
 use speedy::{Readable, Writable};
 use staging::*;
 pub use swapchain::*;
