@@ -257,7 +257,7 @@ impl Staging {
         &mut self,
         device: &Device,
         will_wait: bool,
-    ) -> BackendResult<(vk::Semaphore, vk::PipelineStageFlags2)> {
+    ) -> BackendResult<(vk::Semaphore, vk::PipelineStageFlags)> {
         puffin::profile_function!();
         let cb = &self.tranfser_cbs[self.current];
 
@@ -289,15 +289,15 @@ impl Staging {
         let semaphore = self.semaphores[self.current];
         let render_semaphore = self.render_semaphores[self.current];
         let mut triggers = ArrayVec::<_, 2>::new();
-        triggers.push((semaphore, vk::PipelineStageFlags2::TRANSFER));
+        triggers.push(semaphore);
         if will_wait {
-            triggers.push((render_semaphore, vk::PipelineStageFlags2::TRANSFER));
+            triggers.push(render_semaphore);
         }
 
         if let Some(last) = self.last {
             device.submit(
                 cb,
-                &[(self.semaphores[last], vk::PipelineStageFlags2::TRANSFER)],
+                &[(self.semaphores[last], vk::PipelineStageFlags::TRANSFER)],
                 &triggers,
             )?;
         } else {
@@ -311,7 +311,7 @@ impl Staging {
         self.upload_buffers.clear();
         self.upload_images.clear();
 
-        Ok((render_semaphore, vk::PipelineStageFlags2::TRANSFER))
+        Ok((render_semaphore, vk::PipelineStageFlags::TRANSFER))
     }
 
     fn barrier_before(&self, device: &ash::Device, cb: vk::CommandBuffer) {
@@ -319,14 +319,12 @@ impl Staging {
         let mut buffer_barriers = Vec::with_capacity(size);
         self.upload_buffers.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::BufferMemoryBarrier2::builder()
+                let barrier = vk::BufferMemoryBarrier::builder()
                     .buffer(*x.0)
                     .src_queue_family_index(self.queue_family_index)
                     .dst_queue_family_index(self.queue_family_index)
-                    .src_access_mask(vk::AccessFlags2::MEMORY_READ)
-                    .src_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)
-                    .dst_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
+                    .src_access_mask(vk::AccessFlags::MEMORY_READ)
+                    .dst_access_mask(vk::AccessFlags::MEMORY_WRITE)
                     .offset(op.dst_offset)
                     .size(op.size)
                     .build();
@@ -337,11 +335,9 @@ impl Staging {
         let mut image_barriers = Vec::with_capacity(size);
         self.upload_images.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                    .src_access_mask(vk::AccessFlags2::SHADER_READ)
-                    .dst_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                let barrier = vk::ImageMemoryBarrier::builder()
+                    .src_access_mask(vk::AccessFlags::SHADER_READ)
+                    .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .src_queue_family_index(self.queue_family_index)
@@ -352,13 +348,19 @@ impl Staging {
                 image_barriers.push(barrier);
             })
         });
-        let dependencies = vk::DependencyInfo::builder()
-            .dependency_flags(vk::DependencyFlags::BY_REGION)
-            .buffer_memory_barriers(&buffer_barriers)
-            .image_memory_barriers(&image_barriers)
-            .build();
+        unsafe {
+            device.cmd_pipeline_barrier(
+                cb,
+                vk::PipelineStageFlags::FRAGMENT_SHADER | vk::PipelineStageFlags::VERTEX_INPUT,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &buffer_barriers,
+                &image_barriers,
+            )
+        };
 
-        unsafe { device.cmd_pipeline_barrier2(cb, &dependencies) };
+        // unsafe { device.cmd_pipeline_barrier2(cb, &dependencies) };
     }
 
     fn barrier_after(&self, device: &ash::Device, cb: vk::CommandBuffer) {
@@ -366,14 +368,12 @@ impl Staging {
         let mut buffer_barriers = Vec::with_capacity(size);
         self.upload_buffers.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::BufferMemoryBarrier2::builder()
+                let barrier = vk::BufferMemoryBarrier::builder()
                     .buffer(*x.0)
                     .src_queue_family_index(self.queue_family_index)
                     .dst_queue_family_index(self.queue_family_index)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                    .dst_access_mask(vk::AccessFlags2::MEMORY_READ)
-                    .dst_stage_mask(vk::PipelineStageFlags2::VERTEX_INPUT)
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::MEMORY_READ)
                     .offset(op.dst_offset)
                     .size(op.size)
                     .build();
@@ -384,11 +384,9 @@ impl Staging {
         let mut image_barriers = Vec::with_capacity(size);
         self.upload_images.iter().for_each(|x| {
             x.1.iter().for_each(|op| {
-                let barrier = vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::TRANSFER)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::FRAGMENT_SHADER)
-                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                let barrier = vk::ImageMemoryBarrier::builder()
+                    .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                    .dst_access_mask(vk::AccessFlags::SHADER_READ)
                     .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                     .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .src_queue_family_index(self.queue_family_index)
@@ -399,13 +397,19 @@ impl Staging {
                 image_barriers.push(barrier);
             })
         });
-        let dependencies = vk::DependencyInfo::builder()
-            .dependency_flags(vk::DependencyFlags::BY_REGION)
-            .buffer_memory_barriers(&buffer_barriers)
-            .image_memory_barriers(&image_barriers)
-            .build();
 
-        unsafe { device.cmd_pipeline_barrier2(cb, &dependencies) };
+        unsafe {
+            device.cmd_pipeline_barrier(
+                cb,
+                vk::PipelineStageFlags::TRANSFER,
+                vk::PipelineStageFlags::VERTEX_SHADER | vk::PipelineStageFlags::FRAGMENT_SHADER,
+                vk::DependencyFlags::BY_REGION,
+                &[],
+                &buffer_barriers,
+                &image_barriers,
+            )
+        };
+        // unsafe { device.cmd_pipeline_barrier2(cb, &dependencies) };
     }
 
     fn copy_buffers(&self, device: &ash::Device, cb: vk::CommandBuffer) {

@@ -189,7 +189,6 @@ impl Device {
 
         let device_extension_names = vec![
             khr::Swapchain::name().as_ptr(),
-            vk::KhrSynchronization2Fn::name().as_ptr(),
             vk::KhrBufferDeviceAddressFn::name().as_ptr(),
         ];
 
@@ -205,11 +204,9 @@ impl Device {
             .ok_or(BackendError::NoSuitableQueue)?;
         let universal_queue_index = universal_queue.index;
 
-        let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
         let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
 
         let mut features = vk::PhysicalDeviceFeatures2::builder()
-            .push_next(&mut synchronization2)
             .push_next(&mut buffer_device_address)
             .build();
 
@@ -504,13 +501,10 @@ impl Device {
                 staging_semaphore,
                 (
                     backbuffer.acquire_semaphore,
-                    vk::PipelineStageFlags2::ALL_COMMANDS,
+                    vk::PipelineStageFlags::ALL_COMMANDS,
                 ),
             ],
-            &[(
-                backbuffer.rendering_finished,
-                vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-            )],
+            &[backbuffer.rendering_finished],
         )?;
         {
             puffin::profile_scope!("Present");
@@ -539,42 +533,27 @@ impl Device {
     pub(crate) fn submit(
         &self,
         cb: &CommandBuffer,
-        wait: &[(vk::Semaphore, vk::PipelineStageFlags2)],
-        triggers: &[(vk::Semaphore, vk::PipelineStageFlags2)],
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        triggers: &[vk::Semaphore],
     ) -> BackendResult<()> {
         puffin::profile_function!();
+        let wait_semaphores = wait.iter().map(|x| x.0).collect::<ArrayVec<_, 8>>();
+        let wait_stages = wait.iter().map(|x| x.1).collect::<ArrayVec<_, 8>>();
         let command_buffers = vk::CommandBufferSubmitInfo::builder()
             .command_buffer(cb.raw)
             .build();
-        let wait = wait
-            .iter()
-            .map(|x| {
-                vk::SemaphoreSubmitInfo::builder()
-                    .semaphore(x.0)
-                    .stage_mask(x.1)
-                    .build()
-            })
-            .collect::<ArrayVec<_, 8>>();
-        let triggers = triggers
-            .iter()
-            .map(|x| {
-                vk::SemaphoreSubmitInfo::builder()
-                    .semaphore(x.0)
-                    .stage_mask(x.1)
-                    .build()
-            })
-            .collect::<ArrayVec<_, 8>>();
-        let info = vk::SubmitInfo2::builder()
-            .command_buffer_infos(slice::from_ref(&command_buffers))
-            .wait_semaphore_infos(&wait)
-            .signal_semaphore_infos(&triggers)
+        let info = vk::SubmitInfo::builder()
+            .command_buffers(slice::from_ref(&cb.raw))
+            .signal_semaphores(&triggers)
+            .wait_semaphores(&wait_semaphores)
+            .wait_dst_stage_mask(&wait_stages)
             .build();
         let queue = self.universal_queue.lock();
         unsafe {
             self.raw.reset_fences(&[cb.fence])?;
             self.raw
-                .queue_submit2(*queue, slice::from_ref(&info), cb.fence)
-        }?;
+                .queue_submit(*queue, slice::from_ref(&info), cb.fence)?;
+        };
 
         Ok(())
     }
