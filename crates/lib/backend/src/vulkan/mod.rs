@@ -26,6 +26,7 @@ mod pipeline;
 mod program;
 mod staging;
 mod swapchain;
+mod temp_images;
 mod uniforms;
 
 use std::marker::PhantomData;
@@ -45,6 +46,7 @@ pub use program::*;
 use speedy::{Readable, Writable};
 use staging::*;
 pub use swapchain::*;
+pub use temp_images::*;
 use uniforms::*;
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;

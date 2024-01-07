@@ -21,7 +21,7 @@ use parking_lot::Mutex;
 
 use crate::{
     barrier, BackendError, BackendResult, DeferedPass, DrawStream, Format, ImageLayout, ImageView,
-    RenderArea,
+    RenderArea, UpdateBindGroupsContext,
 };
 
 use super::{
@@ -201,6 +201,7 @@ impl<'a> Pass<'a> {
         Ok(cb)
     }
 }
+
 impl<'a> DeferedPass for Pass<'a> {
     fn execute(&self, context: &ExecutionContext) -> BackendResult<()> {
         puffin::profile_function!();
@@ -293,10 +294,11 @@ impl<'a> DeferedPass for Pass<'a> {
     }
 }
 
-pub struct FrameContext<'a> {
+pub struct FrameContext<'device, 'frame> {
+    pub(crate) device: &'device Device,
     pub render_area: RenderArea,
     pub target_view: ImageView,
-    pub(crate) frame: &'a Frame,
+    pub(crate) frame: &'frame Frame,
     pub(crate) temp_buffer_handle: BufferHandle,
     pub(crate) passes: Mutex<Vec<Box<dyn DeferedPass>>>,
 }
@@ -391,13 +393,24 @@ impl ImageBarrier {
     }
 }
 
-impl<'a> FrameContext<'a> {
+impl<'device, 'frame> FrameContext<'device, 'frame> {
     /// Allocate temporary memory on GPU and copy data there.
     ///
     /// Buffer slive is only valid during current frame, no need to free it in any way
-    pub fn temp_allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
+    pub fn get_temp_buffer<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
         let offset = self.frame.temp_allocate(data)?;
         Ok(BufferSlice::new(self.temp_buffer_handle, offset))
+    }
+
+    pub fn get_temp_buffer_offset<T: Sized>(&self, data: &[T]) -> BackendResult<u32> {
+        Ok(self.get_temp_buffer(data)?.offset)
+    }
+
+    pub fn with_bind_groups<F>(&self, cb: F) -> BackendResult<()>
+    where
+        F: FnOnce(&mut UpdateBindGroupsContext) -> BackendResult<()>,
+    {
+        self.device.with_bind_groups(cb)
     }
 
     /// Record render pass

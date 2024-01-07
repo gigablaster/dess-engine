@@ -6,7 +6,7 @@ use dess_backend::{
     Surface, Swapchain,
 };
 use dess_common::TimeFilter;
-use dess_engine::{BufferPool, PipelineCache, ResourceManager, TemporaryImagePool};
+use dess_engine::{BufferPool, PipelineCache, ResourceManager};
 use log::info;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 use winit::{
@@ -17,7 +17,7 @@ use winit::{
     window::{Fullscreen, WindowBuilder, WindowButtons},
 };
 
-use crate::{Client, ClientState, InitContext, RenderContext};
+use crate::{Client, ClientState, InitContext};
 
 pub struct Runner<T: Client> {
     client: T,
@@ -67,7 +67,6 @@ impl<T: Client> Runner<T> {
             )
             .unwrap();
         let device = Device::new(instance, pdevice).unwrap();
-        let resource_pool = TemporaryImagePool::new(&device).unwrap();
         let buffer_pool = BufferPool::new(&device);
         let resource_manager = ResourceManager::new(&device, &buffer_pool);
         let mut pipeline_cache = PipelineCache::new(&device);
@@ -107,7 +106,6 @@ impl<T: Client> Runner<T> {
                                 return;
                             }
                             if swapchain.is_none() {
-                                resource_pool.purge();
                                 let resolution =
                                     [window.inner_size().width, window.inner_size().height];
                                 swapchain =
@@ -116,14 +114,7 @@ impl<T: Client> Runner<T> {
                             if let Some(current_swapchain) = &swapchain {
                                 pipeline_cache.sync();
                                 if let FrameResult::NeedRecreate = device
-                                    .frame(current_swapchain, |context| {
-                                        let context = RenderContext {
-                                            device: &device,
-                                            frame: context,
-                                            temporary_image_pool: &resource_pool,
-                                        };
-                                        self.client.render(context)
-                                    })
+                                    .frame(current_swapchain, |context| self.client.render(context))
                                     .unwrap()
                                 {}
                             }
@@ -185,7 +176,6 @@ impl<T: Client> Runner<T> {
         drop(swapchain);
         drop(surface);
         drop(buffer_pool);
-        drop(resource_pool);
         drop(device);
         info!("Done.");
     }

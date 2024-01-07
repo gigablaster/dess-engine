@@ -34,6 +34,7 @@ use crate::vulkan::frame::MAX_TEMP_MEMORY;
 use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};
 use crate::{BackendError, BackendResult, BufferUsage};
 
+use super::temp_images::TempImageDesc;
 use super::{
     frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
     PhysicalDevice, ToDrop, UniformStorage,
@@ -163,6 +164,8 @@ pub struct Device {
     empty_ds_layout: vk::DescriptorSetLayout,
     empty_ds_pool: vk::DescriptorPool,
     pub(crate) empty_ds: vk::DescriptorSet,
+    pub(crate) temp_images: Mutex<Vec<(TempImageDesc, ImageHandle)>>,
+    pub(crate) free_temp_images: Mutex<Vec<(TempImageDesc, ImageHandle)>>,
 }
 
 impl Debug for Device {
@@ -375,6 +378,8 @@ impl Device {
             empty_ds_pool,
             empty_ds_layout,
             empty_ds,
+            temp_images: Mutex::default(),
+            free_temp_images: Mutex::default(),
         }))
     }
 
@@ -438,6 +443,7 @@ impl Device {
         let current_cpu_frame = self.current_cpu_frame.load(Ordering::Acquire);
         let mut frame = self.frames[current_cpu_frame].lock();
         unsafe {
+            puffin::profile_scope!("Wait for fence");
             self.raw.wait_for_fences(
                 &[frame.present_cb.fence, frame.main_cb.fence],
                 true,
@@ -460,10 +466,19 @@ impl Device {
             .replace(mem::take(&mut self.current_drop_list.lock()));
 
         let backbuffer = match swapchain.acquire_next_image()? {
-            crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
+            crate::vulkan::AcquiredSurface::NeedRecreate => {
+                self.temp_images.lock().clear();
+                self.free_temp_images.lock().clear();
+                self.image_storage
+                    .write()
+                    .iter()
+                    .for_each(|(_, image)| image.clear_views(&self.raw));
+                return Ok(FrameResult::NeedRecreate);
+            }
             crate::vulkan::AcquiredSurface::Image(image) => image,
         };
         let context = FrameContext {
+            device: self,
             frame: &frame,
             render_area: swapchain.render_area(),
             target_view: backbuffer
@@ -810,6 +825,9 @@ impl Drop for Device {
         for (_, layout) in self.descriptor_layouts.lock().drain() {
             layout.free(&self.raw);
         }
+
+        self.temp_images.lock().clear();
+        self.free_temp_images.lock().clear();
 
         unsafe {
             self.raw.destroy_descriptor_pool(self.empty_ds_pool, None);

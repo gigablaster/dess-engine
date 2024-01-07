@@ -3,17 +3,16 @@ use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
     BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
-    Format, ImageAspect, ImageBarrier, ImageLayout, ImageUsage, InputVertexAttributeDesc,
+    Format, FrameContext, ImageBarrier, ImageLayout, ImageUsage, InputVertexAttributeDesc,
     InputVertexStreamDesc, RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassLayout,
-    ShaderStage, EMPTY_BIND_LAYOUT, {BindGroupHandle, RenderTarget},
+    ShaderStage, TemporaryImageDims, EMPTY_BIND_LAYOUT, {BindGroupHandle, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
     render::{BasicVertex, BASIC_MESH_LAYOUT, BASIC_VERTEX_LAYOUT},
-    ModelCollection, RelativeImageSize, ResourceLoader, MESH_PBR_MATERIAL_LAYOUT,
-    PACKED_MESH_OBJECT_LAYOUT,
+    ModelCollection, ResourceLoader, MESH_PBR_MATERIAL_LAYOUT, PACKED_MESH_OBJECT_LAYOUT,
 };
-use dess_runner::{Client, InitContext, RenderContext, Runner, UpdateContext};
+use dess_runner::{Client, InitContext, Runner, UpdateContext};
 use glam::{vec2, vec3, vec3a};
 
 const MAX_MATRICES_PER_DRAW: usize = 256;
@@ -208,7 +207,7 @@ pub const SKY_VERTEX_LAYOUT: [InputVertexStreamDesc; 1] = [InputVertexStreamDesc
 }];
 
 impl<'a> RenderDemo<'a> {
-    fn create_draw_stream(&self, context: &RenderContext<'a>, rotation: f32) -> DrawStream {
+    fn create_draw_stream(&self, context: &FrameContext, rotation: f32) -> DrawStream {
         puffin::profile_function!();
         let mut stream = DrawStream::new(self.scene_bind_group);
         stream.set_pipeline(self.pipeline);
@@ -222,8 +221,8 @@ impl<'a> RenderDemo<'a> {
                     bones.push(bones[parent as usize] * glam::Mat4::from(*bone))
                 }
             }
-            let temp = context.frame.temp_allocate(&bones).unwrap();
-            stream.set_dynamic_buffer_offset(0, Some(temp.offset));
+            let temp = context.get_temp_buffer_offset(&bones).unwrap();
+            stream.set_dynamic_buffer_offset(0, Some(temp));
             stream.set_bind_group(3, Some(self.draw_bind_group));
             for (bone_idx, mesh_idx) in &model.instances {
                 let mesh = &model.static_meshes[*mesh_idx as usize];
@@ -251,7 +250,7 @@ impl<'a> RenderDemo<'a> {
 
     fn full_screen_quad(
         &self,
-        context: &RenderContext,
+        context: &FrameContext,
         pipeline: RasterPipelineHandle,
         bind_group: BindGroupHandle,
     ) -> DrawStream {
@@ -263,8 +262,8 @@ impl<'a> RenderDemo<'a> {
             BasicVertex::new(vec3(-1.0, 1.0, 0.0), vec2(0.0, 1.0)),
         ];
         let indices = [0u16, 1u16, 2u16, 0u16, 3u16, 2u16];
-        let vb = context.frame.temp_allocate(&vertices).unwrap();
-        let ib = context.frame.temp_allocate(&indices).unwrap();
+        let vb = context.get_temp_buffer(&vertices).unwrap();
+        let ib = context.get_temp_buffer(&indices).unwrap();
         stream.set_vertex_buffer(0, Some(vb));
         stream.set_index_buffer(Some(ib));
         stream.set_pipeline(pipeline);
@@ -273,7 +272,7 @@ impl<'a> RenderDemo<'a> {
         stream
     }
 
-    fn draw_skybox(&self, context: &RenderContext, view: glam::Mat4) -> DrawStream {
+    fn draw_skybox(&self, context: &FrameContext, view: glam::Mat4) -> DrawStream {
         let mut stream = DrawStream::new(self.skybox_bind_group);
         let mut vertices = Vec::new();
         for index in FACES {
@@ -291,17 +290,15 @@ impl<'a> RenderDemo<'a> {
             indices.push(face[3]);
             indices.push(face[2]);
         }
-        let vb = context.frame.temp_allocate(&vertices).unwrap();
-        let ib = context.frame.temp_allocate(&indices).unwrap();
+        let vb = context.get_temp_buffer(&vertices).unwrap();
+        let ib = context.get_temp_buffer(&indices).unwrap();
         let (_, rotation, translation) = view.inverse().to_scale_rotation_translation();
         let offset = context
-            .frame
-            .temp_allocate(
+            .get_temp_buffer_offset(
                 &[glam::Mat4::from_rotation_translation(rotation, translation)
                     * glam::Mat4::from_scale(vec3(99.0, 99.0, 99.0))],
             )
-            .unwrap()
-            .offset;
+            .unwrap();
         stream.set_pipeline(self.skybox_pipeline);
         stream.set_bind_group(1, None);
         stream.set_bind_group(2, None);
@@ -322,43 +319,43 @@ impl<'a> Client for RenderDemo<'a> {
         dess_runner::ClientState::Continue
     }
 
-    fn render(&self, context: RenderContext) -> Result<(), dess_backend::BackendError> {
+    fn render(&self, context: &FrameContext) -> Result<(), dess_backend::BackendError> {
         let color = context
-            .get_temporary_render_target(
+            .get_temporary_image(
                 Format::RGBA16_SFLOAT,
                 ImageUsage::ColorTarget | ImageUsage::Sampled,
-                ImageAspect::Color,
-                RelativeImageSize::Backbuffer,
+                TemporaryImageDims::Backbuffer,
             )
             .unwrap();
         let depth = context
-            .get_temporary_render_target(
+            .get_temporary_image(
                 Format::D24,
                 ImageUsage::DepthStencilTarget,
-                ImageAspect::Depth,
-                RelativeImageSize::Backbuffer,
+                TemporaryImageDims::Backbuffer,
             )
             .unwrap();
         let color_target = RenderTarget::new(
             Format::RGBA16_SFLOAT,
-            color.view(),
+            color.as_color().unwrap(),
             ImageLayout::ColorTarget,
         )
         .store_output()
         .clear_input(ClearRenderTarget::Color([0.0, 0.0, 0.0, 1.0]));
-        let depth_target =
-            RenderTarget::new(Format::D24, depth.view(), ImageLayout::DepthStencilTarget)
-                .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
+        let depth_target = RenderTarget::new(
+            Format::D24,
+            depth.as_depth().unwrap(),
+            ImageLayout::DepthStencilTarget,
+        )
+        .clear_input(ClearRenderTarget::DepthStencil(1.0, 0));
         let eye_position = vec3(0.0, 0.15, 0.6);
         let view = glam::Mat4::look_at_rh(eye_position, vec3(0.0, 0.0, 0.0), -glam::Vec3::Y);
         context
-            .device
             .with_bind_groups(|ctx| {
                 let scene = SceneUniform {
                     view,
                     projection: glam::Mat4::perspective_rh(
                         PI / 4.0,
-                        context.frame.render_area.aspect_ratio(),
+                        context.render_area.aspect_ratio(),
                         0.1,
                         100.0,
                     ),
@@ -389,7 +386,7 @@ impl<'a> Client for RenderDemo<'a> {
                 ctx.bind_image(
                     self.tonemapping_bind_group,
                     0,
-                    color.image(),
+                    color.as_handle(),
                     ImageLayout::ShaderRead,
                 )?;
                 ctx.bind_uniform(
@@ -404,31 +401,31 @@ impl<'a> Client for RenderDemo<'a> {
                 Ok(())
             })
             .unwrap();
-        let main_stream = self.create_draw_stream(&context, self.rotation);
-        let skybox = self.draw_skybox(&context, view);
+        let main_stream = self.create_draw_stream(context, self.rotation);
+        let skybox = self.draw_skybox(context, view);
         let tonemapping =
-            self.full_screen_quad(&context, self.tonemapping, self.tonemapping_bind_group);
-        context.frame.execute(
-            context.frame.render_area,
+            self.full_screen_quad(context, self.tonemapping, self.tonemapping_bind_group);
+        context.execute(
+            context.render_area,
             &[color_target],
             Some(depth_target),
             [main_stream, skybox].into_iter(),
-            &[ImageBarrier::color_to_attachment(color.image())],
+            &[ImageBarrier::color_to_attachment(color.as_handle())],
         );
 
         let backbuffer = RenderTarget::new(
             Format::BGRA8_UNORM,
-            context.frame.target_view,
+            context.target_view,
             ImageLayout::ColorTarget,
         )
         .store_output();
 
-        context.frame.execute(
-            context.frame.render_area,
+        context.execute(
+            context.render_area,
             &[backbuffer],
             None,
             [tonemapping].into_iter(),
-            &[ImageBarrier::color_attachment_to_sampled(color.image())],
+            &[ImageBarrier::color_attachment_to_sampled(color.as_handle())],
         );
 
         Ok(())
