@@ -20,7 +20,9 @@ use arrayvec::ArrayVec;
 use ash::vk::{self};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 
-use crate::{BackendResult, Device, Format, ImageLayout, ImageMultisampling, RenderPassHandle};
+use crate::{
+    BackendResult, Device, Format, ImageLayout, ImageMultisampling, ImageView, RenderPassHandle,
+};
 
 #[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
 pub enum RenderTargetLoadOp {
@@ -151,7 +153,7 @@ impl RenderTargetDesc {
 #[derive(Debug, Hash, PartialEq, Eq)]
 pub struct FboKey {
     pub dims: [u32; 2],
-    pub attachments: ArrayVec<(vk::Format, vk::ImageUsageFlags), MAX_ATTACHMENTS>,
+    pub attachments: ArrayVec<ImageView, MAX_ATTACHMENTS>,
 }
 
 #[derive(Debug)]
@@ -338,30 +340,12 @@ impl RenderPass {
             if let Some(fbo) = cache.get(&key) {
                 Ok(*fbo)
             } else {
-                let attachments = key
-                    .attachments
-                    .iter()
-                    .map(|attachment| {
-                        vk::FramebufferAttachmentImageInfo::builder()
-                            .view_formats(slice::from_ref(&attachment.0))
-                            .width(key.dims[0])
-                            .height(key.dims[1])
-                            .layer_count(1)
-                            .usage(attachment.1)
-                            .build()
-                    })
-                    .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
-                let mut imageless_desc = vk::FramebufferAttachmentsCreateInfo::builder()
-                    .attachment_image_infos(&attachments)
-                    .build();
                 let fbo_info = vk::FramebufferCreateInfo::builder()
-                    .flags(vk::FramebufferCreateFlags::IMAGELESS)
                     .render_pass(self.raw)
+                    .attachments(&key.attachments)
                     .width(key.dims[0])
                     .height(key.dims[1])
                     .layers(1)
-                    .push_next(&mut imageless_desc)
-                    .attachment_count(attachments.len() as _)
                     .build();
                 let fbo = unsafe { device.create_framebuffer(&fbo_info, None) }?;
                 cache.insert(key, fbo);
