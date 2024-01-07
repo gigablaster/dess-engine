@@ -42,7 +42,7 @@ pub struct Staging {
     pool: vk::CommandPool,
     tranfser_cbs: ArrayVec<CommandBuffer, STAGES>,
     allocator: BumpAllocator,
-    upload_buffers: HashMap<vk::Buffer, Vec<vk::BufferCopy2>>,
+    upload_buffers: HashMap<vk::Buffer, Vec<vk::BufferCopy>>,
     upload_images: HashMap<vk::Image, Vec<ImageUploadRequest>>,
     mapping: NonNull<u8>,
     buffer: vk::Buffer,
@@ -243,7 +243,7 @@ impl Staging {
         let allocated = self.allocator.allocate(can_send).unwrap(); // Already checked that allocator can allocate enough space
         let src_offset = BUFFER_SIZE * self.current + allocated;
         unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(src_offset), can_send) };
-        let op = vk::BufferCopy2::builder()
+        let op = vk::BufferCopy::builder()
             .src_offset(src_offset as _)
             .dst_offset(offset as _)
             .size(can_send as _)
@@ -410,12 +410,7 @@ impl Staging {
 
     fn copy_buffers(&self, device: &ash::Device, cb: vk::CommandBuffer) {
         self.upload_buffers.iter().for_each(|x| {
-            let info = vk::CopyBufferInfo2::builder()
-                .src_buffer(self.buffer)
-                .dst_buffer(*x.0)
-                .regions(x.1)
-                .build();
-            unsafe { device.cmd_copy_buffer2(cb, &info) };
+            unsafe { device.cmd_copy_buffer(cb, self.buffer, *x.0, x.1) };
         })
     }
 
