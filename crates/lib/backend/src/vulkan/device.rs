@@ -154,11 +154,13 @@ pub struct Device {
     pub(crate) dirty_bind_groups: Mutex<HashSet<BindGroupHandle>>,
     pub(crate) samplers: HashMap<SamplerDesc, vk::Sampler>,
     pub(crate) staging: Mutex<Staging>,
-    pub(crate) universal_queue: Mutex<vk::Queue>,
+    pub(crate) universal_queue: Arc<Mutex<vk::Queue>>,
+    pub(crate) transfer_queue: Arc<Mutex<vk::Queue>>,
     pub(crate) pipelines: RwLock<RasterPipelineStorage>,
     pub(crate) render_pass_storage: Mutex<RenderPassStorage>,
     pub(crate) pipeline_cache: vk::PipelineCache,
-    pub queue_familt_index: u32,
+    pub(crate) universal_queue_family_index: u32,
+    pub(crate) transfer_queue_family_index: u32,
     current_cpu_frame: AtomicUsize,
     pub(crate) temp_buffer: vk::Buffer,
     temp_buffer_memory: Option<GpuMemory>,
@@ -200,10 +202,16 @@ impl Device {
             }
         }
 
-        let universal_queue = pdevice
-            .get_queue(vk::QueueFlags::GRAPHICS)
+        let universal_queue_family = pdevice
+            .get_queue(vk::QueueFlags::GRAPHICS, &[])
             .ok_or(BackendError::NoSuitableQueue)?;
-        let universal_queue_index = universal_queue.index;
+        let transfer_queue_family =
+            pdevice.get_queue(vk::QueueFlags::TRANSFER, &[universal_queue_family.index]);
+
+        let universal_queue_index = universal_queue_family.index;
+        let transfer_queue_index = transfer_queue_family
+            .unwrap_or(universal_queue_family)
+            .index;
 
         let mut features = vk::PhysicalDeviceFeatures2::builder().build();
 
@@ -213,11 +221,22 @@ impl Device {
                 .get_physical_device_features2(pdevice.raw, &mut features)
         };
 
-        let priorities = [1.0];
-        let queue_info = [vk::DeviceQueueCreateInfo::builder()
-            .queue_family_index(universal_queue.index)
-            .queue_priorities(&priorities)
-            .build()];
+        let queue_priorities = [1.0];
+        let mut queue_info = Vec::new();
+        queue_info.push(
+            vk::DeviceQueueCreateInfo::builder()
+                .queue_family_index(universal_queue_family.index)
+                .queue_priorities(&queue_priorities)
+                .build(),
+        );
+        if let Some(transfer_queue_family) = transfer_queue_family {
+            queue_info.push(
+                vk::DeviceQueueCreateInfo::builder()
+                    .queue_family_index(transfer_queue_family.index)
+                    .queue_priorities(&queue_priorities)
+                    .build(),
+            )
+        }
 
         let device_create_info = vk::DeviceCreateInfo::builder()
             .queue_create_infos(&queue_info)
@@ -231,7 +250,12 @@ impl Device {
                 .create_device(pdevice.raw, &device_create_info, None)?
         };
 
-        let universal_queue = unsafe { device.get_device_queue(universal_queue_index, 0) };
+        let universal_queue = Arc::new(Mutex::new(unsafe {
+            device.get_device_queue(universal_queue_index, 0)
+        }));
+        let transfer_queue = transfer_queue_family
+            .map(|x| Arc::new(Mutex::new(unsafe { device.get_device_queue(x.index, 0) })))
+            .unwrap_or(universal_queue.clone());
 
         let allocator_config = gpu_alloc::Config {
             dedicated_threshold: 64 * 1024 * 1024,
@@ -326,6 +350,7 @@ impl Device {
                 &pdevice,
                 &mut memory_allocator,
                 universal_queue_index,
+                transfer_queue_index,
             )?),
             instance,
             samplers: Self::generate_samplers(&device),
@@ -334,7 +359,8 @@ impl Device {
             memory_allocator: Mutex::new(memory_allocator),
             descriptor_allocator: Mutex::new(descriptor_allocator),
             uniform_storage: Mutex::new(uniform_storage),
-            universal_queue: Mutex::new(universal_queue),
+            universal_queue: universal_queue,
+            transfer_queue: transfer_queue,
             frames,
             image_storage: RwLock::default(),
             buffer_storage: RwLock::new(buffer_storage),
@@ -344,7 +370,7 @@ impl Device {
             program_storage: RwLock::default(),
             pipelines: RwLock::default(),
             raw: device,
-            queue_familt_index: universal_queue_index,
+            universal_queue_family_index: universal_queue_index,
             current_cpu_frame: AtomicUsize::new(0),
             temp_buffer,
             temp_buffer_memory: Some(temp_buffer_memory),
@@ -357,6 +383,9 @@ impl Device {
             temp_images: Mutex::default(),
             free_temp_images: Mutex::default(),
             render_pass_storage: Mutex::default(),
+            transfer_queue_family_index: transfer_queue_family
+                .unwrap_or(universal_queue_family)
+                .index,
         }))
     }
 
@@ -499,7 +528,7 @@ impl Device {
         }
         unsafe { self.raw.end_command_buffer(frame.main_cb.raw) }.unwrap();
 
-        self.submit(
+        self.submit_graphics(
             &frame.main_cb,
             &[
                 staging_semaphore,
@@ -534,8 +563,27 @@ impl Device {
         self.temp_buffer_handle
     }
 
-    pub(crate) fn submit(
+    pub(crate) fn submit_graphics(
         &self,
+        cb: &CommandBuffer,
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        triggers: &[vk::Semaphore],
+    ) -> BackendResult<()> {
+        self.submit(*self.universal_queue.lock(), cb, wait, triggers)
+    }
+
+    pub(crate) fn submit_transfer(
+        &self,
+        cb: &CommandBuffer,
+        wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
+        triggers: &[vk::Semaphore],
+    ) -> BackendResult<()> {
+        self.submit(*self.transfer_queue.lock(), cb, wait, triggers)
+    }
+
+    pub fn submit(
+        &self,
+        queue: vk::Queue,
         cb: &CommandBuffer,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
         triggers: &[vk::Semaphore],
@@ -549,11 +597,10 @@ impl Device {
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .build();
-        let queue = self.universal_queue.lock();
         unsafe {
             self.raw.reset_fences(&[cb.fence])?;
             self.raw
-                .queue_submit(*queue, slice::from_ref(&info), cb.fence)?;
+                .queue_submit(queue, slice::from_ref(&info), cb.fence)?;
         };
 
         Ok(())

@@ -70,7 +70,7 @@ impl<'a> RasterizerPass<'a> {
     ) -> BackendResult<vk::CommandBuffer> {
         let cb = context.frame.get_or_create_secondary_buffer(
             &context.device.raw,
-            context.device.queue_familt_index,
+            context.device.universal_queue_family_index,
         )?;
         unsafe {
             context.device.raw.begin_command_buffer(

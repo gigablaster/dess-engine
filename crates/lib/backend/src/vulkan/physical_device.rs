@@ -48,10 +48,10 @@ impl PhysicalDevice {
             .any(|queue_family| queue_family.is_supported(flags))
     }
 
-    pub(crate) fn get_queue(&self, flags: vk::QueueFlags) -> Option<QueueFamily> {
+    pub(crate) fn get_queue(&self, flags: vk::QueueFlags, exclude: &[u32]) -> Option<QueueFamily> {
         self.queue_families
             .iter()
-            .filter(|x| x.is_supported(flags))
+            .filter(|x| !exclude.contains(&x.index) && x.is_supported(flags))
             .copied()
             .next()
     }
