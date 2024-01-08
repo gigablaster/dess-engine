@@ -188,7 +188,7 @@ impl<'a> Swapchain<'a> {
                     ty: ImageType::Type2D,
                     usage: ImageUsage::ColorTarget,
                     format: Format::BGRA8_UNORM,
-                    extent: [surface_resolution.width, surface_resolution.height],
+                    dims: [surface_resolution.width, surface_resolution.height],
                     tiling: vk::ImageTiling::OPTIMAL,
                     mip_levels: 1,
                     array_elements: 1,

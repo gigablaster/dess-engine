@@ -25,7 +25,7 @@ use gpu_descriptor_ash::AshDescriptorDevice;
 use log::{debug, warn};
 use smol_str::SmolStr;
 
-use crate::{BackendError, BackendResult, BufferUsage, ImageLayout, ImageUsage};
+use crate::{BackendError, BackendResult, BufferUsage, ImageLayout, ImageUsage, ImageView};
 
 use super::{
     BindGroupLayout, BindGroupLayoutDesc, BufferHandle, BufferSlice, BufferStorage, DescriptorSet,

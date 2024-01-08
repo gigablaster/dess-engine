@@ -20,9 +20,9 @@ use ash::vk::{self};
 use parking_lot::Mutex;
 
 use crate::{
-    BackendError, BackendResult, ClearRenderTarget, DrawStream, FboKey, ImageView, RenderArea,
-    RenderPassHandle, RenderPassStorage, UpdateBindGroupsContext, MAX_ATTACHMENTS,
-    MAX_COLOR_ATTACHMENTS,
+    BackendError, BackendResult, ClearRenderTarget, DrawStream, FboKey, ImageDesc, ImageHandle,
+    ImageView, RenderArea, RenderPassHandle, RenderPassStorage, UpdateBindGroupsContext,
+    MAX_ATTACHMENTS, MAX_COLOR_ATTACHMENTS,
 };
 
 use super::{
@@ -249,6 +249,10 @@ impl<'device, 'frame> FrameContext<'device, 'frame> {
 
     pub fn get_backbuffer_aspect_ratio(&self) -> f32 {
         (self.dims[0] as f32) / (self.dims[1] as f32)
+    }
+
+    pub fn get_image_desc(&self, image: ImageHandle) -> BackendResult<ImageDesc> {
+        self.device.get_image_desc(image)
     }
 }
 

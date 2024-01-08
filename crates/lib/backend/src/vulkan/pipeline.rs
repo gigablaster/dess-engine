@@ -165,6 +165,7 @@ pub struct RasterPipelineCreateDesc {
     pub program: ProgramHandle,
     /// Render pass layout
     pub render_pass: RenderPassHandle,
+    pub subpass: usize,
     /// Pipeline layout
     pub pipeline_layout: &'static [BindGroupLayoutDesc],
     /// Blend data, None if opaque. Order: color, alpha
@@ -186,6 +187,7 @@ impl RasterPipelineCreateDesc {
         Self {
             program,
             render_pass,
+            subpass: 0,
             pipeline_layout,
             blend: None,
             cull: None,
@@ -256,6 +258,11 @@ impl RasterPipelineCreateDesc {
     pub fn depth_test(mut self, value: DepthCompareOp) -> Self {
         self.depth_test = Some(value);
 
+        self
+    }
+
+    pub fn subpass(mut self, value: usize) -> Self {
+        self.subpass = value;
         self
     }
 }
@@ -405,6 +412,7 @@ impl Device {
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
             .layout(pipeline_layout)
             .render_pass(render_pass)
+            .subpass(desc.subpass as _)
             .stages(&shader_create_info)
             .dynamic_state(&dynamic_state_create_info)
             .viewport_state(&viewport_state)

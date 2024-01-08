@@ -207,8 +207,8 @@ impl Staging {
             };
             let op = vk::BufferImageCopy::builder()
                 .image_extent(vk::Extent3D {
-                    width: target.desc.extent[0] >> mip,
-                    height: target.desc.extent[1] >> mip,
+                    width: target.desc.dims[0] >> mip,
+                    height: target.desc.dims[1] >> mip,
                     depth: 1,
                 })
                 .buffer_offset(buffer_offset as _)

@@ -83,7 +83,7 @@ impl From<ImageUsage> for vk::ImageUsageFlags {
 
 #[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
-    pub extent: [u32; 2],
+    pub dims: [u32; 2],
     pub ty: ImageType,
     pub usage: ImageUsage,
     pub format: Format,
@@ -562,7 +562,7 @@ impl Device {
         let image = Image {
             raw: image,
             desc: ImageDesc {
-                extent: desc.extent,
+                dims: desc.extent,
                 ty: desc.ty,
                 usage: desc.usage,
                 format: desc.format,
@@ -579,6 +579,14 @@ impl Device {
         }
 
         Ok(image)
+    }
+
+    pub fn get_image_desc(&self, image: ImageHandle) -> BackendResult<ImageDesc> {
+        self.image_storage
+            .read()
+            .get_cold(image)
+            .map(|x| x.desc)
+            .ok_or(BackendError::InvalidHandle)
     }
 }
 
