@@ -247,16 +247,18 @@ impl<'a> RenderDemo<'a> {
 
     fn full_screen_quad(
         &self,
+        invert_y: bool,
         context: &FrameContext,
         pipeline: RasterPipelineHandle,
         bind_group: BindGroupHandle,
     ) -> DrawStream {
         let mut stream = DrawStream::new(bind_group, context.get_backbuffer_size().into(), 0);
+        let (top_y, bottom_y) = if invert_y { (1.0, 0.0) } else { (0.0, 1.0) };
         let vertices = [
-            BasicVertex::new(vec3(-1.0, -1.0, 0.0), vec2(0.0, 0.0)),
-            BasicVertex::new(vec3(1.0, -1.0, 0.0), vec2(1.0, 0.0)),
-            BasicVertex::new(vec3(1.0, 1.0, 0.0), vec2(1.0, 1.0)),
-            BasicVertex::new(vec3(-1.0, 1.0, 0.0), vec2(0.0, 1.0)),
+            BasicVertex::new(vec3(-1.0, -1.0, 0.0), vec2(0.0, top_y)),
+            BasicVertex::new(vec3(1.0, -1.0, 0.0), vec2(1.0, top_y)),
+            BasicVertex::new(vec3(1.0, 1.0, 0.0), vec2(1.0, bottom_y)),
+            BasicVertex::new(vec3(-1.0, 1.0, 0.0), vec2(0.0, bottom_y)),
         ];
         let indices = [0u16, 1u16, 2u16, 0u16, 3u16, 2u16];
         let vb = context.get_temp_buffer(&vertices).unwrap();
@@ -393,7 +395,7 @@ impl<'a> Client for RenderDemo<'a> {
         let main_stream = self.create_draw_stream(context, self.rotation);
         let skybox = self.draw_skybox(context, view);
         let tonemapping =
-            self.full_screen_quad(context, self.tonemapping, self.tonemapping_bind_group);
+            self.full_screen_quad(true, context, self.tonemapping, self.tonemapping_bind_group);
         context.execute(
             self.main_pass,
             &[color_target],

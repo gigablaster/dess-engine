@@ -12,7 +12,7 @@ VsOut main(VsIn vsin) {
     VsOut result;
 
     result.position = float4(vsin.position, 1.0);
-    result.uv = float2(vsin.uv.x, 1.0 - vsin.uv.y);
+    result.uv = vsin.uv;
 
     return result;
 }
