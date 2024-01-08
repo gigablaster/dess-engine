@@ -17,7 +17,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use dess_assets::{MeshData, ModelAsset, ModelCollectionAsset};
 use dess_backend::{
-    BindGroupHandle, BindGroupLayoutDesc, BindType, BindingDesc, BufferSlice, Device, ShaderStage,
+    BindGroupHandle, BindGroupLayoutDesc, BindType, BufferSlice, DescriptorBindingDesc, Device,
+    ShaderStage,
 };
 
 use smol_str::SmolStr;
@@ -57,7 +58,7 @@ pub struct StaticMesh {
 
 pub const PACKED_MESH_OBJECT_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
-    set: &[BindingDesc {
+    set: &[DescriptorBindingDesc {
         slot: 0,
         name: "object",
         ty: BindType::UniformBuffer,

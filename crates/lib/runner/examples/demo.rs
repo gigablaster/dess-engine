@@ -2,11 +2,11 @@ use std::{f32::consts::PI, marker::PhantomData, mem, sync::Arc};
 
 use dess_assets::{ContentSource, GltfSource, ShaderSource};
 use dess_backend::{
-    BindGroupLayoutDesc, BindType, BindingDesc, ClearRenderTarget, DepthCompareOp, DrawStream,
-    Format, FrameContext, ImageLayout, ImageUsage, InputVertexAttributeDesc, InputVertexStreamDesc,
-    RasterPipelineCreateDesc, RasterPipelineHandle, RenderPassHandle, RenderPassLayout,
-    RenderTargetDesc, ShaderStage, SubpassLayout, TemporaryImageDims, EMPTY_BIND_LAYOUT,
-    {BindGroupHandle, RenderTarget},
+    BindGroupLayoutDesc, BindType, ClearRenderTarget, DepthCompareOp, DescriptorBindingDesc,
+    DrawStream, Format, FrameContext, ImageLayout, ImageUsage, InputVertexAttributeDesc,
+    InputVertexStreamDesc, RasterPipelineCreateDesc, RasterPipelineHandle,
+    RenderPassAttachmentDesc, RenderPassHandle, RenderPassLayout, ShaderStage, SubpassLayout,
+    TemporaryImageDims, EMPTY_BIND_LAYOUT, {BindGroupHandle, RenderTarget},
 };
 use dess_common::GameTime;
 use dess_engine::{
@@ -37,19 +37,19 @@ struct RenderDemo<'a> {
 const MAIN_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 0,
             name: "pass",
             ty: BindType::UniformBuffer,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 1,
             name: "light",
             ty: BindType::UniformBuffer,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 32,
             name: "base_sampler",
             ty: BindType::Sampler,
@@ -61,13 +61,13 @@ const MAIN_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
 const SKYBOX_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 0,
             name: "pass",
             ty: BindType::UniformBuffer,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 1,
             name: "light",
             ty: BindType::UniformBuffer,
@@ -79,19 +79,19 @@ const SKYBOX_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
 const TONEMAPPING_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 0,
             name: "hdr",
             ty: BindType::SampledImage,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 1,
             name: "params",
             ty: BindType::UniformBuffer,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 32,
             name: "sampler",
             ty: BindType::Sampler,
@@ -102,7 +102,7 @@ const TONEMAPPING_PASS_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
 
 const DRAW_CALL_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
-    set: &[BindingDesc {
+    set: &[DescriptorBindingDesc {
         slot: 0,
         name: "draw",
         ty: BindType::DynamicStorageBuffer,
@@ -319,7 +319,7 @@ impl<'a> Client for RenderDemo<'a> {
         dess_runner::ClientState::Continue
     }
 
-    fn render(&self, context: &FrameContext) -> Result<(), dess_backend::BackendError> {
+    fn render(&self, context: &FrameContext) -> Result<(), dess_backend::Error> {
         let color = context
             .get_temporary_image(
                 Format::RGBA16_SFLOAT,
@@ -431,16 +431,16 @@ impl<'a> Client for RenderDemo<'a> {
         self.main_pass = context
             .render_device
             .create_render_pass(RenderPassLayout {
-                depth_target: Some(
-                    RenderTargetDesc::new(Format::D24)
+                depth_attachments: Some(
+                    RenderPassAttachmentDesc::new(Format::D24)
                         .clear_input()
                         .initial_layout(ImageLayout::None),
                 ),
-                color_targets: &[RenderTargetDesc::new(Format::RGBA16_SFLOAT)
+                color_attachments: &[RenderPassAttachmentDesc::new(Format::RGBA16_SFLOAT)
                     .clear_input()
                     .store_output()
                     .initial_layout(ImageLayout::None)
-                    .next_layout(ImageLayout::ShaderRead)],
+                    .final_layout(ImageLayout::ShaderRead)],
                 subpasses: &[SubpassLayout {
                     depth_write: true,
                     depth_read: false,
@@ -493,11 +493,11 @@ impl<'a> Client for RenderDemo<'a> {
         self.tonemapping_pass = context
             .render_device
             .create_render_pass(RenderPassLayout {
-                depth_target: None,
-                color_targets: &[RenderTargetDesc::new(Format::BGRA8_UNORM)
+                depth_attachments: None,
+                color_attachments: &[RenderPassAttachmentDesc::new(Format::BGRA8_UNORM)
                     .store_output()
                     .initial_layout(ImageLayout::None)
-                    .next_layout(ImageLayout::Present)],
+                    .final_layout(ImageLayout::Present)],
                 subpasses: &[SubpassLayout {
                     depth_write: false,
                     depth_read: false,

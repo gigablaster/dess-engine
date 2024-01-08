@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -17,12 +17,12 @@ use std::{collections::HashSet, ffi::CStr, fmt::Debug, os::raw::c_char};
 
 use ash::vk;
 
-use crate::BackendResult;
+use crate::Result;
 
 use super::{Instance, Surface};
 
 #[derive(Debug, Clone, Copy)]
-pub struct QueueFamily {
+pub(crate) struct QueueFamily {
     pub index: u32,
     pub properties: vk::QueueFamilyProperties,
 }
@@ -35,10 +35,10 @@ impl QueueFamily {
 
 #[derive(Clone)]
 pub struct PhysicalDevice {
-    pub(crate) raw: vk::PhysicalDevice,
-    pub(crate) queue_families: Vec<QueueFamily>,
-    pub(crate) properties: vk::PhysicalDeviceProperties,
-    pub(crate) supported_extensions: HashSet<String>,
+    raw: vk::PhysicalDevice,
+    queue_families: Vec<QueueFamily>,
+    properties: vk::PhysicalDeviceProperties,
+    supported_extensions: HashSet<String>,
 }
 
 impl PhysicalDevice {
@@ -48,7 +48,7 @@ impl PhysicalDevice {
             .any(|queue_family| queue_family.is_supported(flags))
     }
 
-    pub(crate) fn get_queue(&self, flags: vk::QueueFlags, exclude: &[u32]) -> Option<QueueFamily> {
+    pub(crate) fn find_queue(&self, flags: vk::QueueFlags, exclude: &[u32]) -> Option<QueueFamily> {
         self.queue_families
             .iter()
             .filter(|x| !exclude.contains(&x.index) && x.is_supported(flags))
@@ -56,8 +56,16 @@ impl PhysicalDevice {
             .next()
     }
 
-    pub(crate) fn is_extensions_sipported(&self, ext: &str) -> bool {
+    pub fn is_extensions_sipported(&self, ext: &str) -> bool {
         self.supported_extensions.contains(ext)
+    }
+
+    pub fn get(&self) -> vk::PhysicalDevice {
+        self.raw
+    }
+
+    pub fn properties(&self) -> &vk::PhysicalDeviceProperties {
+        &self.properties
     }
 }
 
@@ -68,16 +76,16 @@ impl Debug for PhysicalDevice {
 }
 
 impl Instance {
-    pub fn enumerate_physical_devices(&self) -> BackendResult<Vec<PhysicalDevice>> {
+    pub fn enumerate_physical_devices(&self) -> Result<Vec<PhysicalDevice>> {
         unsafe {
             Ok(self
-                .raw
+                .get()
                 .enumerate_physical_devices()?
                 .into_iter()
                 .map(|pdevice| {
-                    let properties = self.raw.get_physical_device_properties(pdevice);
+                    let properties = self.get().get_physical_device_properties(pdevice);
                     let queue_families = self
-                        .raw
+                        .get()
                         .get_physical_device_queue_family_properties(pdevice)
                         .into_iter()
                         .enumerate()
@@ -88,7 +96,7 @@ impl Instance {
                         .collect();
 
                     let extension_properties = self
-                        .raw
+                        .get()
                         .enumerate_device_extension_properties(pdevice)
                         .unwrap();
                     let supported_extensions = extension_properties
@@ -121,7 +129,7 @@ impl Instance {
     ) -> Option<vk::Format> {
         formats.iter().find_map(|format| {
             let props = unsafe {
-                self.raw
+                self.get()
                     .get_physical_device_format_properties(pdevice.raw, *format)
             };
             if (tiling == vk::ImageTiling::LINEAR

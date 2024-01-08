@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 dess-common = { path = "../common" }
 dess-backend = { path = "../backend" }
+ash = "0.37.3"
 uuid = "1.5.0"
 bytes = "1.5.0"
 speedy = { version = "0.8.6", features = ["speedy-derive", "uuid"] }

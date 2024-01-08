@@ -17,8 +17,8 @@ use std::{collections::HashMap, fmt::Debug};
 
 use dess_assets::{MeshBlendMode, MeshMaterial};
 use dess_backend::{
-    BackendResultExt, BindGroupLayoutDesc, BindType, BindingDesc, ImageLayout, ShaderStage,
-    {BindGroupHandle, ImageHandle},
+    BackendResultExt, BindGroupLayoutDesc, BindType, DescriptorBindingDesc, ImageLayout,
+    ShaderStage, {BindGroupHandle, ImageHandle},
 };
 use smol_str::SmolStr;
 
@@ -107,37 +107,37 @@ impl ResourceDependencies for Material {
 pub const MESH_PBR_MATERIAL_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 0,
             name: "base",
             ty: BindType::SampledImage,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 1,
             name: "normals",
             ty: BindType::SampledImage,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 2,
             name: "metallic_roughness",
             ty: BindType::SampledImage,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 3,
             name: "occlusion",
             ty: BindType::SampledImage,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 4,
             name: "emissive",
             ty: BindType::SampledImage,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 5,
             name: "material",
             ty: BindType::UniformBuffer,
@@ -149,13 +149,13 @@ pub const MESH_PBR_MATERIAL_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
 pub const MESH_SHADOW_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
     stage: ShaderStage::Graphics,
     set: &[
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 0,
             name: "base",
             ty: BindType::SampledImage,
             count: 1,
         },
-        BindingDesc {
+        DescriptorBindingDesc {
             slot: 1,
             name: "material",
             ty: BindType::UniformBuffer,

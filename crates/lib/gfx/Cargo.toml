@@ -1,0 +1,10 @@
+[package]
+name = "dess-gfx"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+dess-backend = { path = "../backend" }
+ash = "0.37.3"
+puffin = "0.18.1"
+bitflags = "2.4.1"

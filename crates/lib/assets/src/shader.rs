@@ -15,36 +15,36 @@
 
 use std::{hash::Hash, path::Path};
 
+use ash::vk;
 use bytes::Bytes;
-use dess_backend::ShaderStage;
 use siphasher::sip128::Hasher128;
 
 use crate::{Asset, AssetLoad, ContentSource};
 
 #[derive(Debug, Hash, Eq, PartialEq, Clone)]
 pub struct ShaderSource {
-    pub stage: ShaderStage,
+    pub stage: vk::ShaderStageFlags,
     pub path: String,
 }
 
 impl ShaderSource {
     pub fn vertex<P: AsRef<Path>>(path: P) -> Self {
         Self {
-            stage: ShaderStage::Vertex,
+            stage: vk::ShaderStageFlags::VERTEX,
             path: path.as_ref().to_str().unwrap().to_owned(),
         }
     }
 
     pub fn fragment<P: AsRef<Path>>(path: P) -> Self {
         Self {
-            stage: ShaderStage::Fragment,
+            stage: vk::ShaderStageFlags::FRAGMENT,
             path: path.as_ref().to_str().unwrap().to_owned(),
         }
     }
 
     pub fn compute<P: AsRef<Path>>(path: P) -> Self {
         Self {
-            stage: ShaderStage::Compute,
+            stage: vk::ShaderStageFlags::COMPUTE,
             path: path.as_ref().to_str().unwrap().to_owned(),
         }
     }

@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -22,11 +22,11 @@ use ash::{
 use log::{info, log, Level};
 use raw_window_handle::RawDisplayHandle;
 
-use crate::BackendResult;
+use crate::Result;
 
 pub struct Instance {
-    pub(crate) entry: ash::Entry,
-    pub(crate) raw: ash::Instance,
+    entry: ash::Entry,
+    raw: ash::Instance,
     debug_utils: Option<DebugUtils>,
     debug_messenger: Option<DebugUtilsMessengerEXT>,
 }
@@ -88,10 +88,10 @@ impl Instance {
     }
 
     pub(crate) fn vulkan_version() -> u32 {
-        vk::make_api_version(0, 1, 1, 0)
+        vk::make_api_version(0, 1, 3, 0)
     }
 
-    pub fn new(builder: InstanceBuilder, display_handle: RawDisplayHandle) -> BackendResult<Self> {
+    pub fn new(builder: InstanceBuilder, display_handle: RawDisplayHandle) -> Result<Self> {
         let entry = unsafe { ash::Entry::load()? };
 
         let layer_names = Self::generate_layer_names(&builder);
@@ -195,6 +195,14 @@ impl Instance {
         }
 
         vk::FALSE
+    }
+
+    pub fn get(&self) -> &ash::Instance {
+        &self.raw
+    }
+
+    pub fn get_entry(&self) -> &ash::Entry {
+        &self.entry
     }
 }
 

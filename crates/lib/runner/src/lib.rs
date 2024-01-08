@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use dess_backend::{BackendError, Device, FrameContext};
+use dess_backend::{Device, Error, FrameContext};
 use dess_common::GameTime;
 
 mod runner;
@@ -29,5 +29,5 @@ pub trait Client {
     fn init(&mut self, context: InitContext);
     fn tick(&mut self, context: UpdateContext, dt: GameTime) -> ClientState;
     fn hidden(&mut self, value: bool);
-    fn render(&self, context: &FrameContext) -> Result<(), BackendError>;
+    fn render(&self, context: &FrameContext) -> Result<(), Error>;
 }

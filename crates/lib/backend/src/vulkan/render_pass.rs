@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,50 +13,13 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
-use parking_lot::{RwLock, RwLockUpgradableReadGuard};
+use parking_lot::Mutex;
 
-use crate::{
-    AsVulkan, BackendResult, Device, Format, ImageLayout, ImageMultisampling, ImageView,
-    RenderPassHandle,
-};
-
-#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
-pub enum RenderTargetLoadOp {
-    Clear,
-    Load,
-    #[default]
-    Discard,
-}
-
-#[derive(Debug, Clone, Copy, Default, Hash, PartialEq, Eq)]
-pub enum RenderTargetStoreOp {
-    Store,
-    #[default]
-    Discard,
-}
-
-impl From<RenderTargetLoadOp> for vk::AttachmentLoadOp {
-    fn from(value: RenderTargetLoadOp) -> Self {
-        match value {
-            RenderTargetLoadOp::Clear => vk::AttachmentLoadOp::CLEAR,
-            RenderTargetLoadOp::Load => vk::AttachmentLoadOp::LOAD,
-            RenderTargetLoadOp::Discard => vk::AttachmentLoadOp::DONT_CARE,
-        }
-    }
-}
-
-impl From<RenderTargetStoreOp> for vk::AttachmentStoreOp {
-    fn from(value: RenderTargetStoreOp) -> Self {
-        match value {
-            RenderTargetStoreOp::Store => vk::AttachmentStoreOp::STORE,
-            RenderTargetStoreOp::Discard => vk::AttachmentStoreOp::DONT_CARE,
-        }
-    }
-}
+use crate::{AsVulkan, Device, Image, ImageViewDesc, Result};
 
 #[derive(Debug, Clone, Copy)]
 pub enum ClearRenderTarget {
@@ -81,13 +44,13 @@ pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_ATTACHMENTS: usize = MAX_COLOR_ATTACHMENTS + 1;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct RenderTargetDesc {
-    pub format: Format,
-    pub load_op: RenderTargetLoadOp,
-    pub store_op: RenderTargetStoreOp,
-    pub samples: ImageMultisampling,
-    pub from: Option<ImageLayout>,
-    pub next: Option<ImageLayout>,
+pub struct RenderPassAttachmentDesc {
+    pub format: vk::Format,
+    pub load_op: vk::AttachmentLoadOp,
+    pub store_op: vk::AttachmentStoreOp,
+    pub samples: vk::SampleCountFlags,
+    pub inital_layout: Option<vk::ImageLayout>,
+    pub final_layout: Option<vk::ImageLayout>,
 }
 
 #[derive(Debug, Default)]
@@ -100,74 +63,97 @@ pub struct SubpassLayout<'a> {
 
 #[derive(Debug, Default)]
 pub struct RenderPassLayout<'a> {
-    pub depth_target: Option<RenderTargetDesc>,
-    pub color_targets: &'a [RenderTargetDesc],
+    pub depth_attachments: Option<RenderPassAttachmentDesc>,
+    pub color_attachments: &'a [RenderPassAttachmentDesc],
     pub subpasses: &'a [SubpassLayout<'a>],
 }
 
-impl RenderTargetDesc {
-    pub fn new(format: Format) -> Self {
+impl RenderPassAttachmentDesc {
+    pub fn new(format: vk::Format) -> Self {
         Self {
             format,
-            load_op: RenderTargetLoadOp::default(),
-            store_op: RenderTargetStoreOp::default(),
-            samples: ImageMultisampling::default(),
-            from: None,
-            next: None,
+            load_op: vk::AttachmentLoadOp::DONT_CARE,
+            store_op: vk::AttachmentStoreOp::DONT_CARE,
+            samples: vk::SampleCountFlags::TYPE_1,
+            inital_layout: None,
+            final_layout: None,
         }
     }
 
     pub fn clear_input(mut self) -> Self {
-        self.load_op = RenderTargetLoadOp::Clear;
+        self.load_op = vk::AttachmentLoadOp::CLEAR;
         self
     }
 
     pub fn load_input(mut self) -> Self {
-        self.load_op = RenderTargetLoadOp::Load;
+        self.load_op = vk::AttachmentLoadOp::LOAD;
         self
     }
 
     pub fn store_output(mut self) -> Self {
-        self.store_op = RenderTargetStoreOp::Store;
+        self.store_op = vk::AttachmentStoreOp::STORE;
         self
     }
 
-    pub fn next_layout(mut self, layout: ImageLayout) -> Self {
-        self.next = Some(layout);
+    pub fn final_layout(mut self, layout: vk::ImageLayout) -> Self {
+        self.final_layout = Some(layout);
         self
     }
 
-    pub fn initial_layout(mut self, layout: ImageLayout) -> Self {
-        self.from = Some(layout);
+    pub fn initial_layout(mut self, layout: vk::ImageLayout) -> Self {
+        self.inital_layout = Some(layout);
         self
     }
 
     fn build(
         &self,
-        initial_layout: ImageLayout,
-        final_layout: ImageLayout,
+        initial_layout: vk::ImageLayout,
+        final_layout: vk::ImageLayout,
     ) -> vk::AttachmentDescription {
         vk::AttachmentDescription::builder()
-            .initial_layout(self.from.unwrap_or(initial_layout).into())
-            .final_layout(self.next.unwrap_or(final_layout).into())
-            .format(self.format.into())
-            .load_op(self.load_op.into())
-            .store_op(self.store_op.into())
-            .samples(self.samples.into())
+            .initial_layout(self.inital_layout.unwrap_or(initial_layout))
+            .final_layout(self.final_layout.unwrap_or(final_layout))
+            .format(self.format)
+            .load_op(self.load_op)
+            .store_op(self.store_op)
+            .samples(self.samples)
             .build()
     }
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-pub struct FboKey {
+pub struct FramebufferDesc {
     pub dims: [u32; 2],
-    pub attachments: ArrayVec<ImageView, MAX_ATTACHMENTS>,
+    pub attachments: ArrayVec<vk::ImageView, MAX_ATTACHMENTS>,
+}
+
+pub struct RenderPassAttachment<'a> {
+    pub image: &'a Image,
+    pub aspect: vk::ImageAspectFlags,
+}
+
+impl FramebufferDesc {
+    pub fn new<'a, I: Iterator<Item = RenderPassAttachment<'a>>>(attachments: I) -> Self {
+        let attachments = attachments.collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+        let dims = attachments
+            .iter()
+            .map(|x| x.image.desc().dims)
+            .next()
+            .expect("Need at least one attacment");
+        let attachments = attachments
+            .iter()
+            .map(|x| x.image.view(ImageViewDesc::new(x.aspect)).unwrap()) // FIXME: use imageless fbos
+            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+
+        Self { dims, attachments }
+    }
 }
 
 #[derive(Debug)]
 pub struct RenderPass {
-    pub(crate) raw: vk::RenderPass,
-    fbo_cache: RwLock<HashMap<FboKey, vk::Framebuffer>>,
+    device: Arc<Device>,
+    raw: vk::RenderPass,
+    framebuffers: Mutex<HashMap<FramebufferDesc, vk::Framebuffer>>,
 }
 
 fn add_or_merge_dependency(
@@ -195,25 +181,30 @@ impl AsVulkan<vk::RenderPass> for RenderPass {
 }
 
 impl RenderPass {
-    pub(crate) fn new(device: &ash::Device, layout: RenderPassLayout) -> BackendResult<Self> {
+    pub fn new(device: &Arc<Device>, layout: RenderPassLayout) -> Result<Self> {
         let render_pass_attachments = layout
-            .color_targets
+            .color_attachments
             .iter()
-            .map(|attachment| attachment.build(ImageLayout::ColorTarget, ImageLayout::ColorTarget))
-            .chain(layout.depth_target.map(|attachment| {
+            .map(|attachment| {
                 attachment.build(
-                    ImageLayout::DepthStencilTarget,
-                    ImageLayout::DepthStencilTarget,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                )
+            })
+            .chain(layout.depth_attachments.map(|attachment| {
+                attachment.build(
+                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
                 )
             }))
             .collect::<Vec<_>>();
         if render_pass_attachments.is_empty() {
             panic!("Render pass must have at least one attachment");
         }
-        let color_attachments_count = layout.color_targets.len();
+        let color_attachments_count = layout.color_attachments.len();
         let depth_attachment_ref =
             layout
-                .depth_target
+                .depth_attachments
                 .is_some()
                 .then_some(vk::AttachmentReference {
                     attachment: color_attachments_count as u32,
@@ -333,62 +324,46 @@ impl RenderPass {
             .dependencies(&dependencies)
             .build();
 
-        let render_pass = unsafe { device.create_render_pass(&render_pass_info, None) }?;
+        let render_pass = unsafe { device.get().create_render_pass(&render_pass_info, None) }?;
 
         Ok(Self {
+            device: device.clone(),
             raw: render_pass,
-            fbo_cache: RwLock::default(),
+            framebuffers: Mutex::default(),
         })
     }
 
-    pub(crate) fn get_or_create_fbo(
-        &self,
-        device: &ash::Device,
-        key: FboKey,
-    ) -> BackendResult<vk::Framebuffer> {
-        let cache = self.fbo_cache.upgradable_read();
+    pub fn get_or_create_framebuffer(&self, key: FramebufferDesc) -> Result<vk::Framebuffer> {
+        let mut cache = self.framebuffers.lock();
         if let Some(fbo) = cache.get(&key) {
             Ok(*fbo)
         } else {
-            let mut cache = RwLockUpgradableReadGuard::upgrade(cache);
-            if let Some(fbo) = cache.get(&key) {
-                Ok(*fbo)
-            } else {
-                let fbo_info = vk::FramebufferCreateInfo::builder()
-                    .render_pass(self.raw)
-                    .attachments(&key.attachments)
-                    .width(key.dims[0])
-                    .height(key.dims[1])
-                    .layers(1)
-                    .build();
-                let fbo = unsafe { device.create_framebuffer(&fbo_info, None) }?;
-                cache.insert(key, fbo);
+            let fbo_info = vk::FramebufferCreateInfo::builder()
+                .render_pass(self.raw)
+                .attachments(&key.attachments)
+                .width(key.dims[0])
+                .height(key.dims[1])
+                .layers(1)
+                .build();
+            let framebuffer = unsafe { self.device.get().create_framebuffer(&fbo_info, None) }?;
+            cache.insert(key, framebuffer);
 
-                Ok(fbo)
-            }
+            Ok(framebuffer)
         }
     }
 
-    pub(crate) fn clear_fbos(&self, device: &ash::Device) {
-        let mut cache = self.fbo_cache.write();
+    pub fn clear_framebuffers(&self) {
+        let mut cache = self.framebuffers.lock();
         for (_, fbo) in cache.iter() {
-            unsafe { device.destroy_framebuffer(*fbo, None) }
+            unsafe { self.device.get().destroy_framebuffer(*fbo, None) }
         }
         cache.clear();
     }
-
-    pub(crate) fn free(&self, device: &ash::Device) {
-        self.clear_fbos(device);
-        unsafe { device.destroy_render_pass(self.raw, None) }
-    }
 }
 
-impl Device {
-    pub fn create_render_pass(&self, layout: RenderPassLayout) -> BackendResult<RenderPassHandle> {
-        let pass = RenderPass::new(&self.raw, layout)?;
-        let mut passes = self.render_pass_storage.lock();
-        let index = passes.len() as u32;
-        passes.push(pass);
-        Ok(index.into())
+impl Drop for RenderPass {
+    fn drop(&mut self) {
+        self.clear_framebuffers();
+        unsafe { self.device.get().destroy_render_pass(self.raw, None) }
     }
 }

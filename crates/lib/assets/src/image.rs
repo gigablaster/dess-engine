@@ -15,8 +15,8 @@
 
 use std::{hash::Hash, io, path::Path};
 
+use ash::vk;
 use bytes::Bytes;
-use dess_backend::Format;
 use siphasher::sip128::Hasher128;
 use speedy::{Readable, Writable};
 
@@ -126,7 +126,7 @@ fn color_to_pixles(color: [f32; 4]) -> [u8; 4] {
 
 #[derive(Debug, Default, Readable, Writable)]
 pub struct ImageAsset {
-    pub format: Format,
+    pub format: vk::Format,
     pub dimensions: [u32; 2],
     pub mips: Vec<Vec<u8>>,
 }

@@ -16,7 +16,7 @@
 use std::{collections::HashMap, sync::Arc};
 
 use dess_backend::{
-    BackendError, BackendResult, BufferCreateDesc, BufferHandle, BufferSlice, BufferUsage, Device,
+    BufferCreateDesc, BufferHandle, BufferSlice, BufferUsage, Device, Error, Result,
 };
 use dess_common::DynamicAllocator;
 use parking_lot::Mutex;
@@ -44,7 +44,7 @@ impl BufferPool {
     ///
     /// Allocate new chunk if there's not enough space in already allocated
     /// memory.
-    pub fn allocate<T: Sized>(&self, data: &[T]) -> BackendResult<BufferSlice> {
+    pub fn allocate<T: Sized>(&self, data: &[T]) -> Result<BufferSlice> {
         let size = std::mem::size_of_val(data);
         let mut buffers = self.buffers.lock();
         let slice = if let Some(slice) = buffers.iter_mut().find_map(|(handle, allocator)| {
@@ -62,7 +62,7 @@ impl BufferPool {
                     | BufferUsage::Destination,
             ))?;
             let mut allocator = DynamicAllocator::new(CHUNK_SIZE, 1024);
-            let offset = allocator.allocate(size).ok_or(BackendError::TooBig)?;
+            let offset = allocator.allocate(size).ok_or(Error::TooBig)?;
             buffers.insert(buffer, allocator);
             BufferSlice::new(buffer, offset as _)
         };

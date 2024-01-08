@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,29 +13,28 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::{io, sync::Arc};
+
 use ash::vk;
 
-use crate::DrawStreamError;
+// use crate::DrawStreamError;
 
 #[derive(Debug, Clone)]
-pub enum BackendError {
+pub enum Error {
     OutOfMemory,
     TooManyObjects,
     NotSupported,
     NotFound,
-    OutOfAllocatedSpace,
     NoSuitableDevice,
     ExtensionNotFound(String),
     NoSuitableQueue,
-    Fail,
-    InvalidHandle,
-    OutOfTempMemory,
+    Io(Arc<io::Error>),
     TooBig,
-    DescriptorIsntReady,
-    BindingNotFound,
+    Fail,
+    NotAllocated,
 }
 
-impl From<vk::Result> for BackendError {
+impl From<vk::Result> for Error {
     fn from(value: vk::Result) -> Self {
         match value {
             vk::Result::ERROR_FORMAT_NOT_SUPPORTED
@@ -49,7 +48,7 @@ impl From<vk::Result> for BackendError {
     }
 }
 
-impl From<gpu_alloc::AllocationError> for BackendError {
+impl From<gpu_alloc::AllocationError> for Error {
     fn from(value: gpu_alloc::AllocationError) -> Self {
         match value {
             gpu_alloc::AllocationError::NoCompatibleMemoryTypes => Self::NotSupported,
@@ -60,7 +59,7 @@ impl From<gpu_alloc::AllocationError> for BackendError {
     }
 }
 
-impl From<gpu_alloc::MapError> for BackendError {
+impl From<gpu_alloc::MapError> for Error {
     fn from(value: gpu_alloc::MapError) -> Self {
         match value {
             gpu_alloc::MapError::NonHostVisible => Self::NotSupported,
@@ -72,7 +71,7 @@ impl From<gpu_alloc::MapError> for BackendError {
     }
 }
 
-impl From<ash::LoadingError> for BackendError {
+impl From<ash::LoadingError> for Error {
     fn from(value: ash::LoadingError) -> Self {
         match value {
             ash::LoadingError::LibraryLoadFailure(..) => Self::Fail,
@@ -81,23 +80,23 @@ impl From<ash::LoadingError> for BackendError {
     }
 }
 
-impl From<gpu_descriptor::AllocationError> for BackendError {
-    fn from(_value: gpu_descriptor::AllocationError) -> Self {
-        Self::OutOfMemory
-    }
-}
-
-impl From<(Vec<vk::Pipeline>, vk::Result)> for BackendError {
+impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
     fn from(value: (Vec<vk::Pipeline>, vk::Result)) -> Self {
         value.1.into()
     }
 }
 
-impl From<DrawStreamError> for BackendError {
-    fn from(value: DrawStreamError) -> Self {
-        match value {
-            DrawStreamError::EndOfStream => panic!("Draw stream suddenly ended!"),
-            DrawStreamError::InvalidHandle => Self::InvalidHandle,
-        }
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Self::Io(Arc::new(value))
     }
 }
+
+// impl From<DrawStreamError> for BackendError {
+//     fn from(value: DrawStreamError) -> Self {
+//         match value {
+//             DrawStreamError::EndOfStream => panic!("Draw stream suddenly ended!"),
+//             DrawStreamError::InvalidHandle => Self::InvalidHandle,
+//         }
+//     }
+// }

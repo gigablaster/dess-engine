@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,96 +13,47 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::fmt::Debug;
+
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
-use gpu_descriptor_ash::AshDescriptorDevice;
 
-use super::{DescriptorAllocator, DescriptorSet, GpuAllocator, GpuMemory, UniformStorage};
+use super::{GpuAllocator, GpuMemory};
 
-const CAPACITY: usize = 65535;
-
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct DropList {
-    memory_to_free: Vec<GpuMemory>,
-    images_to_free: Vec<vk::Image>,
-    image_views_to_free: Vec<vk::ImageView>,
-    buffers_to_free: Vec<vk::Buffer>,
-    descriptors_to_free: Vec<DescriptorSet>,
-    uniforms_to_free: Vec<usize>,
-}
-
-impl Default for DropList {
-    fn default() -> Self {
-        Self {
-            memory_to_free: Vec::with_capacity(CAPACITY),
-            images_to_free: Vec::with_capacity(CAPACITY),
-            image_views_to_free: Vec::with_capacity(CAPACITY),
-            buffers_to_free: Vec::with_capacity(CAPACITY),
-            descriptors_to_free: Vec::with_capacity(CAPACITY),
-            uniforms_to_free: Vec::with_capacity(CAPACITY),
-        }
-    }
+    memory: Vec<GpuMemory>,
+    views: Vec<vk::ImageView>,
+    images: Vec<vk::Image>,
+    buffers: Vec<vk::Buffer>,
 }
 
 impl DropList {
-    pub fn drop_image(&mut self, image: vk::Image) {
-        self.images_to_free.push(image);
+    pub fn drop_memory(&mut self, memory: GpuMemory) {
+        self.memory.push(memory);
     }
 
-    pub fn drop_image_view(&mut self, view: vk::ImageView) {
-        self.image_views_to_free.push(view);
+    pub fn drop_view(&mut self, view: vk::ImageView) {
+        self.views.push(view);
+    }
+
+    pub fn drop_image(&mut self, image: vk::Image) {
+        self.images.push(image);
     }
 
     pub fn drop_buffer(&mut self, buffer: vk::Buffer) {
-        self.buffers_to_free.push(buffer);
+        self.buffers.push(buffer);
     }
 
-    pub fn free_memory(&mut self, block: GpuMemory) {
-        self.memory_to_free.push(block);
-    }
-
-    pub fn free_descriptor_set(&mut self, descriptor_set: DescriptorSet) {
-        self.descriptors_to_free.push(descriptor_set);
-    }
-
-    pub fn free_uniform(&mut self, uniform: usize) {
-        self.uniforms_to_free.push(uniform);
-    }
-
-    pub(crate) fn purge(
-        &mut self,
-        device: &ash::Device,
-        allocator: &mut GpuAllocator,
-        descriptor_allocator: &mut DescriptorAllocator,
-        uniforms: &mut UniformStorage,
-    ) {
-        self.image_views_to_free.drain(..).for_each(|view| {
-            unsafe { device.destroy_image_view(view, None) };
-        });
-        self.images_to_free.drain(..).for_each(|image| {
-            unsafe { device.destroy_image(image, None) };
-        });
-        self.buffers_to_free.drain(..).for_each(|buffer| {
-            unsafe { device.destroy_buffer(buffer, None) };
-        });
-        self.memory_to_free.drain(..).for_each(|block| {
-            unsafe { allocator.dealloc(AshMemoryDevice::wrap(device), block) };
-        });
-        unsafe {
-            descriptor_allocator.free(
-                AshDescriptorDevice::wrap(device),
-                self.descriptors_to_free.drain(..),
-            )
-        };
-        self.uniforms_to_free
+    pub fn purge(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
+        self.memory
             .drain(..)
-            .for_each(|x| uniforms.dealloc(x));
-
-        self.memory_to_free.shrink_to(CAPACITY);
-        self.image_views_to_free.shrink_to(CAPACITY);
-        self.images_to_free.shrink_to(CAPACITY);
-        self.buffers_to_free.shrink_to(CAPACITY);
-        self.descriptors_to_free.shrink_to(CAPACITY);
-        self.uniforms_to_free.shrink_to(CAPACITY);
+            .for_each(|x| unsafe { memory_allocator.dealloc(AshMemoryDevice::wrap(device), x) });
+        self.views
+            .drain(..)
+            .for_each(|x| unsafe { device.destroy_image_view(x, None) });
+        self.images
+            .drain(..)
+            .for_each(|x| unsafe { device.destroy_image(x, None) });
     }
 }

@@ -1,194 +1,94 @@
+// Copyright (C) 2023-2024 gigablaster
+
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
 use std::{
-    fs::{self, File},
-    hash::Hash,
-    io, slice,
+    ffi::CString,
+    fs::File,
+    io::{self},
+    path::Path,
+    slice,
+    sync::Arc,
 };
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
-use bevy_tasks::AsyncComputeTaskPool;
-use directories::ProjectDirs;
-use log::{debug, error, info};
-use speedy::{Context, Readable, Writable};
+use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use uuid::Uuid;
 
-use crate::{
-    AsVulkan, BackendError, BackendResult, BindGroupLayout, BindGroupLayoutDesc, Format,
-    RenderPassHandle, MAX_BINDING_GROUPS,
-};
+use crate::{AsVulkan, DescriptorSetLayout, Program, Result};
 
-use super::{Device, PhysicalDevice, ProgramHandle, RasterPipelineHandle, Shader, MAX_SHADERS};
+use super::{Device, PhysicalDevice, Shader, MAX_SHADERS};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum BlendFactor {
-    Zero,
-    One,
-    SrcColor,
-    OneMinusSrcColor,
-    DstColor,
-    OneMinusDstColor,
-    SrcAlpha,
-    OneMinusSrcAlpha,
-    DstAlpha,
-    OneMinusDstAlpha,
+pub struct PipelineBlendDesc {
+    pub src: vk::BlendFactor,
+    pub dst: vk::BlendFactor,
+    pub op: vk::BlendOp,
 }
 
-impl From<BlendFactor> for vk::BlendFactor {
-    fn from(value: BlendFactor) -> Self {
-        match value {
-            BlendFactor::Zero => vk::BlendFactor::ZERO,
-            BlendFactor::One => vk::BlendFactor::ONE,
-            BlendFactor::SrcColor => vk::BlendFactor::SRC_COLOR,
-            BlendFactor::OneMinusSrcColor => vk::BlendFactor::ONE_MINUS_SRC_COLOR,
-            BlendFactor::DstColor => vk::BlendFactor::DST_COLOR,
-            BlendFactor::OneMinusDstColor => vk::BlendFactor::ONE_MINUS_DST_COLOR,
-            BlendFactor::SrcAlpha => vk::BlendFactor::SRC_ALPHA,
-            BlendFactor::OneMinusSrcAlpha => vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
-            BlendFactor::DstAlpha => vk::BlendFactor::DST_ALPHA,
-            BlendFactor::OneMinusDstAlpha => vk::BlendFactor::ONE_MINUS_DST_ALPHA,
-        }
+impl PipelineBlendDesc {
+    pub fn new(src: vk::BlendFactor, dst: vk::BlendFactor, op: vk::BlendOp) -> Self {
+        Self { src, dst, op }
     }
 }
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum BlendOp {
-    Add,
-    Subtract,
-    ReverseSubtract,
-    Min,
-    Max,
-}
-
-impl From<BlendOp> for vk::BlendOp {
-    fn from(value: BlendOp) -> Self {
-        match value {
-            BlendOp::Add => vk::BlendOp::ADD,
-            BlendOp::Subtract => vk::BlendOp::SUBTRACT,
-            BlendOp::ReverseSubtract => vk::BlendOp::REVERSE_SUBTRACT,
-            BlendOp::Min => vk::BlendOp::MIN,
-            BlendOp::Max => vk::BlendOp::MAX,
-        }
-    }
-}
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct BlendDesc {
-    pub src_blend: BlendFactor,
-    pub dst_blend: BlendFactor,
-    pub op: BlendOp,
-}
-
-impl BlendDesc {
-    pub fn new(src: BlendFactor, dst: BlendFactor, op: BlendOp) -> Self {
-        Self {
-            src_blend: src,
-            dst_blend: dst,
-            op,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub struct InputVertexAttributeDesc {
-    pub format: Format,
-    pub locaion: u32,
-    pub binding: u32,
-    pub offset: u32,
-}
-
-impl From<InputVertexAttributeDesc> for vk::VertexInputAttributeDescription {
-    fn from(value: InputVertexAttributeDesc) -> Self {
-        Self {
-            location: value.locaion,
-            binding: value.binding,
-            format: value.format.into(),
-            offset: value.offset,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
-pub struct InputVertexStreamDesc {
-    pub attributes: &'static [InputVertexAttributeDesc],
+#[derive(Debug, Clone, Copy)]
+pub struct InputVertexStreamDesc<'a> {
+    pub attributes: &'a [vk::VertexInputAttributeDescription],
     pub stride: usize,
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum CullMode {
-    Front,
-    Back,
-    FrontAndBack,
-}
-
-impl From<CullMode> for vk::CullModeFlags {
-    fn from(value: CullMode) -> Self {
-        match value {
-            CullMode::Front => vk::CullModeFlags::FRONT,
-            CullMode::Back => vk::CullModeFlags::BACK,
-            CullMode::FrontAndBack => vk::CullModeFlags::FRONT_AND_BACK,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-pub enum DepthCompareOp {
-    Never,
-    Less,
-    Equal,
-    LessOrEqual,
-    Greater,
-    NotEqual,
-    GreaterOrEqual,
-    Always,
-}
-
-impl From<DepthCompareOp> for vk::CompareOp {
-    fn from(value: DepthCompareOp) -> Self {
-        match value {
-            DepthCompareOp::Never => vk::CompareOp::NEVER,
-            DepthCompareOp::Less => vk::CompareOp::LESS,
-            DepthCompareOp::Equal => vk::CompareOp::EQUAL,
-            DepthCompareOp::LessOrEqual => vk::CompareOp::LESS_OR_EQUAL,
-            DepthCompareOp::Greater => vk::CompareOp::GREATER,
-            DepthCompareOp::NotEqual => vk::CompareOp::NOT_EQUAL,
-            DepthCompareOp::GreaterOrEqual => vk::CompareOp::GREATER_OR_EQUAL,
-            DepthCompareOp::Always => vk::CompareOp::ALWAYS,
-        }
-    }
 }
 
 /// Data to create pipeline.
 ///
 /// Contains all data to create new pipeline.
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug)]
 pub struct RasterPipelineCreateDesc {
     /// Associated program
-    pub program: ProgramHandle,
-    /// Render pass layout
-    pub render_pass: RenderPassHandle,
+    shaders: ArrayVec<Shader, MAX_SHADERS>,
+    /// Pipeline layout from program
+    pipeline_layout: vk::PipelineLayout,
+    /// Render pass
+    pub render_pass: vk::RenderPass,
+    /// Subpass in said render pass
     pub subpass: usize,
-    /// Pipeline layout
-    pub pipeline_layout: &'static [BindGroupLayoutDesc],
     /// Blend data, None if opaque. Order: color, alpha
-    pub blend: Option<(BlendDesc, BlendDesc)>,
-    pub cull: Option<CullMode>,
-    pub depth_test: Option<DepthCompareOp>,
+    pub blend: Option<(PipelineBlendDesc, PipelineBlendDesc)>,
+    /// Culling
+    pub cull: Option<vk::CullModeFlags>,
+    /// Depth testing
+    pub depth_test: Option<vk::CompareOp>,
+    /// Depth writing
     pub depth_write: bool,
     /// Vertex streams layout
-    pub streams: &'static [InputVertexStreamDesc],
+    pub streams: &'static [InputVertexStreamDesc<'static>],
 }
 
 impl RasterPipelineCreateDesc {
     pub fn new(
-        program: ProgramHandle,
-        render_pass: RenderPassHandle,
-        pipeline_layout: &'static [BindGroupLayoutDesc],
+        program: &Program,
+        render_pass: impl AsVulkan<vk::RenderPass>,
         streams: &'static [InputVertexStreamDesc],
     ) -> Self {
         Self {
-            program,
-            render_pass,
+            shaders: program
+                .shaders()
+                .cloned()
+                .collect::<ArrayVec<_, MAX_SHADERS>>(),
+            render_pass: render_pass.as_vk(),
+            pipeline_layout: program.pipeline_layout(),
             subpass: 0,
-            pipeline_layout,
             blend: None,
             cull: None,
             depth_test: None,
@@ -197,13 +97,13 @@ impl RasterPipelineCreateDesc {
         }
     }
 
-    pub fn blending(mut self, color: BlendDesc, alpha: BlendDesc) -> Self {
+    pub fn blending(mut self, color: PipelineBlendDesc, alpha: PipelineBlendDesc) -> Self {
         self.blend = Some((color, alpha));
 
         self
     }
 
-    pub fn cull(mut self, mode: CullMode) -> Self {
+    pub fn cull(mut self, mode: vk::CullModeFlags) -> Self {
         self.cull = Some(mode);
 
         self
@@ -211,15 +111,15 @@ impl RasterPipelineCreateDesc {
 
     pub fn alpha_blend(mut self) -> Self {
         self.blend = Some((
-            BlendDesc::new(
-                BlendFactor::SrcAlpha,
-                BlendFactor::OneMinusSrcAlpha,
-                BlendOp::Add,
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC1_ALPHA,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
             ),
-            BlendDesc::new(
-                BlendFactor::SrcAlpha,
-                BlendFactor::OneMinusSrcAlpha,
-                BlendOp::Add,
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC1_ALPHA,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
             ),
         ));
         self
@@ -227,15 +127,15 @@ impl RasterPipelineCreateDesc {
 
     pub fn premultiplied(mut self) -> Self {
         self.blend = Some((
-            BlendDesc::new(
-                BlendFactor::One,
-                BlendFactor::OneMinusSrcAlpha,
-                BlendOp::Add,
+            PipelineBlendDesc::new(
+                vk::BlendFactor::ONE,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
             ),
-            BlendDesc::new(
-                BlendFactor::One,
-                BlendFactor::OneMinusSrcAlpha,
-                BlendOp::Add,
+            PipelineBlendDesc::new(
+                vk::BlendFactor::ONE,
+                vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                vk::BlendOp::ADD,
             ),
         ));
         self
@@ -243,8 +143,16 @@ impl RasterPipelineCreateDesc {
 
     pub fn additive(mut self) -> Self {
         self.blend = Some((
-            BlendDesc::new(BlendFactor::SrcAlpha, BlendFactor::One, BlendOp::Add),
-            BlendDesc::new(BlendFactor::SrcAlpha, BlendFactor::One, BlendOp::Add),
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC_ALPHA,
+                vk::BlendFactor::ONE,
+                vk::BlendOp::ADD,
+            ),
+            PipelineBlendDesc::new(
+                vk::BlendFactor::SRC_ALPHA,
+                vk::BlendFactor::ONE,
+                vk::BlendOp::ADD,
+            ),
         ));
         self
     }
@@ -255,7 +163,7 @@ impl RasterPipelineCreateDesc {
         self
     }
 
-    pub fn depth_test(mut self, value: DepthCompareOp) -> Self {
+    pub fn depth_test(mut self, value: vk::CompareOp) -> Self {
         self.depth_test = Some(value);
 
         self
@@ -267,44 +175,25 @@ impl RasterPipelineCreateDesc {
     }
 }
 
-impl Device {
-    async fn compile_raster_pipeline(
-        &self,
-        handle: RasterPipelineHandle,
-        shaders: ArrayVec<Shader, MAX_SHADERS>,
+pub struct RasterPipeline {
+    device: Arc<Device>,
+    pipeline: vk::Pipeline,
+    pipeline_layout: vk::PipelineLayout,
+}
+
+impl RasterPipeline {
+    pub fn new(
+        device: &Arc<Device>,
+        program: &Program,
         desc: RasterPipelineCreateDesc,
-    ) -> BackendResult<(RasterPipelineHandle, vk::Pipeline, vk::PipelineLayout)> {
-        debug!("Compile pipeline {:?}", desc);
-
-        let pipeline_layout = {
-            let mut descriptor_layouts = self.descriptor_layouts.lock();
-            let descriptor_sets = desc
-                .pipeline_layout
-                .iter()
-                .map(|x| {
-                    if let Some(layout) = descriptor_layouts.get(x) {
-                        layout.layout
-                    } else {
-                        let layout = BindGroupLayout::new(&self.raw, x, &self.samplers).unwrap();
-                        let raw = layout.layout;
-                        descriptor_layouts.insert(*x, layout);
-                        raw
-                    }
-                })
-                .collect::<ArrayVec<_, MAX_BINDING_GROUPS>>();
-            let pipeline_layout_info = vk::PipelineLayoutCreateInfo::builder()
-                .set_layouts(&descriptor_sets)
-                .build();
-            unsafe { self.raw.create_pipeline_layout(&pipeline_layout_info, None) }?
-        };
-
-        let shader_create_info = shaders
-            .iter()
+    ) -> Result<Self> {
+        let shader_create_info = program
+            .shaders()
             .map(|shader| {
                 vk::PipelineShaderStageCreateInfo::builder()
                     .stage(shader.stage)
                     .module(shader.raw)
-                    .name(&shader.entry)
+                    .name(&CString::new(shader.entry.as_str()).unwrap())
                     .build()
             })
             .collect::<Vec<_>>();
@@ -387,12 +276,12 @@ impl Device {
         let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
             color_blend_attachment
                 .blend_enable(true)
-                .src_color_blend_factor(color.src_blend.into())
-                .dst_color_blend_factor(color.dst_blend.into())
-                .color_blend_op(color.op.into())
-                .src_alpha_blend_factor(alpha.src_blend.into())
-                .dst_alpha_blend_factor(alpha.dst_blend.into())
-                .alpha_blend_op(alpha.op.into())
+                .src_color_blend_factor(color.src)
+                .dst_color_blend_factor(color.dst)
+                .color_blend_op(color.op)
+                .src_alpha_blend_factor(alpha.src)
+                .dst_alpha_blend_factor(alpha.dst)
+                .alpha_blend_op(alpha.op)
         } else {
             color_blend_attachment.blend_enable(false)
         }
@@ -402,16 +291,9 @@ impl Device {
             .logic_op_enable(false)
             .build();
 
-        let render_pass = self
-            .render_pass_storage
-            .lock()
-            .get(desc.render_pass.index())
-            .ok_or(BackendError::InvalidHandle)?
-            .as_vk();
-
         let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .layout(pipeline_layout)
-            .render_pass(render_pass)
+            .layout(program.pipeline_layout())
+            .render_pass(desc.render_pass)
             .subpass(desc.subpass as _)
             .stages(&shader_create_info)
             .dynamic_state(&dynamic_state_create_info)
@@ -425,79 +307,25 @@ impl Device {
             .build();
 
         let pipeline = unsafe {
-            self.raw.create_graphics_pipelines(
-                self.pipeline_cache,
+            device.get().create_graphics_pipelines(
+                vk::PipelineCache::null(),
                 slice::from_ref(&pipeline_create_info),
                 None,
             )
-        };
+        }?[0];
 
-        Ok((handle, pipeline?[0], pipeline_layout))
-    }
-
-    pub async fn compile_raster_pipelines(&self) {
-        let compiled = AsyncComputeTaskPool::get().scope(|s| {
-            let programs = self.program_storage.read();
-            let pipelines = self.pipelines.read();
-            self.raster_pipelines_to_rebuild
-                .lock()
-                .drain()
-                .for_each(|handle| {
-                    let desc = pipelines.get_cold(handle).unwrap();
-                    let program = programs
-                        .get(desc.program.index())
-                        .ok_or(BackendError::InvalidHandle)
-                        .unwrap();
-                    let shaders = program
-                        .shaders
-                        .iter()
-                        .cloned()
-                        .collect::<ArrayVec<_, MAX_SHADERS>>();
-                    s.spawn(self.compile_raster_pipeline(handle, shaders, *desc));
-                })
-        });
-        let mut pipelines = self.pipelines.write();
-        for it in compiled {
-            match it {
-                Ok((handle, pipeline, layout)) => {
-                    let old = pipelines.replace(handle, (pipeline, layout));
-                    if let Some((pipeline, layout)) = old {
-                        if layout != vk::PipelineLayout::null() {
-                            unsafe { self.raw.destroy_pipeline_layout(layout, None) };
-                        }
-                        if pipeline != vk::Pipeline::null() {
-                            unsafe { self.raw.destroy_pipeline(pipeline, None) };
-                        }
-                    }
-                }
-                Err(err) => error!("Failed to compiled pipeline: {:?}", err),
-            }
-        }
-    }
-
-    pub fn register_raster_pipeline(
-        &self,
-        desc: RasterPipelineCreateDesc,
-    ) -> BackendResult<RasterPipelineHandle> {
-        self.program_storage
-            .read()
-            .get(desc.program.index())
-            .ok_or(BackendError::InvalidHandle)?;
-
-        let mut pipelines = self.pipelines.write();
-        let handle = pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()), desc);
-        self.raster_pipelines_to_rebuild.lock().insert(handle);
-
-        Ok(handle)
+        Ok(Self {
+            device: device.clone(),
+            pipeline,
+            pipeline_layout: program.pipeline_layout(),
+        })
     }
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";
 const VERSION: u32 = 1;
-const CACHE_FILE_NAME: &str = "pipelines.bin";
-const NEW_CACHE_FILE_NAME: &str = "pipelines.new.bin";
 
-#[derive(Debug, Readable, Writable, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 struct Header {
     pub magic: [u8; 4],
     pub version: u32,
@@ -512,6 +340,28 @@ impl Default for Header {
     }
 }
 
+impl Header {
+    pub fn write<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
+        w.write(&self.magic)?;
+        w.write_u32::<LittleEndian>(self.version)?;
+
+        Ok(())
+    }
+
+    pub fn read<R: io::Read>(r: &mut R) -> io::Result<Self> {
+        let mut magic = [0u8; 4];
+        r.read(&mut magic)?;
+        Ok(Self {
+            magic: magic,
+            version: r.read_u32::<LittleEndian>()?
+        })
+    }
+
+    pub fn validate(&self) -> bool {
+        self.magic == MAGICK && self.version >= VERSION
+    }
+}
+
 #[derive(Debug)]
 struct PipelineDiskCache {
     vendor_id: u32,
@@ -521,40 +371,12 @@ struct PipelineDiskCache {
     data: Vec<u8>,
 }
 
-impl<'a, C: Context> Readable<'a, C> for PipelineDiskCache {
-    fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
-        reader
-            .read_value::<Header>()
-            .map(|x| x == Header::default())?;
-        Ok(Self {
-            vendor_id: reader.read_value()?,
-            device_id: reader.read_value()?,
-            driver_version: reader.read_value()?,
-            uuid: reader.read_value()?,
-            data: reader.read_value()?,
-        })
-    }
-}
-
-impl<C: Context> Writable<C> for PipelineDiskCache {
-    fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
-        writer.write_value(&Header::default())?;
-        writer.write_value(&self.vendor_id)?;
-        writer.write_value(&self.device_id)?;
-        writer.write_value(&self.driver_version)?;
-        writer.write_value(&self.uuid)?;
-        writer.write_value(&self.data)?;
-
-        Ok(())
-    }
-}
-
 impl PipelineDiskCache {
     pub fn new(pdevice: &PhysicalDevice, data: &[u8]) -> Self {
-        let vendor_id = pdevice.properties.vendor_id;
-        let device_id = pdevice.properties.device_id;
-        let driver_version = pdevice.properties.driver_version;
-        let uuid = Uuid::from_bytes(pdevice.properties.pipeline_cache_uuid);
+        let vendor_id = pdevice.properties().vendor_id;
+        let device_id = pdevice.properties().device_id;
+        let driver_version = pdevice.properties().driver_version;
+        let uuid = Uuid::from_bytes(pdevice.properties().pipeline_cache_uuid);
 
         Self {
             vendor_id,
@@ -565,49 +387,48 @@ impl PipelineDiskCache {
         }
     }
 
-    pub fn load() -> io::Result<PipelineDiskCache> {
-        if let Some(project_dirs) = ProjectDirs::from("com", "zlogaemz", "engine") {
-            let cache_path = project_dirs.cache_dir().join(CACHE_FILE_NAME);
-            info!("Loading pipeline cache from {:?}", cache_path);
-            Ok(PipelineDiskCache::read_from_stream_buffered(File::open(
-                cache_path,
-            )?)?)
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Can't get cache dir path",
-            ))
+    pub fn read<R: io::Read>(mut r: R) -> io::Result<Self> {
+        if !Header::read(&mut r)?.validate() {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "Wrong pipeline cache header"));
         }
+        Ok(Self {
+            vendor_id: r.read_u32::<LittleEndian>()?,
+            device_id: r.read_u32::<LittleEndian>()?,
+            driver_version: r.read_u32::<LittleEndian>()?,
+            uuid: Uuid::from_u128(r.read_u128::<LittleEndian>()?),
+            data: Self::read_data(&mut r)?,
+        })
     }
 
-    pub fn save(&self) -> io::Result<()> {
-        if let Some(project_dirs) = ProjectDirs::from("com", "zlogaemz", "engine") {
-            fs::create_dir_all(project_dirs.cache_dir())?;
-            let cache_path = project_dirs.cache_dir().join(CACHE_FILE_NAME);
-            let new_cache_path = project_dirs.cache_dir().join(NEW_CACHE_FILE_NAME);
-            info!("Saving pipeline cache to {:?}", cache_path);
-            self.write_to_stream(File::create(&new_cache_path)?)?;
-            fs::rename(&new_cache_path, &cache_path)?;
+    fn read_data<R: io::Read>(r: &mut R) -> io::Result<Vec<u8>> {
+        let size = r.read_u32::<LittleEndian>()?;
+        let mut bytes = vec![0u8; size as usize];
+        r.read_exact(&mut bytes)?;
+        Ok(bytes)
+    }
 
-            Ok(())
-        } else {
-            Err(io::Error::new(
-                io::ErrorKind::Other,
-                "Can't get cache dir path",
-            ))
-        }
+    pub fn save<W: io::Write>(&self, mut w: W) -> io::Result<()> {
+        Header::default().write(&mut w)?;
+        w.write_u32::<LittleEndian>(self.vendor_id)?;
+        w.write_u32::<LittleEndian>(self.device_id)?;
+        w.write_u32::<LittleEndian>(self.driver_version)?;
+        w.write_u128::<LittleEndian>(self.uuid.as_u128())?;
+        w.write_u32::<LittleEndian>(self.data.len() as _)?;
+        w.write(&self.data)?;
+        Ok(())
     }
 }
 
-pub fn load_or_create_pipeline_cache(
-    device: &ash::Device,
-    pdevice: &PhysicalDevice,
-) -> BackendResult<vk::PipelineCache> {
-    let data = if let Ok(cache) = PipelineDiskCache::load() {
-        if cache.vendor_id == pdevice.properties.vendor_id
-            && cache.device_id == pdevice.properties.device_id
-            && cache.driver_version == pdevice.properties.driver_version
-            && cache.uuid == Uuid::from_bytes(pdevice.properties.pipeline_cache_uuid)
+pub fn load_or_create_pipeline_cache<P: AsRef<Path>>(
+    device: &Device,
+    path: P,
+) -> Result<vk::PipelineCache> {
+    let data = if let Ok(cache) = PipelineDiskCache::read(File::open(path)?) {
+        if cache.vendor_id == device.physical_device().properties().vendor_id
+            && cache.device_id == device.physical_device().properties().device_id
+            && cache.driver_version == device.physical_device().properties().driver_version
+            && cache.uuid
+                == Uuid::from_bytes(device.physical_device().properties().pipeline_cache_uuid)
         {
             Some(cache.data)
         } else {
@@ -624,28 +445,28 @@ pub fn load_or_create_pipeline_cache(
     }
     .build();
 
-    let cache = match unsafe { device.create_pipeline_cache(&create_info, None) } {
+    let cache = match unsafe { device.get().create_pipeline_cache(&create_info, None) } {
         Ok(cache) => cache,
         Err(_) => {
             // Failed with initial data - so create empty cache.
             let create_info = vk::PipelineCacheCreateInfo::builder().build();
-            unsafe { device.create_pipeline_cache(&create_info, None) }?
+            unsafe { device.get().create_pipeline_cache(&create_info, None) }?
         }
     };
 
     Ok(cache)
 }
 
-pub fn save_pipeline_cache(
-    device: &ash::Device,
-    pdevice: &PhysicalDevice,
+pub fn save_pipeline_cache<P: AsRef<Path>>(
+    device: &Device,
     cache: vk::PipelineCache,
+    path: P,
 ) -> io::Result<()> {
-    let data = unsafe { device.get_pipeline_cache_data(cache) }.map_err(|err| {
+    let data = unsafe { device.get().get_pipeline_cache_data(cache) }.map_err(|err| {
         io::Error::new(
             io::ErrorKind::Other,
             format!("Failed to get pipeline cache data from device: {:?}", err),
         )
     })?;
-    PipelineDiskCache::new(pdevice, &data).save()
+    PipelineDiskCache::new(device.physical_device(), &data).save(File::create(path)?)
 }

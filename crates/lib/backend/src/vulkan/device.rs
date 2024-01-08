@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -14,111 +14,21 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use arrayvec::ArrayVec;
-use ash::vk::{DescriptorPoolCreateInfo, DescriptorSetLayoutCreateInfo};
 use ash::{extensions::khr, vk};
-use bevy_tasks::block_on;
-use dess_common::{Handle, HotColdPool, SentinelPoolStrategy};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
-use gpu_descriptor_ash::AshDescriptorDevice;
-use log::{info, warn};
-use parking_lot::{Mutex, RwLock};
-use std::collections::{HashMap, HashSet};
+use log::info;
+use parking_lot::Mutex;
+use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fmt::Debug;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::{mem, slice};
 
-use crate::vulkan::frame::MAX_TEMP_MEMORY;
-use crate::vulkan::{save_pipeline_cache, BufferDesc, ExecutionContext, ImageViewDesc};
-use crate::{BackendError, BackendResult, BufferUsage};
+use crate::{AsVulkan, CommandBuffer, Error, Result, SwapchainImage};
 
-use super::render_pass::RenderPass;
-use super::temp_images::TempImageDesc;
-use super::{
-    frame::Frame, Buffer, DescriptorAllocator, DropList, GpuAllocator, GpuMemory, Image, Instance,
-    PhysicalDevice, ToDrop, UniformStorage,
-};
-use super::{
-    load_or_create_pipeline_cache, BindGroupHandle, BindGroupLayout, BindGroupLayoutDesc,
-    BindGroupStorage, FrameContext, Index, Program, RasterPipelineCreateDesc, Staging, Swapchain,
-};
-
-pub type ImageHandle = Handle<vk::Image>;
-pub type BufferHandle = Handle<vk::Buffer>;
-pub type ProgramHandle = Index<Program>;
-pub type RasterPipelineHandle = Handle<(vk::Pipeline, vk::PipelineLayout)>;
-pub type RenderPassHandle = Index<RenderPass>;
-
-pub enum FrameResult {
-    Rendered,
-    NeedRecreate,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-pub struct BufferSlice {
-    pub handle: BufferHandle,
-    pub offset: u32,
-}
-
-impl BufferSlice {
-    pub fn new(buffer: BufferHandle, offset: u32) -> Self {
-        Self {
-            handle: buffer,
-            offset,
-        }
-    }
-
-    pub fn is_valid(&self) -> bool {
-        self.handle.is_valid()
-    }
-}
-
-pub(crate) type ImageStorage = HotColdPool<vk::Image, Image, SentinelPoolStrategy<vk::Image>>;
-pub(crate) type BufferStorage = HotColdPool<vk::Buffer, Buffer, SentinelPoolStrategy<vk::Buffer>>;
-pub(crate) type ProgramStorage = Vec<Program>;
-pub(crate) type RasterPipelineStorage =
-    HotColdPool<(vk::Pipeline, vk::PipelineLayout), RasterPipelineCreateDesc>;
-pub(crate) type RenderPassStorage = Vec<RenderPass>;
-
-pub(crate) struct CommandBuffer {
-    pub raw: vk::CommandBuffer,
-    pub fence: vk::Fence,
-}
-
-impl CommandBuffer {
-    pub fn primary(device: &ash::Device, pool: vk::CommandPool) -> BackendResult<Self> {
-        let cb = unsafe {
-            device.allocate_command_buffers(
-                &vk::CommandBufferAllocateInfo::builder()
-                    .command_buffer_count(1)
-                    .command_pool(pool)
-                    .level(vk::CommandBufferLevel::PRIMARY),
-            )
-        }?[0];
-        let fence = unsafe {
-            device.create_fence(
-                &vk::FenceCreateInfo::builder()
-                    .flags(vk::FenceCreateFlags::SIGNALED)
-                    .build(),
-                None,
-            )?
-        };
-        Ok(Self { raw: cb, fence })
-    }
-
-    pub fn free(&self, device: &ash::Device) {
-        unsafe {
-            device
-                .wait_for_fences(slice::from_ref(&self.fence), true, u64::MAX)
-                .unwrap();
-            device.destroy_fence(self.fence, None);
-            // Command buffer itself is freed by pool.
-        }
-    }
-}
-
+use super::frame::FrameContext;
+use super::{frame::Frame, DropList, GpuAllocator, GpuMemory, Instance, PhysicalDevice};
 #[derive(Debug, Copy, Clone, Hash, Eq, PartialEq)]
 pub struct SamplerDesc {
     pub texel_filter: vk::Filter,
@@ -139,38 +49,17 @@ impl<'a> Drop for ScopedCommandBufferLabel<'a> {
 }
 
 pub struct Device {
-    pub(crate) raw: ash::Device,
-    frames: [Mutex<Frame>; 2],
-    pub(crate) instance: Instance,
-    pub(crate) pdevice: PhysicalDevice,
-    pub(crate) memory_allocator: Mutex<GpuAllocator>,
-    pub(crate) descriptor_allocator: Mutex<DescriptorAllocator>,
-    pub(crate) image_storage: RwLock<ImageStorage>,
-    pub(crate) buffer_storage: RwLock<BufferStorage>,
-    pub(crate) uniform_storage: Mutex<UniformStorage>,
-    pub(crate) program_storage: RwLock<ProgramStorage>,
-    pub(crate) current_drop_list: Mutex<DropList>,
-    pub(crate) bind_groups_storage: RwLock<BindGroupStorage>,
-    pub(crate) dirty_bind_groups: Mutex<HashSet<BindGroupHandle>>,
-    pub(crate) samplers: HashMap<SamplerDesc, vk::Sampler>,
-    pub(crate) staging: Mutex<Staging>,
-    pub(crate) universal_queue: Arc<Mutex<vk::Queue>>,
-    pub(crate) transfer_queue: Arc<Mutex<vk::Queue>>,
-    pub(crate) pipelines: RwLock<RasterPipelineStorage>,
-    pub(crate) render_pass_storage: Mutex<RenderPassStorage>,
-    pub(crate) pipeline_cache: vk::PipelineCache,
-    pub(crate) universal_queue_family_index: u32,
-    current_cpu_frame: AtomicUsize,
-    pub(crate) temp_buffer: vk::Buffer,
-    temp_buffer_memory: Option<GpuMemory>,
-    temp_buffer_handle: BufferHandle,
-    pub(crate) descriptor_layouts: Mutex<HashMap<BindGroupLayoutDesc, BindGroupLayout>>,
-    pub(crate) raster_pipelines_to_rebuild: Mutex<HashSet<RasterPipelineHandle>>,
-    empty_ds_layout: vk::DescriptorSetLayout,
-    empty_ds_pool: vk::DescriptorPool,
-    pub(crate) empty_ds: vk::DescriptorSet,
-    pub(crate) temp_images: Mutex<Vec<(TempImageDesc, ImageHandle)>>,
-    pub(crate) free_temp_images: Mutex<Vec<(TempImageDesc, ImageHandle)>>,
+    raw: ash::Device,
+    frames: [Mutex<Arc<Frame>>; 2],
+    instance: Instance,
+    pdevice: PhysicalDevice,
+    memory_allocator: Mutex<GpuAllocator>,
+    current_drop_list: Mutex<DropList>,
+    samplers: HashMap<SamplerDesc, vk::Sampler>,
+    universal_queue: Arc<Mutex<vk::Queue>>,
+    transfer_queue: Arc<Mutex<vk::Queue>>,
+    universal_queue_index: u32,
+    transfer_queue_index: u32,
 }
 
 impl Debug for Device {
@@ -183,41 +72,65 @@ unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
 impl Device {
-    pub fn new(instance: Instance, pdevice: PhysicalDevice) -> BackendResult<Arc<Self>> {
+    pub fn new(instance: Instance, pdevice: PhysicalDevice) -> Result<Arc<Self>> {
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {
-            return Err(BackendError::NoSuitableDevice);
+            return Err(Error::NoSuitableDevice);
         };
 
         let device_extension_names = vec![
             khr::Swapchain::name().as_ptr(),
-            khr::Maintenance1::name().as_ptr(),
-            khr::Maintenance3::name().as_ptr(),
+            khr::Maintenance4::name().as_ptr(),
+            vk::KhrImagelessFramebufferFn::name().as_ptr(),
+            vk::KhrImageFormatListFn::name().as_ptr(),
+            khr::BufferDeviceAddress::name().as_ptr(),
+            vk::ExtDescriptorIndexingFn::name().as_ptr(),
+            khr::Synchronization2::name().as_ptr(),
         ];
 
         for ext in &device_extension_names {
             let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
             if !pdevice.is_extensions_sipported(ext) {
-                return Err(BackendError::ExtensionNotFound(ext.into()));
+                return Err(Error::ExtensionNotFound(ext.into()));
             }
         }
 
         let universal_queue_family = pdevice
-            .get_queue(vk::QueueFlags::GRAPHICS, &[])
-            .ok_or(BackendError::NoSuitableQueue)?;
+            .find_queue(vk::QueueFlags::GRAPHICS, &[])
+            .ok_or(Error::NoSuitableQueue)?;
         let transfer_queue_family =
-            pdevice.get_queue(vk::QueueFlags::TRANSFER, &[universal_queue_family.index]);
+            pdevice.find_queue(vk::QueueFlags::TRANSFER, &[universal_queue_family.index]);
 
         let universal_queue_index = universal_queue_family.index;
         let transfer_queue_index = transfer_queue_family
             .unwrap_or(universal_queue_family)
             .index;
 
-        let mut features = vk::PhysicalDeviceFeatures2::builder().build();
+        let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
+        let mut imageless_framebuffers = vk::PhysicalDeviceImagelessFramebufferFeatures::default();
+        let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default();
+        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::builder()
+            .runtime_descriptor_array(true)
+            .descriptor_binding_partially_bound(true)
+            .shader_storage_buffer_array_non_uniform_indexing(true)
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .shader_uniform_buffer_array_non_uniform_indexing(true)
+            .descriptor_binding_storage_buffer_update_after_bind(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_uniform_buffer_update_after_bind(true);
+
+        let mut features = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut imageless_framebuffers)
+            .push_next(&mut buffer_device_address)
+            .push_next(&mut maintenance4)
+            .push_next(&mut descriptor_indexing)
+            .push_next(&mut synchronization2)
+            .build();
 
         unsafe {
             instance
-                .raw
-                .get_physical_device_features2(pdevice.raw, &mut features)
+                .get()
+                .get_physical_device_features2(pdevice.get(), &mut features)
         };
 
         let queue_priorities = [1.0];
@@ -245,8 +158,8 @@ impl Device {
 
         let device = unsafe {
             instance
-                .raw
-                .create_device(pdevice.raw, &device_create_info, None)?
+                .get()
+                .create_device(pdevice.get(), &device_create_info, None)?
         };
 
         let universal_queue = Arc::new(Mutex::new(unsafe {
@@ -265,123 +178,28 @@ impl Device {
             starting_free_list_chunk: 256 * 1024,
             initial_buddy_dedicated_size: 128 * 1024 * 1024,
         };
-        let allocator_props =
-            unsafe { device_properties(&instance.raw, Instance::vulkan_version(), pdevice.raw) }?;
-        let mut memory_allocator = GpuAllocator::new(allocator_config, allocator_props);
-        let descriptor_allocator = DescriptorAllocator::new(0);
+        let allocator_props = unsafe {
+            device_properties(instance.get(), Instance::vulkan_version(), pdevice.get())
+        }?;
+        let memory_allocator = Mutex::new(GpuAllocator::new(allocator_config, allocator_props));
 
-        let temp_buffer_type =
-            BufferUsage::Index | BufferUsage::Vertex | BufferUsage::Uniform | BufferUsage::Storage;
-        let temp_buffer_desc = vk::BufferCreateInfo::builder()
-            .size((MAX_TEMP_MEMORY * 2) as u64)
-            .usage(temp_buffer_type.into())
-            .sharing_mode(vk::SharingMode::EXCLUSIVE)
-            .queue_family_indices(&[universal_queue_index])
-            .build();
-        let temp_buffer = unsafe { device.create_buffer(&temp_buffer_desc, None) }?;
-        Self::set_object_name_impl(&instance, &device, temp_buffer, "Temp buffer");
-        let requirements = unsafe { device.get_buffer_memory_requirements(temp_buffer) };
-        let mut temp_buffer_memory = Self::allocate_impl(
-            &device,
-            &mut memory_allocator,
-            requirements,
-            gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS | gpu_alloc::UsageFlags::HOST_ACCESS,
-            true,
-        )?;
-        unsafe {
-            device.bind_buffer_memory(
-                temp_buffer,
-                *temp_buffer_memory.memory(),
-                temp_buffer_memory.offset(),
-            )
-        }?;
-        let temp_mapping = unsafe {
-            temp_buffer_memory.map(
-                AshMemoryDevice::wrap(&device),
-                0,
-                temp_buffer_desc.size as _,
-            )
-        }?;
         let frames = [
-            Mutex::new(Frame::new(&device, 0, temp_mapping, universal_queue_index)?),
-            Mutex::new(Frame::new(
-                &device,
-                MAX_TEMP_MEMORY,
-                temp_mapping,
-                universal_queue_index,
-            )?),
+            Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
+            Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
         ];
 
-        let uniform_storage = UniformStorage::new(&instance, &device, &mut memory_allocator)?;
-        let mut buffer_storage = BufferStorage::default();
-        let temp_buffer_handle = buffer_storage.push(
-            temp_buffer,
-            Buffer {
-                raw: temp_buffer,
-                desc: BufferDesc {
-                    size: temp_buffer_desc.size as usize,
-                    ty: temp_buffer_type,
-                },
-                memory: None,
-            },
-        );
-
-        let empty_ds_pool = unsafe {
-            device.create_descriptor_pool(
-                &DescriptorPoolCreateInfo::builder().max_sets(1).build(),
-                None,
-            )
-        }?;
-        let empty_ds_layout = unsafe {
-            device.create_descriptor_set_layout(&DescriptorSetLayoutCreateInfo::default(), None)
-        }?;
-        let mut empty_ds_allocate_info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(empty_ds_pool)
-            .set_layouts(slice::from_ref(&empty_ds_layout));
-        empty_ds_allocate_info.descriptor_set_count = 1;
-        let empty_ds =
-            unsafe { device.allocate_descriptor_sets(&empty_ds_allocate_info.build()) }?[0];
-
         Ok(Arc::new(Self {
-            staging: Mutex::new(Staging::new(
-                &instance,
-                &device,
-                &pdevice,
-                &mut memory_allocator,
-                universal_queue_index,
-                transfer_queue_index,
-            )?),
             instance,
             samplers: Self::generate_samplers(&device),
-            pipeline_cache: load_or_create_pipeline_cache(&device, &pdevice)?,
             pdevice,
-            memory_allocator: Mutex::new(memory_allocator),
-            descriptor_allocator: Mutex::new(descriptor_allocator),
-            uniform_storage: Mutex::new(uniform_storage),
+            memory_allocator,
             universal_queue,
             transfer_queue,
             frames,
-            image_storage: RwLock::default(),
-            buffer_storage: RwLock::new(buffer_storage),
             current_drop_list: Mutex::default(),
-            bind_groups_storage: RwLock::default(),
-            dirty_bind_groups: Mutex::default(),
-            program_storage: RwLock::default(),
-            pipelines: RwLock::default(),
             raw: device,
-            universal_queue_family_index: universal_queue_index,
-            current_cpu_frame: AtomicUsize::new(0),
-            temp_buffer,
-            temp_buffer_memory: Some(temp_buffer_memory),
-            temp_buffer_handle,
-            descriptor_layouts: Mutex::default(),
-            raster_pipelines_to_rebuild: Mutex::default(),
-            empty_ds_pool,
-            empty_ds_layout,
-            empty_ds,
-            temp_images: Mutex::default(),
-            free_temp_images: Mutex::default(),
-            render_pass_storage: Mutex::default(),
+            universal_queue_index,
+            transfer_queue_index,
         }))
     }
 
@@ -432,145 +250,67 @@ impl Device {
         result
     }
 
-    pub fn purge_temporary_data(&self) {
+    pub fn frame(&self) -> Result<FrameContext> {
+        let mut frame = self.frames[0].lock();
         {
-            info!("Clear backbuffer-dependent data");
-            let mut free_images = self.temp_images.lock();
-            let mut images = self.image_storage.write();
-            free_images.drain(..).for_each(|(_, handle)| {
-                let (_, mut image) = images.remove(handle).unwrap();
-                image.free(self);
-            });
+            let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
+            puffin::profile_scope!("Wait for submit");
+            unsafe {
+                self.raw
+                    .wait_for_fences(slice::from_ref(&frame.fence()), true, u64::MAX)?
+            };
+            frame.reset(&self.raw, &mut self.memory_allocator.lock())?;
         }
-        self.free_temp_images.lock().clear();
+        Ok(FrameContext {
+            device: self,
+            frame: Some(frame.clone()),
+        })
     }
 
-    pub fn frame<F: FnOnce(&FrameContext) -> BackendResult<()>>(
-        &self,
-        swapchain: &Swapchain,
-        frame_fn: F,
-    ) -> BackendResult<FrameResult> {
-        puffin::profile_function!();
-        {
-            puffin::profile_scope!("Compile pipelines");
-            block_on(self.compile_raster_pipelines());
-        }
-        let current_cpu_frame = self.current_cpu_frame.load(Ordering::Acquire);
-        let mut frame = self.frames[current_cpu_frame].lock();
-        unsafe {
-            puffin::profile_scope!("Wait for fence");
-            self.raw.wait_for_fences(
-                &[frame.present_cb.fence, frame.main_cb.fence],
-                true,
-                u64::MAX,
-            )
-        }?;
-        {
-            let mut memory_allocator = self.memory_allocator.lock();
-            let mut descriptor_allocator = self.descriptor_allocator.lock();
-            let mut uniforms = self.uniform_storage.lock();
-            frame.reset(
-                &self.raw,
-                &mut memory_allocator,
-                &mut descriptor_allocator,
-                &mut uniforms,
-            )?;
-        }
-        frame
-            .drop_list
-            .replace(mem::take(&mut self.current_drop_list.lock()));
+    pub(crate) fn end_frame(&self, frame: Arc<Frame>) {
+        drop(frame);
 
-        let backbuffer = match swapchain.acquire_next_image()? {
-            crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
-            crate::vulkan::AcquiredSurface::Image(image) => image,
-        };
-        let context = FrameContext {
-            device: self,
-            frame: &frame,
-            dims: swapchain.dims(),
-            target_view: backbuffer
-                .image
-                .get_or_create_view(&self.raw, ImageViewDesc::color())?,
-            temp_buffer_handle: self.temp_buffer_handle,
-            passes: Mutex::default(),
-        };
-        {
-            puffin::profile_scope!("Collection draw calls");
-            frame_fn(&context)?;
-        }
-        // Upload staging and descriptor sets
-        let mut staging = self.staging.lock();
-        let staging_semaphore = staging.upload(self, true)?;
-        self.update_descriptor_sets()?;
+        let mut frame = self.frames[0].lock();
+        let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
+        let mut next_frame = self.frames[1].lock();
+        let next_frame = Arc::get_mut(&mut next_frame).unwrap();
+        frame.to_drop(mem::take(&mut self.current_drop_list.lock()));
+        mem::swap(frame, next_frame);
+    }
 
-        let info = vk::CommandBufferBeginInfo::builder()
-            .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+    pub fn present(&self, image: SwapchainImage) {
+        puffin::profile_scope!("present");
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(slice::from_ref(&image.rendering_finished))
+            .swapchains(slice::from_ref(&image.swapchain.as_vk()))
+            .image_indices(slice::from_ref(&image.image_index))
             .build();
 
-        unsafe { self.raw.begin_command_buffer(frame.main_cb.raw, &info) }?;
-        staging.execute_pending_barriers(&self.raw, frame.main_cb.raw);
-
-        drop(staging);
-
-        {
-            puffin::profile_scope!("Execute recorded frame");
-
-            let _ = self.scoped_label(frame.main_cb.raw, "Render");
-
-            let execution_context = ExecutionContext {
-                device: self,
-                frame: &frame,
-                buffers: &self.buffer_storage.read(),
-                pipelines: &self.pipelines.read(),
-                descriptors: &self.bind_groups_storage.read(),
-                render_passes: &self.render_pass_storage.lock(),
-            };
-            execution_context.execute_rasterizing_passes(context.passes.into_inner().iter())?;
+        match unsafe {
+            image
+                .swapchain
+                .loader()
+                .queue_present(*self.universal_queue.lock(), &present_info)
+        } {
+            Ok(_) => (),
+            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
+            Err(err) => panic!("Can't present image: {}", err),
         }
-        unsafe { self.raw.end_command_buffer(frame.main_cb.raw) }.unwrap();
-
-        self.submit_graphics(
-            &frame.main_cb,
-            &[
-                staging_semaphore,
-                (
-                    backbuffer.acquire_semaphore,
-                    vk::PipelineStageFlags::ALL_COMMANDS,
-                ),
-            ],
-            &[backbuffer.rendering_finished],
-        )?;
-        {
-            puffin::profile_scope!("Present");
-            swapchain.present_image(backbuffer, *self.universal_queue.lock());
-        }
-
-        let next_cpu_frame = (current_cpu_frame + 1) % 2;
-        assert_eq!(
-            self.current_cpu_frame
-                .compare_exchange(
-                    current_cpu_frame,
-                    next_cpu_frame,
-                    Ordering::Release,
-                    Ordering::Acquire
-                )
-                .unwrap(),
-            current_cpu_frame
-        );
-        Ok(FrameResult::Rendered)
     }
 
-    pub fn temp_buffer(&self) -> BufferHandle {
-        self.temp_buffer_handle
-    }
-
-    pub(crate) fn submit_graphics(
+    pub fn submit_graphics(
         &self,
         cb: &CommandBuffer,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
         triggers: &[vk::Semaphore],
-    ) -> BackendResult<()> {
-        self.submit(*self.universal_queue.lock(), cb, wait, triggers)
+    ) -> Result<()> {
+        self.submit(
+            *self.universal_queue.lock(),
+            cb.get(),
+            cb.fence(),
+            wait,
+            triggers,
+        )
     }
 
     pub(crate) fn submit_transfer(
@@ -578,44 +318,44 @@ impl Device {
         cb: &CommandBuffer,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
         triggers: &[vk::Semaphore],
-    ) -> BackendResult<()> {
-        self.submit(*self.transfer_queue.lock(), cb, wait, triggers)
+    ) -> Result<()> {
+        self.submit(
+            *self.transfer_queue.lock(),
+            cb.get(),
+            cb.fence(),
+            wait,
+            triggers,
+        )
     }
 
     fn submit(
         &self,
         queue: vk::Queue,
-        cb: &CommandBuffer,
+        cb: vk::CommandBuffer,
+        fence: vk::Fence,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
         triggers: &[vk::Semaphore],
-    ) -> BackendResult<()> {
+    ) -> Result<()> {
         puffin::profile_function!();
         let wait_semaphores = wait.iter().map(|x| x.0).collect::<ArrayVec<_, 8>>();
         let wait_stages = wait.iter().map(|x| x.1).collect::<ArrayVec<_, 8>>();
         let info = vk::SubmitInfo::builder()
-            .command_buffers(slice::from_ref(&cb.raw))
+            .command_buffers(slice::from_ref(&cb))
             .signal_semaphores(triggers)
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .build();
         unsafe {
-            self.raw.reset_fences(&[cb.fence])?;
+            self.raw.reset_fences(&[fence])?;
             self.raw
-                .queue_submit(queue, slice::from_ref(&info), cb.fence)?;
+                .queue_submit(queue, slice::from_ref(&info), fence)?;
         };
 
         Ok(())
     }
 
-    pub(crate) fn destroy_resource<T: Debug + Default + Copy + Eq, U: ToDrop + Debug>(
-        &self,
-        handle: Handle<T>,
-        storage: &RwLock<HotColdPool<T, U, SentinelPoolStrategy<T>>>,
-    ) {
-        let item: Option<(T, U)> = storage.write().remove(handle);
-        if let Some((_, mut item)) = item {
-            item.to_drop(&mut self.current_drop_list.lock());
-        }
+    pub fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
+        cb(&mut self.current_drop_list.lock());
     }
 
     pub(crate) fn scoped_label(
@@ -641,13 +381,28 @@ impl Device {
         }
     }
 
+    pub(crate) fn allocate(
+        &self,
+        requirements: vk::MemoryRequirements,
+        location: gpu_alloc::UsageFlags,
+        dedicated: bool,
+    ) -> Result<GpuMemory> {
+        Self::allocate_impl(
+            &self.raw,
+            &mut self.memory_allocator.lock(),
+            requirements,
+            location,
+            dedicated,
+        )
+    }
+
     pub(crate) fn allocate_impl(
         device: &ash::Device,
         allocator: &mut GpuAllocator,
         requirements: vk::MemoryRequirements,
         location: gpu_alloc::UsageFlags,
         dedicated: bool,
-    ) -> BackendResult<GpuMemory> {
+    ) -> Result<GpuMemory> {
         let request = Request {
             size: requirements.size,
             align_mask: requirements.alignment,
@@ -668,8 +423,32 @@ impl Device {
         }?)
     }
 
-    pub fn set_object_name<T: vk::Handle>(&self, object: T, name: &str) {
-        Self::set_object_name_impl(&self.instance, &self.raw, object, name);
+    pub fn set_object_name<T: vk::Handle, S: AsRef<str>>(&self, object: T, name: S) {
+        Self::set_object_name_impl(&self.instance, &self.raw, object, name.as_ref());
+    }
+
+    pub fn main_queue_index(&self) -> u32 {
+        self.universal_queue_index
+    }
+
+    pub fn transfer_queue_index(&self) -> u32 {
+        self.transfer_queue_index
+    }
+
+    pub fn sampler(&self, desc: &SamplerDesc) -> Option<vk::Sampler> {
+        self.samplers.get(&desc).copied()
+    }
+
+    pub fn get(&self) -> &ash::Device {
+        &self.raw
+    }
+
+    pub fn physical_device(&self) -> &PhysicalDevice {
+        &self.pdevice
+    }
+
+    pub fn instance(&self) -> &Instance {
+        &self.instance
     }
 
     pub(crate) fn set_object_name_impl<T: vk::Handle>(
@@ -696,94 +475,23 @@ impl Drop for Device {
         info!("Cleanup...");
         unsafe { self.raw.device_wait_idle() }.unwrap();
         let mut memory_allocator = self.memory_allocator.lock();
-        let mut descriptor_allocator = self.descriptor_allocator.lock();
-        let mut uniform_storage = self.uniform_storage.lock();
 
-        self.current_drop_list.lock().purge(
-            &self.raw,
-            &mut memory_allocator,
-            &mut descriptor_allocator,
-            &mut uniform_storage,
-        );
-        let mut drop_list = DropList::default();
-        let mut images = self.image_storage.write().drain().collect::<Vec<_>>();
-        let mut buffers = self.buffer_storage.write().drain().collect::<Vec<_>>();
-        images.iter_mut().for_each(|x| x.1.to_drop(&mut drop_list));
-        buffers.iter_mut().for_each(|x| x.1.to_drop(&mut drop_list));
-        self.bind_groups_storage
-            .write()
-            .drain()
-            .filter_map(|(_, x)| x.descriptor)
-            .for_each(|x| drop_list.free_descriptor_set(x));
+        self.current_drop_list
+            .lock()
+            .purge(&self.raw, &mut memory_allocator);
 
-        drop_list.purge(
-            &self.raw,
-            &mut memory_allocator,
-            &mut descriptor_allocator,
-            &mut uniform_storage,
-        );
-
-        self.pipelines
-            .write()
-            .drain()
-            .filter_map(|((pipeline, layout), _)| {
-                (pipeline != vk::Pipeline::null()).then_some((pipeline, layout))
-            })
-            .for_each(|(pipeline, layout)| unsafe {
-                self.raw.destroy_pipeline(pipeline, None);
-                self.raw.destroy_pipeline_layout(layout, None);
-            });
-
-        self.program_storage
-            .write()
-            .drain(..)
-            .for_each(|x| x.free(&self.raw));
-
-        self.frames.iter().for_each(|x| {
-            x.lock().free(
-                &self.raw,
-                &mut memory_allocator,
-                &mut descriptor_allocator,
-                &mut uniform_storage,
-            )
+        self.frames.iter().for_each(|frame| {
+            let mut frame = frame.lock();
+            let frame = Arc::get_mut(&mut frame).unwrap();
+            frame.free(&self.raw, &mut memory_allocator)
         });
-
-        uniform_storage.free(&self.raw, &mut memory_allocator);
-        self.staging.lock().free(&self.raw, &mut memory_allocator);
-
-        if let Some(memory) = self.temp_buffer_memory.take() {
-            unsafe {
-                memory_allocator.dealloc(AshMemoryDevice::wrap(&self.raw), memory);
-                self.raw.destroy_buffer(self.temp_buffer, None);
-            }
-        }
-        if let Err(err) = save_pipeline_cache(&self.raw, &self.pdevice, self.pipeline_cache) {
-            warn!("Failed to save pipeline cache: {:?}", err);
-        }
 
         for (_, sampler) in self.samplers.drain() {
             unsafe { self.raw.destroy_sampler(sampler, None) };
         }
 
-        for (_, layout) in self.descriptor_layouts.lock().drain() {
-            layout.free(&self.raw);
-        }
-
-        self.temp_images.lock().clear();
-        self.free_temp_images.lock().clear();
-
-        self.render_pass_storage
-            .lock()
-            .drain(..)
-            .for_each(|x| x.free(&self.raw));
-
         unsafe {
-            self.raw.destroy_descriptor_pool(self.empty_ds_pool, None);
-            self.raw
-                .destroy_descriptor_set_layout(self.empty_ds_layout, None);
-            descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.raw));
             memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
-            self.raw.destroy_pipeline_cache(self.pipeline_cache, None);
             self.raw.destroy_device(None);
         }
     }

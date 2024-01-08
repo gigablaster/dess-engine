@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,10 +13,10 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    slice,
-    sync::atomic::{AtomicUsize, Ordering},
-};
+use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
 use arrayvec::ArrayVec;
 use ash::{
@@ -24,12 +24,11 @@ use ash::{
     vk::{self},
 };
 use log::info;
-use parking_lot::RwLock;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
     vulkan::{Image, ImageDesc},
-    BackendError, BackendResult, Format, ImageType, ImageUsage,
+    AsVulkan, Error, Result,
 };
 
 use super::{physical_device::PhysicalDevice, Device, Instance};
@@ -46,17 +45,17 @@ impl Surface {
         instance: &Instance,
         display_handle: RawDisplayHandle,
         window_handle: RawWindowHandle,
-    ) -> BackendResult<Self> {
+    ) -> Result<Self> {
         let surface = unsafe {
             ash_window::create_surface(
-                &instance.entry,
-                &instance.raw,
+                instance.get_entry(),
+                &instance.get(),
                 display_handle,
                 window_handle,
                 None,
             )
         }?;
-        let loader = khr::Surface::new(&instance.entry, &instance.raw);
+        let loader = khr::Surface::new(instance.get_entry(), &instance.get());
 
         Ok(Self {
             raw: surface,
@@ -71,8 +70,8 @@ impl Drop for Surface {
     }
 }
 
-pub struct Swapchain<'a> {
-    device: &'a Device,
+pub struct Swapchain {
+    device: Arc<Device>,
     raw: vk::SwapchainKHR,
     images: ArrayVec<Image, DESIRED_IMAGES_COUNT>,
     loader: khr::Swapchain,
@@ -82,7 +81,14 @@ pub struct Swapchain<'a> {
     dims: [u32; 2],
 }
 
+impl AsVulkan<vk::SwapchainKHR> for Swapchain  {
+    fn as_vk(&self) -> vk::SwapchainKHR {
+        self.raw
+    }
+}
+
 pub struct SwapchainImage<'a> {
+    pub swapchain: &'a Swapchain,
     pub image: &'a Image,
     pub image_index: u32,
     pub acquire_semaphore: vk::Semaphore,
@@ -94,26 +100,23 @@ pub enum AcquiredSurface<'a> {
     Image(SwapchainImage<'a>),
 }
 
-impl<'a> Swapchain<'a> {
-    pub fn new(
-        device: &'a Device,
-        surface: &'a Surface,
-        resolution: [u32; 2],
-    ) -> BackendResult<Self> {
+impl Swapchain {
+    pub fn new(device: &Arc<Device>, surface: &Surface, resolution: [u32; 2]) -> Result<Self> {
         info!(
             "Create swapchain for resolution {} x {}",
             resolution[0], resolution[1]
         );
         let surface_capabilities = unsafe {
-            surface
-                .loader
-                .get_physical_device_surface_capabilities(device.pdevice.raw, surface.raw)
+            surface.loader.get_physical_device_surface_capabilities(
+                device.physical_device().get(),
+                surface.raw,
+            )
         }?;
 
-        let formats = Self::enumerate_surface_formats(&device.pdevice, surface)?;
+        let formats = Self::enumerate_surface_formats(device.physical_device(), surface)?;
         let format = match Self::select_surface_format(&formats) {
             Some(format) => format,
-            None => return Err(BackendError::NotSupported),
+            None => return Err(Error::NotSupported),
         };
 
         let mut desired_image_count =
@@ -139,9 +142,10 @@ impl<'a> Swapchain<'a> {
         let present_mode_preferences = [vk::PresentModeKHR::FIFO_RELAXED, vk::PresentModeKHR::FIFO];
 
         let present_modes = unsafe {
-            surface
-                .loader
-                .get_physical_device_surface_present_modes(device.pdevice.raw, surface.raw)
+            surface.loader.get_physical_device_surface_present_modes(
+                device.physical_device().get(),
+                surface.raw,
+            )
         }?;
 
         info!("Swapchain format: {:?}", format.format);
@@ -177,28 +181,29 @@ impl<'a> Swapchain<'a> {
             .image_array_layers(1)
             .build();
 
-        let loader = khr::Swapchain::new(&device.instance.raw, &device.raw);
+        let loader = khr::Swapchain::new(&device.instance().get(), &device.get());
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?;
         let images = images
             .iter()
-            .map(|image| Image {
-                raw: *image,
-                desc: ImageDesc {
-                    ty: ImageType::Type2D,
-                    usage: ImageUsage::ColorTarget,
-                    format: Format::BGRA8_UNORM,
-                    dims: [surface_resolution.width, surface_resolution.height],
-                    tiling: vk::ImageTiling::OPTIMAL,
-                    mip_levels: 1,
-                    array_elements: 1,
-                },
-                memory: None,
-                views: RwLock::default(),
+            .map(|image| {
+                Image::internal(
+                    device,
+                    *image,
+                    ImageDesc {
+                        ty: vk::ImageType::TYPE_2D,
+                        usage: vk::ImageUsageFlags::COLOR_ATTACHMENT,
+                        format: vk::Format::B8G8R8A8_UNORM,
+                        dims: [surface_resolution.width, surface_resolution.height],
+                        tiling: vk::ImageTiling::OPTIMAL,
+                        mip_levels: 1,
+                        array_elements: 1,
+                    },
+                )
             })
             .enumerate()
             .map(|(index, image)| {
-                device.set_object_name(image.raw, &format!("Swapchain {index}"));
+                device.set_object_name(image.as_vk(), &format!("Swapchain {index}"));
                 image
             })
             .collect();
@@ -208,12 +213,12 @@ impl<'a> Swapchain<'a> {
         for index in 0..desired_image_count {
             let acquire_semaphore = unsafe {
                 device
-                    .raw
+                    .get()
                     .create_semaphore(&vk::SemaphoreCreateInfo::builder(), None)
             }?;
             let rendering_finished_semaphore = unsafe {
                 device
-                    .raw
+                    .get()
                     .create_semaphore(&vk::SemaphoreCreateInfo::builder(), None)
             }?;
             device.set_object_name(acquire_semaphore, &format!("Acquire {index}"));
@@ -222,7 +227,7 @@ impl<'a> Swapchain<'a> {
             rendering_finished_semaphores.push(rendering_finished_semaphore);
         }
         Ok(Self {
-            device,
+            device: device.clone(),
             raw: swapchain,
             images,
             acquire_semaphores,
@@ -233,7 +238,7 @@ impl<'a> Swapchain<'a> {
         })
     }
 
-    pub(crate) fn acquire_next_image(&self) -> BackendResult<AcquiredSurface> {
+    pub fn acquire_next_image(&self) -> Result<AcquiredSurface> {
         puffin::profile_function!();
         let current_semaphore = self.next_semaphore.load(Ordering::Acquire);
         let acquire_semaphore = self.acquire_semaphores[current_semaphore];
@@ -247,7 +252,7 @@ impl<'a> Swapchain<'a> {
             Err(vk::Result::SUBOPTIMAL_KHR | vk::Result::ERROR_OUT_OF_DATE_KHR) => {
                 return Ok(AcquiredSurface::NeedRecreate)
             }
-            Err(err) => return Err(BackendError::from(err)),
+            Err(err) => return Err(Error::from(err)),
         };
 
         assert_eq!(present_index as usize, current_semaphore);
@@ -265,6 +270,7 @@ impl<'a> Swapchain<'a> {
             current_semaphore
         );
         Ok(AcquiredSurface::Image(SwapchainImage {
+            swapchain: self,
             image: &self.images[present_index as usize],
             image_index: present_index,
             acquire_semaphore,
@@ -272,34 +278,24 @@ impl<'a> Swapchain<'a> {
         }))
     }
 
-    pub(crate) fn present_image(&self, image: SwapchainImage, queue: vk::Queue) {
-        puffin::profile_scope!("present");
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(slice::from_ref(&image.rendering_finished))
-            .swapchains(slice::from_ref(&self.raw))
-            .image_indices(slice::from_ref(&image.image_index))
-            .build();
-
-        match unsafe { self.loader.queue_present(queue, &present_info) } {
-            Ok(_) => (),
-            Err(vk::Result::ERROR_OUT_OF_DATE_KHR) | Err(vk::Result::SUBOPTIMAL_KHR) => {}
-            Err(err) => panic!("Can't present image: {}", err),
-        }
-    }
-
     fn enumerate_surface_formats(
         pdevice: &PhysicalDevice,
         surface: &Surface,
-    ) -> BackendResult<Vec<vk::SurfaceFormatKHR>> {
+    ) -> Result<Vec<vk::SurfaceFormatKHR>> {
         Ok(unsafe {
             surface
                 .loader
-                .get_physical_device_surface_formats(pdevice.raw, surface.raw)
+                .get_physical_device_surface_formats(pdevice.get(), surface.raw)
         }?)
     }
 
     fn select_surface_format(formats: &[vk::SurfaceFormatKHR]) -> Option<vk::SurfaceFormatKHR> {
-        let prefered = [vk::SurfaceFormatKHR {
+        let prefered = [
+            vk::SurfaceFormatKHR {
+                format: vk::Format::A2B10G10R10_UNORM_PACK32,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+            vk::SurfaceFormatKHR {
             format: vk::Format::B8G8R8A8_UNORM,
             color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
         }];
@@ -311,23 +307,23 @@ impl<'a> Swapchain<'a> {
         self.dims
     }
 
-    fn free(&mut self, device: &ash::Device) {
-        unsafe { device.device_wait_idle().unwrap() }
-        unsafe { self.loader.destroy_swapchain(self.raw, None) };
-        for semaphore in &self.acquire_semaphores {
-            unsafe { device.destroy_semaphore(*semaphore, None) }
-        }
-        for semaphore in &mut self.rendering_finished_semaphores {
-            unsafe { device.destroy_semaphore(*semaphore, None) }
-        }
-        for image in self.images.iter() {
-            image.clear_views(device);
-        }
+    pub fn loader(&self) -> &khr::Swapchain {
+        &self.loader
     }
 }
 
-impl<'a> Drop for Swapchain<'a> {
+impl Drop for Swapchain {
     fn drop(&mut self) {
-        self.free(&self.device.raw);
+        unsafe { self.device.get().device_wait_idle().unwrap() }
+        unsafe { self.loader.destroy_swapchain(self.raw, None) };
+        for semaphore in &self.acquire_semaphores {
+            unsafe { self.device.get().destroy_semaphore(*semaphore, None) }
+        }
+        for semaphore in &mut self.rendering_finished_semaphores {
+            unsafe { self.device.get().destroy_semaphore(*semaphore, None) }
+        }
+        for image in self.images.iter() {
+            image.drop_views();
+        }
     }
 }

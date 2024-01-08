@@ -29,7 +29,7 @@ use std::{
 
 // pub use asset_cache::*;
 use dess_assets::{get_cached_asset_path, Asset, AssetLoad, AssetRef};
-use dess_backend::BackendError;
+use dess_backend::Error;
 use log::debug;
 pub use material::*;
 use memmap2::Mmap;
@@ -42,7 +42,7 @@ pub use resource_manager::*;
 pub enum Error {
     Io(Arc<io::Error>),
     ParseError(String),
-    BackendError(BackendError),
+    BackendError(Error),
     InvalidHandle,
     ImportFailed(String),
     LoadingFailed,
@@ -54,8 +54,8 @@ impl From<io::Error> for Error {
     }
 }
 
-impl From<BackendError> for Error {
-    fn from(value: BackendError) -> Self {
+impl From<Error> for Error {
+    fn from(value: Error) -> Self {
         Self::BackendError(value)
     }
 }

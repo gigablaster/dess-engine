@@ -1,4 +1,4 @@
-// Copyright (C) 2023 gigablaster
+// Copyright (C) 2023-2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -13,43 +13,39 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+use std::{ptr::NonNull, sync::Arc};
+
 use ash::vk::{self};
-use bitflags::bitflags;
-use parking_lot::Mutex;
+use gpu_alloc_ash::AshMemoryDevice;
 
-use crate::{BackendError, BackendResult};
+use crate::{Error, Result};
 
-use super::{
-    AsVulkan, BufferHandle, BufferSlice, Device, DropList, GpuAllocator, GpuMemory, ImageHandle,
-    Instance, ToDrop,
-};
+use super::{AsVulkan, Device, GpuMemory};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferDesc {
     pub size: usize,
-    pub ty: BufferUsage,
+    pub ty: vk::BufferUsageFlags,
+}
+
+impl BufferDesc {
+    pub fn new(ty: vk::BufferUsageFlags, size: usize) -> Self {
+        Self { ty, size }
+    }
 }
 
 #[derive(Debug)]
 pub struct Buffer {
-    pub(crate) raw: vk::Buffer,
-    pub desc: BufferDesc,
-    pub(crate) memory: Option<GpuMemory>,
-}
-
-impl ToDrop for Buffer {
-    fn to_drop(&mut self, drop_list: &mut DropList) {
-        if let Some(memory) = self.memory.take() {
-            drop_list.free_memory(memory);
-            drop_list.drop_buffer(self.raw);
-        }
-    }
+    device: Arc<Device>,
+    raw: vk::Buffer,
+    desc: BufferDesc,
+    memory: Option<GpuMemory>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferCreateDesc<'a> {
     pub size: usize,
-    pub ty: BufferUsage,
+    pub ty: vk::BufferUsageFlags,
     pub alignment: Option<u64>,
     pub dedicated: bool,
     pub name: Option<&'a str>,
@@ -57,10 +53,10 @@ pub struct BufferCreateDesc<'a> {
 }
 
 impl<'a> BufferCreateDesc<'a> {
-    pub fn gpu(size: usize, ty: BufferUsage) -> Self {
+    pub fn gpu(size: usize) -> Self {
         Self {
             size,
-            ty,
+            ty: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
             dedicated: false,
@@ -68,10 +64,10 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn host(size: usize, ty: BufferUsage) -> Self {
+    pub fn host(size: usize) -> Self {
         Self {
             size,
-            ty,
+            ty: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS,
             alignment: None,
             dedicated: false,
@@ -79,10 +75,10 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn upload(size: usize, ty: BufferUsage) -> Self {
+    pub fn upload(size: usize) -> Self {
         Self {
             size,
-            ty,
+            ty: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::UPLOAD,
             alignment: None,
             dedicated: false,
@@ -90,16 +86,41 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn shared(size: usize, ty: BufferUsage) -> Self {
+    pub fn shared(size: usize, ty: vk::BufferUsageFlags) -> Self {
         Self {
             size,
-            ty,
+            ty: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
                 | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
             dedicated: true,
             name: None,
         }
+    }
+
+    pub fn source(mut self) -> Self {
+        self.ty |= vk::BufferUsageFlags::TRANSFER_SRC;
+        self
+    }
+
+    pub fn destinaton(mut self) -> Self {
+        self.ty |= vk::BufferUsageFlags::TRANSFER_DST;
+        self
+    }
+
+    pub fn vertex(mut self) -> Self {
+        self.ty |= vk::BufferUsageFlags::VERTEX_BUFFER;
+        self
+    }
+
+    pub fn index(mut self) -> Self {
+        self.ty |= vk::BufferUsageFlags::INDEX_BUFFER;
+        self
+    }
+
+    pub fn storage(mut self) -> Self {
+        self.ty |= vk::BufferUsageFlags::STORAGE_BUFFER;
+        self
     }
 
     pub fn aligment(mut self, aligment: u64) -> Self {
@@ -119,7 +140,7 @@ impl<'a> BufferCreateDesc<'a> {
 
     fn build(&self) -> vk::BufferCreateInfo {
         vk::BufferCreateInfo::builder()
-            .usage(self.ty.into())
+            .usage(self.ty)
             .size(self.size as _)
             .build()
     }
@@ -131,60 +152,21 @@ impl AsVulkan<vk::Buffer> for Buffer {
     }
 }
 
-impl Device {
-    pub fn create_buffer(&self, desc: BufferCreateDesc) -> BackendResult<BufferHandle> {
-        let buffer =
-            Self::create_buffer_impl(&self.instance, &self.raw, &self.memory_allocator, desc)?;
-        Ok(self.buffer_storage.write().push(buffer.raw, buffer))
-    }
-
-    pub fn destroy_buffer(&self, handle: BufferHandle) {
-        self.destroy_resource(handle, &self.buffer_storage);
-    }
-
-    pub fn destroy_image(&self, handle: ImageHandle) {
-        self.destroy_resource(handle, &self.image_storage);
-    }
-
-    pub fn upload_buffer<T: Sized>(&self, target: BufferSlice, data: &[T]) -> BackendResult<()> {
-        let buffers = self.buffer_storage.read();
-        let buffer = buffers
-            .get_cold(target.handle)
-            .ok_or(BackendError::InvalidHandle)?;
-        self.staging
-            .lock()
-            .upload_buffer(self, buffer, target.offset as _, data)
-    }
-
-    pub fn get_buffer_desc(&self, handle: BufferHandle) -> BackendResult<BufferDesc> {
-        Ok(self
-            .buffer_storage
-            .read()
-            .get_cold(handle)
-            .ok_or(BackendError::InvalidHandle)?
-            .desc)
-    }
-
-    fn create_buffer_impl(
-        instance: &Instance,
-        device: &ash::Device,
-        allocator: &Mutex<GpuAllocator>,
-        desc: BufferCreateDesc,
-    ) -> BackendResult<Buffer> {
-        let buffer = unsafe { device.create_buffer(&desc.build(), None) }?;
-        let requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
-        let memory = Self::allocate_impl(
-            device,
-            &mut allocator.lock(),
-            requirements,
-            desc.memory_location,
-            desc.dedicated,
-        )?;
-        unsafe { device.bind_buffer_memory(buffer, *memory.memory(), memory.offset()) }?;
+impl Buffer {
+    pub fn new(device: &Arc<Device>, desc: BufferCreateDesc) -> Result<Self> {
+        let buffer = unsafe { device.get().create_buffer(&desc.build(), None) }?;
+        let requirements = unsafe { device.get().get_buffer_memory_requirements(buffer) };
+        let memory = device.allocate(requirements, desc.memory_location, desc.dedicated)?;
+        unsafe {
+            device
+                .get()
+                .bind_buffer_memory(buffer, *memory.memory(), memory.offset())
+        }?;
         if let Some(name) = desc.name {
-            Self::set_object_name_impl(instance, device, buffer, name);
+            device.set_object_name(buffer, name);
         }
-        Ok(Buffer {
+        Ok(Self {
+            device: device.clone(),
             raw: buffer,
             desc: BufferDesc {
                 size: desc.size,
@@ -193,42 +175,27 @@ impl Device {
             memory: Some(memory),
         })
     }
-}
 
-bitflags! {
-    #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
-    pub struct BufferUsage: u32 {
-        const Vertex = 1;
-        const Index = 2;
-        const Uniform = 4;
-        const Storage = 8;
-        const Destination = 16;
-        const Source = 32;
+    pub fn desc(&self) -> &BufferDesc {
+        &self.desc
+    }
+
+    pub fn map(&mut self) -> Result<NonNull<u8>> {
+        if let Some(memory) = &mut self.memory {
+            Ok(unsafe { memory.map(AshMemoryDevice::wrap(self.device.get()), 0, self.desc.size) }?)
+        } else {
+            Err(Error::NotAllocated)
+        }
     }
 }
 
-impl From<BufferUsage> for vk::BufferUsageFlags {
-    fn from(value: BufferUsage) -> Self {
-        let mut result = vk::BufferUsageFlags::empty();
-        if value.contains(BufferUsage::Vertex) {
-            result |= vk::BufferUsageFlags::VERTEX_BUFFER;
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        if let Some(memory) = self.memory.take() {
+            self.device.with_drop_list(|drop_list| {
+                drop_list.drop_memory(memory);
+                drop_list.drop_buffer(self.raw);
+            })
         }
-        if value.contains(BufferUsage::Index) {
-            result |= vk::BufferUsageFlags::INDEX_BUFFER;
-        }
-        if value.contains(BufferUsage::Storage) {
-            result |= vk::BufferUsageFlags::STORAGE_BUFFER;
-        }
-        if value.contains(BufferUsage::Uniform) {
-            result |= vk::BufferUsageFlags::UNIFORM_BUFFER;
-        }
-        if value.contains(BufferUsage::Destination) {
-            result |= vk::BufferUsageFlags::TRANSFER_DST;
-        }
-        if value.contains(BufferUsage::Source) {
-            result |= vk::BufferUsageFlags::TRANSFER_SRC;
-        }
-
-        result
     }
 }

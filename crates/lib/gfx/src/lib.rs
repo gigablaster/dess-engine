@@ -1,4 +1,4 @@
-// Copyright (C) 2023-2024 gigablaster
+// Copyright (C) 2024 gigablaster
 
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -12,14 +12,3 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-
-// mod draw_stream;
-mod error;
-mod staging;
-mod vulkan;
-
-pub use error::*;
-pub use staging::*;
-pub use vulkan::*;
-
-pub type Result<T> = std::result::Result<T, Error>;
