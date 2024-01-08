@@ -160,7 +160,6 @@ pub struct Device {
     pub(crate) render_pass_storage: Mutex<RenderPassStorage>,
     pub(crate) pipeline_cache: vk::PipelineCache,
     pub(crate) universal_queue_family_index: u32,
-    pub(crate) transfer_queue_family_index: u32,
     current_cpu_frame: AtomicUsize,
     pub(crate) temp_buffer: vk::Buffer,
     temp_buffer_memory: Option<GpuMemory>,
@@ -359,8 +358,8 @@ impl Device {
             memory_allocator: Mutex::new(memory_allocator),
             descriptor_allocator: Mutex::new(descriptor_allocator),
             uniform_storage: Mutex::new(uniform_storage),
-            universal_queue: universal_queue,
-            transfer_queue: transfer_queue,
+            universal_queue,
+            transfer_queue,
             frames,
             image_storage: RwLock::default(),
             buffer_storage: RwLock::new(buffer_storage),
@@ -383,9 +382,6 @@ impl Device {
             temp_images: Mutex::default(),
             free_temp_images: Mutex::default(),
             render_pass_storage: Mutex::default(),
-            transfer_queue_family_index: transfer_queue_family
-                .unwrap_or(universal_queue_family)
-                .index,
         }))
     }
 
@@ -586,7 +582,7 @@ impl Device {
         self.submit(*self.transfer_queue.lock(), cb, wait, triggers)
     }
 
-    pub fn submit(
+    fn submit(
         &self,
         queue: vk::Queue,
         cb: &CommandBuffer,
@@ -598,7 +594,7 @@ impl Device {
         let wait_stages = wait.iter().map(|x| x.1).collect::<ArrayVec<_, 8>>();
         let info = vk::SubmitInfo::builder()
             .command_buffers(slice::from_ref(&cb.raw))
-            .signal_semaphores(&triggers)
+            .signal_semaphores(triggers)
             .wait_semaphores(&wait_semaphores)
             .wait_dst_stage_mask(&wait_stages)
             .build();
