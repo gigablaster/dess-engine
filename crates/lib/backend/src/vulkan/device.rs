@@ -436,6 +436,19 @@ impl Device {
         result
     }
 
+    pub fn purge_temporary_data(&self) {
+        {
+            info!("Clear backbuffer-dependent data");
+            let mut free_images = self.temp_images.lock();
+            let mut images = self.image_storage.write();
+            free_images.drain(..).for_each(|(_, handle)| {
+                let (_, mut image) = images.remove(handle).unwrap();
+                image.free(self);
+            });
+        }
+        self.free_temp_images.lock().clear();
+    }
+
     pub fn frame<F: FnOnce(&FrameContext) -> BackendResult<()>>(
         &self,
         swapchain: &Swapchain,
@@ -472,15 +485,7 @@ impl Device {
             .replace(mem::take(&mut self.current_drop_list.lock()));
 
         let backbuffer = match swapchain.acquire_next_image()? {
-            crate::vulkan::AcquiredSurface::NeedRecreate => {
-                self.temp_images.lock().clear();
-                self.free_temp_images.lock().clear();
-                self.image_storage
-                    .write()
-                    .iter()
-                    .for_each(|(_, image)| image.clear_views(&self.raw));
-                return Ok(FrameResult::NeedRecreate);
-            }
+            crate::vulkan::AcquiredSurface::NeedRecreate => return Ok(FrameResult::NeedRecreate),
             crate::vulkan::AcquiredSurface::Image(image) => image,
         };
         let context = FrameContext {

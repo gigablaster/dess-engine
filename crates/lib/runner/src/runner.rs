@@ -106,6 +106,7 @@ impl<T: Client> Runner<T> {
                                 return;
                             }
                             if swapchain.is_none() {
+                                device.purge_temporary_data();
                                 let resolution =
                                     [window.inner_size().width, window.inner_size().height];
                                 swapchain =
@@ -116,7 +117,9 @@ impl<T: Client> Runner<T> {
                                 if let FrameResult::NeedRecreate = device
                                     .frame(current_swapchain, |context| self.client.render(context))
                                     .unwrap()
-                                {}
+                                {
+                                    swapchain = None;
+                                }
                             }
                         }
                         WindowEvent::Resized(new_size) => {
