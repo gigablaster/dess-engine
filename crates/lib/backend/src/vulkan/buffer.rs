@@ -15,7 +15,7 @@
 
 use std::{ptr::NonNull, sync::Arc};
 
-use ash::vk::{self};
+use ash::vk::{self, BufferDeviceAddressInfo};
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{Error, Result};
@@ -185,6 +185,20 @@ impl Buffer {
             Ok(unsafe { memory.map(AshMemoryDevice::wrap(self.device.get()), 0, self.desc.size) }?)
         } else {
             Err(Error::NotAllocated)
+        }
+    }
+
+    pub fn unmap(&mut self) {
+        if let Some(memory) = &mut self.memory {
+            unsafe { memory.unmap(AshMemoryDevice::wrap(self.device.get())) };
+        }
+    }
+
+    pub fn device_address(&self) -> u64 {
+        unsafe {
+            self.device
+                .get()
+                .get_buffer_device_address(&BufferDeviceAddressInfo::builder().buffer(self.raw))
         }
     }
 }
