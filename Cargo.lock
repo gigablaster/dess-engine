@@ -696,6 +696,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "dess-common",
+ "glam 0.25.0",
  "gpu-alloc",
  "gpu-alloc-ash",
  "log",

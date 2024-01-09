@@ -45,10 +45,10 @@ pub struct DescriptorBindingDesc<'a> {
     pub name: &'a str,
 }
 
-#[derive(Debug, Default, Hash, Clone, Copy, PartialEq, Eq)]
-pub struct BindGroupLayoutDesc {
+#[derive(Debug)]
+pub struct BindGroupLayoutDesc<'a> {
     pub stage: vk::ShaderStageFlags,
-    pub set: &'static [DescriptorBindingDesc<'static>],
+    pub set: Vec<DescriptorBindingDesc<'a>>,
 }
 
 impl DescriptorSetLayout {
@@ -233,19 +233,13 @@ impl Shader {
     }
 }
 
-pub const MAX_SHADERS: usize = 3;
-
-pub const EMPTY_BIND_LAYOUT: BindGroupLayoutDesc = BindGroupLayoutDesc {
-    stage: vk::ShaderStageFlags::empty(),
-    set: &[],
-};
 /// Shader program similar to what we had in OpenGL.
 ///
 /// Contains shader modules and layouts needed to create PSOs and descriptor sets.
 #[derive(Debug)]
 pub struct Program {
     device: Arc<Device>,
-    shaders: ArrayVec<Shader, MAX_SHADERS>,
+    shaders: Vec<Shader>,
     sets: ArrayVec<DescriptorSetLayout, MAX_DESCRIPTOR_SETS>,
     layout: vk::PipelineLayout,
 }
@@ -260,7 +254,7 @@ impl Program {
         let shaders = shaders
             .iter()
             .map(|desc| Shader::new(device, desc).unwrap())
-            .collect::<ArrayVec<_, MAX_SHADERS>>();
+            .collect();
 
         Ok(Self {
             device: device.clone(),

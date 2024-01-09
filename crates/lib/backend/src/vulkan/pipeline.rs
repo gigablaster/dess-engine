@@ -17,19 +17,19 @@ use std::{
     ffi::CString,
     fs::File,
     io::{self},
+    mem,
     path::Path,
     slice,
     sync::Arc,
 };
 
-use arrayvec::ArrayVec;
 use ash::vk::{self};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use uuid::Uuid;
 
-use crate::{AsVulkan, DescriptorSetLayout, Program, Result};
+use crate::{AsVulkan, Program, RenderPass, Result};
 
-use super::{Device, PhysicalDevice, Shader, MAX_SHADERS};
+use super::{Device, PhysicalDevice};
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct PipelineBlendDesc {
@@ -44,10 +44,128 @@ impl PipelineBlendDesc {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct InputVertexStreamDesc<'a> {
-    pub attributes: &'a [vk::VertexInputAttributeDescription],
-    pub stride: usize,
+#[derive(Default, Debug)]
+pub struct InputVertexStreamDesc {
+    attributes: Vec<(vk::Format, usize, usize)>,
+}
+
+pub trait VertexAttribute: Sized + Copy {
+    fn vk_format() -> vk::Format;
+}
+
+impl VertexAttribute for glam::Vec2 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32_SFLOAT
+    }
+}
+
+impl VertexAttribute for glam::Vec3 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32B32_SFLOAT
+    }
+}
+
+impl VertexAttribute for glam::Vec4 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32B32A32_SFLOAT
+    }
+}
+
+impl VertexAttribute for glam::UVec2 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32_UINT
+    }
+}
+
+impl VertexAttribute for glam::UVec3 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32B32_UINT
+    }
+}
+
+impl VertexAttribute for glam::UVec4 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32B32A32_UINT
+    }
+}
+
+impl VertexAttribute for glam::IVec2 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32_SINT
+    }
+}
+
+impl VertexAttribute for glam::IVec3 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32B32_SINT
+    }
+}
+
+impl VertexAttribute for glam::IVec4 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R32G32B32A32_SINT
+    }
+}
+
+impl VertexAttribute for glam::U16Vec2 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R16G16_UINT
+    }
+}
+
+impl VertexAttribute for glam::U16Vec3 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R16G16B16_UINT
+    }
+}
+
+impl VertexAttribute for glam::U16Vec4 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R16G16B16A16_UINT
+    }
+}
+
+impl VertexAttribute for glam::I16Vec2 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R16G16_SINT
+    }
+}
+
+impl VertexAttribute for glam::I16Vec3 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R16G16B16_SINT
+    }
+}
+
+impl VertexAttribute for glam::I16Vec4 {
+    fn vk_format() -> vk::Format {
+        vk::Format::R16G16B16A16_SINT
+    }
+}
+
+impl InputVertexStreamDesc {
+    pub fn attrubute<T: VertexAttribute>(mut self, offset: usize) -> Self {
+        self.attributes
+            .push((T::vk_format(), offset, mem::size_of::<T>()));
+        self
+    }
+
+    fn build(&self, binding: usize) -> (usize, Vec<vk::VertexInputAttributeDescription>) {
+        let stride = self.attributes.iter().map(|x| x.1 + x.2).max().unwrap();
+        let attributes = self
+            .attributes
+            .iter()
+            .enumerate()
+            .map(|(index, attr)| vk::VertexInputAttributeDescription {
+                location: index as u32,
+                binding: binding as u32,
+                format: attr.0,
+                offset: attr.1 as u32,
+            })
+            .collect();
+
+        (stride, attributes)
+    }
 }
 
 /// Data to create pipeline.
@@ -56,11 +174,9 @@ pub struct InputVertexStreamDesc<'a> {
 #[derive(Debug)]
 pub struct RasterPipelineCreateDesc {
     /// Associated program
-    shaders: ArrayVec<Shader, MAX_SHADERS>,
-    /// Pipeline layout from program
-    pipeline_layout: vk::PipelineLayout,
+    pub program: Arc<Program>,
     /// Render pass
-    pub render_pass: vk::RenderPass,
+    pub render_pass: Arc<RenderPass>,
     /// Subpass in said render pass
     pub subpass: usize,
     /// Blend data, None if opaque. Order: color, alpha
@@ -72,22 +188,22 @@ pub struct RasterPipelineCreateDesc {
     /// Depth writing
     pub depth_write: bool,
     /// Vertex streams layout
-    pub streams: &'static [InputVertexStreamDesc<'static>],
+    pub streams: Vec<(usize, Vec<vk::VertexInputAttributeDescription>)>,
 }
 
 impl RasterPipelineCreateDesc {
-    pub fn new(
-        program: &Program,
-        render_pass: impl AsVulkan<vk::RenderPass>,
-        streams: &'static [InputVertexStreamDesc],
+    pub fn new<I: Iterator<Item = InputVertexStreamDesc>>(
+        program: &Arc<Program>,
+        render_pass: &Arc<RenderPass>,
+        streams: I,
     ) -> Self {
+        let streams = streams
+            .enumerate()
+            .map(|(binding, attributes)| attributes.build(binding))
+            .collect();
         Self {
-            shaders: program
-                .shaders()
-                .cloned()
-                .collect::<ArrayVec<_, MAX_SHADERS>>(),
-            render_pass: render_pass.as_vk(),
-            pipeline_layout: program.pipeline_layout(),
+            program: program.clone(),
+            render_pass: render_pass.clone(),
             subpass: 0,
             blend: None,
             cull: None,
@@ -175,151 +291,143 @@ impl RasterPipelineCreateDesc {
     }
 }
 
-pub struct RasterPipeline {
-    device: Arc<Device>,
-    pipeline: vk::Pipeline,
-    pipeline_layout: vk::PipelineLayout,
-}
-
-impl RasterPipeline {
-    pub fn new(
-        device: &Arc<Device>,
-        program: &Program,
-        desc: RasterPipelineCreateDesc,
-    ) -> Result<Self> {
-        let shader_create_info = program
-            .shaders()
-            .map(|shader| {
-                vk::PipelineShaderStageCreateInfo::builder()
-                    .stage(shader.stage)
-                    .module(shader.raw)
-                    .name(&CString::new(shader.entry.as_str()).unwrap())
-                    .build()
-            })
-            .collect::<Vec<_>>();
-
-        let assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
-            .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
-            .primitive_restart_enable(false)
-            .build();
-
-        let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
-        let dynamic_state_create_info = vk::PipelineDynamicStateCreateInfo::builder()
-            .dynamic_states(&dynamic_states)
-            .build();
-
-        let strides = desc.streams.iter().map(|x| x.stride).collect::<Vec<_>>();
-        let attributes = desc
-            .streams
-            .iter()
-            .flat_map(|x| x.attributes)
-            .copied()
-            .map(|x| x.into())
-            .collect::<Vec<vk::VertexInputAttributeDescription>>();
-        let vertex_binding_desc = strides
-            .iter()
-            .enumerate()
-            .map(|(index, _)| {
-                vk::VertexInputBindingDescription::builder()
-                    .stride(strides[index] as _)
-                    .binding(attributes[index].binding)
-                    .input_rate(vk::VertexInputRate::VERTEX)
-                    .build()
-            })
-            .collect::<Vec<_>>();
-
-        let vertex_input = vk::PipelineVertexInputStateCreateInfo::builder()
-            .vertex_binding_descriptions(&vertex_binding_desc)
-            .vertex_attribute_descriptions(&attributes)
-            .build();
-
-        let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
-            .viewports(slice::from_ref(&vk::Viewport::default()))
-            .scissors(slice::from_ref(&vk::Rect2D::default()))
-            .build();
-
-        let rasterizer_state = vk::PipelineRasterizationStateCreateInfo::builder()
-            .depth_bias_enable(false)
-            .rasterizer_discard_enable(false)
-            .polygon_mode(vk::PolygonMode::FILL)
-            .line_width(1.0)
-            .depth_bias_clamp(0.0)
-            .depth_bias_slope_factor(0.0)
-            .cull_mode(
-                desc.cull
-                    .map(|x| x.into())
-                    .unwrap_or(vk::CullModeFlags::NONE),
-            )
-            .front_face(vk::FrontFace::CLOCKWISE);
-
-        let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
-            .sample_shading_enable(false)
-            .rasterization_samples(vk::SampleCountFlags::TYPE_1)
-            .min_sample_shading(1.0)
-            .alpha_to_coverage_enable(false)
-            .alpha_to_one_enable(false)
-            .build();
-
-        let mut depthstencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
-            .stencil_test_enable(false)
-            .depth_write_enable(desc.depth_write);
-
-        if let Some(depth_compare) = desc.depth_test {
-            depthstencil_state = depthstencil_state
-                .depth_test_enable(true)
-                .depth_compare_op(depth_compare.into());
-        }
-
-        let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
-            .color_write_mask(vk::ColorComponentFlags::RGBA);
-
-        let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
-            color_blend_attachment
-                .blend_enable(true)
-                .src_color_blend_factor(color.src)
-                .dst_color_blend_factor(color.dst)
-                .color_blend_op(color.op)
-                .src_alpha_blend_factor(alpha.src)
-                .dst_alpha_blend_factor(alpha.dst)
-                .alpha_blend_op(alpha.op)
-        } else {
-            color_blend_attachment.blend_enable(false)
-        }
-        .build();
-        let blending_state = vk::PipelineColorBlendStateCreateInfo::builder()
-            .attachments(slice::from_ref(&color_blend_attachment))
-            .logic_op_enable(false)
-            .build();
-
-        let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-            .layout(program.pipeline_layout())
-            .render_pass(desc.render_pass)
-            .subpass(desc.subpass as _)
-            .stages(&shader_create_info)
-            .dynamic_state(&dynamic_state_create_info)
-            .viewport_state(&viewport_state)
-            .multisample_state(&multisample_state)
-            .color_blend_state(&blending_state)
-            .vertex_input_state(&vertex_input)
-            .input_assembly_state(&assembly_state_create_info)
-            .rasterization_state(&rasterizer_state)
-            .depth_stencil_state(&depthstencil_state)
-            .build();
-
-        let pipeline = unsafe {
-            device.get().create_graphics_pipelines(
-                vk::PipelineCache::null(),
-                slice::from_ref(&pipeline_create_info),
-                None,
-            )
-        }?[0];
-
-        Ok(Self {
-            device: device.clone(),
-            pipeline,
-            pipeline_layout: program.pipeline_layout(),
+pub fn compile_raster_pipeline(
+    device: &Arc<Device>,
+    desc: RasterPipelineCreateDesc,
+) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
+    let shader_create_info = desc
+        .program
+        .shaders()
+        .map(|shader| {
+            vk::PipelineShaderStageCreateInfo::builder()
+                .stage(shader.stage)
+                .module(shader.raw)
+                .name(&CString::new(shader.entry.as_str()).unwrap())
+                .build()
         })
+        .collect::<Vec<_>>();
+
+    let assembly_state_create_info = vk::PipelineInputAssemblyStateCreateInfo::builder()
+        .topology(vk::PrimitiveTopology::TRIANGLE_LIST)
+        .primitive_restart_enable(false)
+        .build();
+
+    let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+    let dynamic_state_create_info = vk::PipelineDynamicStateCreateInfo::builder()
+        .dynamic_states(&dynamic_states)
+        .build();
+
+    let strides = desc
+        .streams
+        .iter()
+        .map(|(stride, _)| stride)
+        .copied()
+        .collect::<Vec<_>>();
+    let attributes = desc
+        .streams
+        .iter()
+        .flat_map(|(_, attributes)| attributes)
+        .copied()
+        .collect::<Vec<_>>();
+    let vertex_binding_desc = strides
+        .iter()
+        .enumerate()
+        .map(|(index, _)| {
+            vk::VertexInputBindingDescription::builder()
+                .stride(strides[index] as _)
+                .binding(attributes[index].binding)
+                .input_rate(vk::VertexInputRate::VERTEX)
+                .build()
+        })
+        .collect::<Vec<_>>();
+
+    let vertex_input = vk::PipelineVertexInputStateCreateInfo::builder()
+        .vertex_binding_descriptions(&vertex_binding_desc)
+        .vertex_attribute_descriptions(&attributes)
+        .build();
+
+    let viewport_state = vk::PipelineViewportStateCreateInfo::builder()
+        .viewports(slice::from_ref(&vk::Viewport::default()))
+        .scissors(slice::from_ref(&vk::Rect2D::default()))
+        .build();
+
+    let rasterizer_state = vk::PipelineRasterizationStateCreateInfo::builder()
+        .depth_bias_enable(false)
+        .rasterizer_discard_enable(false)
+        .polygon_mode(vk::PolygonMode::FILL)
+        .line_width(1.0)
+        .depth_bias_clamp(0.0)
+        .depth_bias_slope_factor(0.0)
+        .cull_mode(
+            desc.cull
+                .map(|x| x.into())
+                .unwrap_or(vk::CullModeFlags::NONE),
+        )
+        .front_face(vk::FrontFace::CLOCKWISE);
+
+    let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
+        .sample_shading_enable(false)
+        .rasterization_samples(vk::SampleCountFlags::TYPE_1)
+        .min_sample_shading(1.0)
+        .alpha_to_coverage_enable(false)
+        .alpha_to_one_enable(false)
+        .build();
+
+    let mut depthstencil_state = vk::PipelineDepthStencilStateCreateInfo::builder()
+        .stencil_test_enable(false)
+        .depth_write_enable(desc.depth_write);
+
+    if let Some(depth_compare) = desc.depth_test {
+        depthstencil_state = depthstencil_state
+            .depth_test_enable(true)
+            .depth_compare_op(depth_compare.into());
     }
+
+    let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
+        .color_write_mask(vk::ColorComponentFlags::RGBA);
+
+    let color_blend_attachment = if let Some((color, alpha)) = desc.blend {
+        color_blend_attachment
+            .blend_enable(true)
+            .src_color_blend_factor(color.src)
+            .dst_color_blend_factor(color.dst)
+            .color_blend_op(color.op)
+            .src_alpha_blend_factor(alpha.src)
+            .dst_alpha_blend_factor(alpha.dst)
+            .alpha_blend_op(alpha.op)
+    } else {
+        color_blend_attachment.blend_enable(false)
+    }
+    .build();
+    let blending_state = vk::PipelineColorBlendStateCreateInfo::builder()
+        .attachments(slice::from_ref(&color_blend_attachment))
+        .logic_op_enable(false)
+        .build();
+
+    let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
+        .layout(desc.program.pipeline_layout())
+        .render_pass(desc.render_pass.as_vk())
+        .subpass(desc.subpass as _)
+        .stages(&shader_create_info)
+        .dynamic_state(&dynamic_state_create_info)
+        .viewport_state(&viewport_state)
+        .multisample_state(&multisample_state)
+        .color_blend_state(&blending_state)
+        .vertex_input_state(&vertex_input)
+        .input_assembly_state(&assembly_state_create_info)
+        .rasterization_state(&rasterizer_state)
+        .depth_stencil_state(&depthstencil_state)
+        .build();
+
+    let pipeline = unsafe {
+        device.get().create_graphics_pipelines(
+            vk::PipelineCache::null(),
+            slice::from_ref(&pipeline_create_info),
+            None,
+        )
+    }?[0];
+
+    Ok((pipeline, desc.program.pipeline_layout()))
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";
@@ -353,7 +461,7 @@ impl Header {
         r.read(&mut magic)?;
         Ok(Self {
             magic: magic,
-            version: r.read_u32::<LittleEndian>()?
+            version: r.read_u32::<LittleEndian>()?,
         })
     }
 
@@ -389,7 +497,10 @@ impl PipelineDiskCache {
 
     pub fn read<R: io::Read>(mut r: R) -> io::Result<Self> {
         if !Header::read(&mut r)?.validate() {
-            return Err(io::Error::new(io::ErrorKind::InvalidData, "Wrong pipeline cache header"));
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Wrong pipeline cache header",
+            ));
         }
         Ok(Self {
             vendor_id: r.read_u32::<LittleEndian>()?,
