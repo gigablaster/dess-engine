@@ -25,7 +25,7 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::{mem, slice};
 
-use crate::{AsVulkan, CommandBuffer, Error, Result, SwapchainImage};
+use crate::{AsVulkan, AsVulkanCommandBuffer, Error, Result, SwapchainImage};
 
 use super::frame::FrameContext;
 use super::{frame::Frame, DropList, GpuAllocator, GpuMemory, Instance, PhysicalDevice};
@@ -298,30 +298,30 @@ impl Device {
         }
     }
 
-    pub fn submit_graphics(
+    pub fn submit_graphics<C: AsVulkanCommandBuffer>(
         &self,
-        cb: &CommandBuffer,
+        cb: &C,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
         triggers: &[vk::Semaphore],
     ) -> Result<()> {
         self.submit(
             *self.universal_queue.lock(),
-            cb.get(),
+            cb.command_buffer(),
             cb.fence(),
             wait,
             triggers,
         )
     }
 
-    pub(crate) fn submit_transfer(
+    pub fn submit_transfer<C: AsVulkanCommandBuffer>(
         &self,
-        cb: &CommandBuffer,
+        cb: &C,
         wait: &[(vk::Semaphore, vk::PipelineStageFlags)],
         triggers: &[vk::Semaphore],
     ) -> Result<()> {
         self.submit(
             *self.transfer_queue.lock(),
-            cb.get(),
+            cb.command_buffer(),
             cb.fence(),
             wait,
             triggers,
@@ -356,23 +356,6 @@ impl Device {
 
     pub fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
         cb(&mut self.current_drop_list.lock());
-    }
-
-    pub(crate) fn scoped_label(
-        &self,
-        cb: vk::CommandBuffer,
-        label: &str,
-    ) -> ScopedCommandBufferLabel {
-        self.cmd_begin_label(cb, label);
-        ScopedCommandBufferLabel { device: self, cb }
-    }
-
-    pub(crate) fn cmd_begin_label(&self, cb: vk::CommandBuffer, label: &str) {
-        if let Some(debug_utils) = self.instance.get_debug_utils() {
-            let label = CString::new(label).unwrap();
-            let label = vk::DebugUtilsLabelEXT::builder().label_name(&label).build();
-            unsafe { debug_utils.cmd_begin_debug_utils_label(cb, &label) }
-        }
     }
 
     pub(crate) fn cmd_end_label(&self, cb: vk::CommandBuffer) {

@@ -86,7 +86,7 @@ impl<'a> BufferCreateDesc<'a> {
         }
     }
 
-    pub fn shared(size: usize, ty: vk::BufferUsageFlags) -> Self {
+    pub fn shared(size: usize) -> Self {
         Self {
             size,
             ty: vk::BufferUsageFlags::empty(),

@@ -32,6 +32,7 @@ pub use buffer::*;
 pub use command_buffer::*;
 pub use device::*;
 use drop_list::*;
+pub use frame::*;
 pub use image::*;
 pub use instance::*;
 pub use physical_device::*;
@@ -39,7 +40,6 @@ pub use pipeline::*;
 pub use program::*;
 pub use render_pass::*;
 pub use swapchain::*;
-pub use frame::*;
 
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;

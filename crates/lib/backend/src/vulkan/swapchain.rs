@@ -14,9 +14,9 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    };
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
 
 use arrayvec::ArrayVec;
 use ash::{
@@ -81,7 +81,7 @@ pub struct Swapchain {
     dims: [u32; 2],
 }
 
-impl AsVulkan<vk::SwapchainKHR> for Swapchain  {
+impl AsVulkan<vk::SwapchainKHR> for Swapchain {
     fn as_vk(&self) -> vk::SwapchainKHR {
         self.raw
     }
@@ -296,9 +296,10 @@ impl Swapchain {
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
             },
             vk::SurfaceFormatKHR {
-            format: vk::Format::B8G8R8A8_UNORM,
-            color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
-        }];
+                format: vk::Format::B8G8R8A8_UNORM,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+        ];
 
         prefered.into_iter().find(|format| formats.contains(format))
     }

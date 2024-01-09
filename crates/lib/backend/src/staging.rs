@@ -131,7 +131,6 @@ impl Staging {
 
     pub fn upload_buffer<T: Sized>(
         &mut self,
-        device: &Device,
         target: &Buffer,
         offset: usize,
         data: &[T],
@@ -254,14 +253,12 @@ impl Staging {
         cb.wait()?;
         cb.reset()?;
         {
-            let recorder = cb.record();
+            let _recorder = cb.record();
 
-            {
-                self.barrier_before(cb.get());
-                self.copy_buffers(cb.get());
-                self.copy_images(cb.get());
-                self.barrier_after(cb.get());
-            }
+            self.barrier_before(cb.get());
+            self.copy_buffers(cb.get());
+            self.copy_images(cb.get());
+            self.barrier_after(cb.get());
         }
 
         let semaphore = self.semaphores[self.current];

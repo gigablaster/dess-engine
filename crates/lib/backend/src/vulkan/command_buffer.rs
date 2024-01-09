@@ -13,7 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{sync::Arc, slice};
+use std::{slice, sync::Arc};
 
 use ash::vk;
 
@@ -134,7 +134,8 @@ impl<'a> CommandBufferRecorder<'a> {
                     .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
                     .build(),
             )
-        }.unwrap();
+        }
+        .unwrap();
         Self { device, cb }
     }
 }
@@ -142,5 +143,20 @@ impl<'a> CommandBufferRecorder<'a> {
 impl<'a> Drop for CommandBufferRecorder<'a> {
     fn drop(&mut self) {
         unsafe { self.device.end_command_buffer(self.cb).unwrap() };
+    }
+}
+
+pub trait AsVulkanCommandBuffer {
+    fn fence(&self) -> vk::Fence;
+    fn command_buffer(&self) -> vk::CommandBuffer;
+}
+
+impl AsVulkanCommandBuffer for CommandBuffer {
+    fn fence(&self) -> vk::Fence {
+        self.fence
+    }
+
+    fn command_buffer(&self) -> vk::CommandBuffer {
+        self.cb
     }
 }

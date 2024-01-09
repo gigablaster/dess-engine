@@ -22,7 +22,7 @@ use std::{
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{CommandBufferRecorder, Device, Result};
+use crate::{AsVulkanCommandBuffer, CommandBufferRecorder, Device, Result};
 
 use super::{DropList, GpuAllocator};
 
@@ -209,11 +209,17 @@ impl Frame {
         }
     }
 
-    pub(crate) fn command_buffer(&self) -> vk::CommandBuffer {
-        self.cb
-    }
-
     pub(crate) fn fence(&self) -> vk::Fence {
         self.fence
+    }
+}
+
+impl<'a> AsVulkanCommandBuffer for FrameContext<'a> {
+    fn command_buffer(&self) -> vk::CommandBuffer {
+        self.frame.clone().unwrap().cb
+    }
+
+    fn fence(&self) -> vk::Fence {
+        self.frame.clone().unwrap().fence
     }
 }
