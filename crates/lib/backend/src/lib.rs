@@ -13,13 +13,52 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-// mod draw_stream;
+mod buffer;
+mod command_buffer;
+mod device;
+mod drop_list;
 mod error;
-mod staging;
-mod vulkan;
+mod frame;
+mod image;
+mod instance;
+mod physical_device;
+mod pipeline;
+mod program;
+mod render_pass;
+mod swapchain;
 
+use ash::vk::{self};
+
+pub use buffer::*;
+pub use command_buffer::*;
+pub use device::*;
+use drop_list::*;
 pub use error::*;
-pub use staging::*;
-pub use vulkan::*;
+pub use frame::*;
+pub use image::*;
+pub use instance::*;
+pub use physical_device::*;
+pub use pipeline::*;
+pub use program::*;
+pub use render_pass::*;
+pub use swapchain::*;
+pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
+pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
+
+pub trait AsVulkan<T: vk::Handle> {
+    fn as_vk(&self) -> T;
+}
+
+impl AsVulkan<vk::Image> for vk::Image {
+    fn as_vk(&self) -> vk::Image {
+        self.to_owned()
+    }
+}
+
+impl AsVulkan<vk::Buffer> for vk::Buffer {
+    fn as_vk(&self) -> vk::Buffer {
+        self.to_owned()
+    }
+}
 
 pub type Result<T> = std::result::Result<T, Error>;

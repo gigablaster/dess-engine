@@ -27,8 +27,7 @@ use log::info;
 use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 use crate::{
-    vulkan::{Image, ImageDesc},
-    AsVulkan, Error, Result,
+    AsVulkan, Error, Result, {Image, ImageDesc},
 };
 
 use super::{physical_device::PhysicalDevice, Device, Instance};
