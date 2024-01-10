@@ -32,6 +32,7 @@ pub enum Error {
     TooBig,
     Fail,
     NotAllocated,
+    ReflectionFailed,
 }
 
 impl From<vk::Result> for Error {
@@ -92,11 +93,8 @@ impl From<io::Error> for Error {
     }
 }
 
-// impl From<DrawStreamError> for BackendError {
-//     fn from(value: DrawStreamError) -> Self {
-//         match value {
-//             DrawStreamError::EndOfStream => panic!("Draw stream suddenly ended!"),
-//             DrawStreamError::InvalidHandle => Self::InvalidHandle,
-//         }
-//     }
-// }
+impl From<rspirv_reflect::ReflectError> for Error {
+    fn from(_value: rspirv_reflect::ReflectError) -> Self {
+        Self::ReflectionFailed
+    }
+}

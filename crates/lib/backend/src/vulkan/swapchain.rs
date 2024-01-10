@@ -49,13 +49,13 @@ impl Surface {
         let surface = unsafe {
             ash_window::create_surface(
                 instance.get_entry(),
-                &instance.get(),
+                instance.get(),
                 display_handle,
                 window_handle,
                 None,
             )
         }?;
-        let loader = khr::Surface::new(instance.get_entry(), &instance.get());
+        let loader = khr::Surface::new(instance.get_entry(), instance.get());
 
         Ok(Self {
             raw: surface,
@@ -181,7 +181,7 @@ impl Swapchain {
             .image_array_layers(1)
             .build();
 
-        let loader = khr::Swapchain::new(&device.instance().get(), &device.get());
+        let loader = khr::Swapchain::new(device.instance().get(), device.get());
         let swapchain = unsafe { loader.create_swapchain(&swapchain_create_info, None) }?;
         let images = unsafe { loader.get_swapchain_images(swapchain) }?;
         let images = images
@@ -203,7 +203,7 @@ impl Swapchain {
             })
             .enumerate()
             .map(|(index, image)| {
-                device.set_object_name(image.as_vk(), &format!("Swapchain {index}"));
+                device.set_object_name(image.as_vk(), format!("Swapchain {index}"));
                 image
             })
             .collect();

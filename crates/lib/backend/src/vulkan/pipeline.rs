@@ -300,9 +300,9 @@ pub fn compile_raster_pipeline(
         .shaders()
         .map(|shader| {
             vk::PipelineShaderStageCreateInfo::builder()
-                .stage(shader.stage)
-                .module(shader.raw)
-                .name(&CString::new(shader.entry.as_str()).unwrap())
+                .stage(shader.stage())
+                .module(shader.as_vk())
+                .name(&CString::new(shader.entry()).unwrap())
                 .build()
         })
         .collect::<Vec<_>>();
@@ -358,11 +358,7 @@ pub fn compile_raster_pipeline(
         .line_width(1.0)
         .depth_bias_clamp(0.0)
         .depth_bias_slope_factor(0.0)
-        .cull_mode(
-            desc.cull
-                .map(|x| x.into())
-                .unwrap_or(vk::CullModeFlags::NONE),
-        )
+        .cull_mode(desc.cull.unwrap_or(vk::CullModeFlags::NONE))
         .front_face(vk::FrontFace::CLOCKWISE);
 
     let multisample_state = vk::PipelineMultisampleStateCreateInfo::builder()
@@ -380,7 +376,7 @@ pub fn compile_raster_pipeline(
     if let Some(depth_compare) = desc.depth_test {
         depthstencil_state = depthstencil_state
             .depth_test_enable(true)
-            .depth_compare_op(depth_compare.into());
+            .depth_compare_op(depth_compare);
     }
 
     let color_blend_attachment = vk::PipelineColorBlendAttachmentState::builder()
@@ -450,7 +446,7 @@ impl Default for Header {
 
 impl Header {
     pub fn write<W: io::Write>(&self, w: &mut W) -> io::Result<()> {
-        w.write(&self.magic)?;
+        w.write_all(&self.magic)?;
         w.write_u32::<LittleEndian>(self.version)?;
 
         Ok(())
@@ -458,9 +454,9 @@ impl Header {
 
     pub fn read<R: io::Read>(r: &mut R) -> io::Result<Self> {
         let mut magic = [0u8; 4];
-        r.read(&mut magic)?;
+        r.read_exact(&mut magic)?;
         Ok(Self {
-            magic: magic,
+            magic,
             version: r.read_u32::<LittleEndian>()?,
         })
     }
@@ -525,7 +521,7 @@ impl PipelineDiskCache {
         w.write_u32::<LittleEndian>(self.driver_version)?;
         w.write_u128::<LittleEndian>(self.uuid.as_u128())?;
         w.write_u32::<LittleEndian>(self.data.len() as _)?;
-        w.write(&self.data)?;
+        w.write_all(&self.data)?;
         Ok(())
     }
 }

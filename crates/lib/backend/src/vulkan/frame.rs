@@ -187,7 +187,7 @@ impl Frame {
             .for_each(|(_, x)| x.free(device));
     }
 
-    pub(crate) fn to_drop(&mut self, drop_list: DropList) {
+    pub(crate) fn assign_drop_list(&mut self, drop_list: DropList) {
         self.drop_list = drop_list;
     }
 

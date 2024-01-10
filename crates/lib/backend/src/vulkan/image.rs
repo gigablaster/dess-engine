@@ -94,7 +94,7 @@ impl ImageViewDesc {
 
     fn build(&self, image: &Image) -> vk::ImageViewCreateInfo {
         vk::ImageViewCreateInfo::builder()
-            .format(self.format.unwrap_or(image.desc.format).into())
+            .format(self.format.unwrap_or(image.desc.format))
             .components(vk::ComponentMapping {
                 r: vk::ComponentSwizzle::R,
                 g: vk::ComponentSwizzle::G,
@@ -103,11 +103,10 @@ impl ImageViewDesc {
             })
             .view_type(
                 self.ty
-                    .unwrap_or_else(|| Self::convert_image_type_to_view_type(image))
-                    .into(),
+                    .unwrap_or_else(|| Self::convert_image_type_to_view_type(image)),
             )
             .subresource_range(vk::ImageSubresourceRange {
-                aspect_mask: self.aspect.into(),
+                aspect_mask: self.aspect,
                 base_mip_level: self.base_mip_level,
                 level_count: self.level_count.unwrap_or(image.desc.mip_levels),
                 base_array_layer: 0,
@@ -366,9 +365,9 @@ impl<'a> ImageCreateDesc<'a> {
             .mip_levels(self.mip_levels as _)
             .usage(self.usage)
             .flags(self.flags)
-            .format(self.format.into())
-            .samples(self.samples.into())
-            .image_type(self.ty.into())
+            .format(self.format)
+            .samples(self.samples)
+            .image_type(self.ty)
             .tiling(self.tiling)
             .extent(self.create_dims())
             .build()

@@ -274,7 +274,7 @@ impl Device {
         let frame = Arc::get_mut(&mut frame).expect("Frame is used by client code");
         let mut next_frame = self.frames[1].lock();
         let next_frame = Arc::get_mut(&mut next_frame).unwrap();
-        frame.to_drop(mem::take(&mut self.current_drop_list.lock()));
+        frame.assign_drop_list(mem::take(&mut self.current_drop_list.lock()));
         mem::swap(frame, next_frame);
     }
 
@@ -419,7 +419,7 @@ impl Device {
     }
 
     pub fn sampler(&self, desc: &SamplerDesc) -> Option<vk::Sampler> {
-        self.samplers.get(&desc).copied()
+        self.samplers.get(desc).copied()
     }
 
     pub fn get(&self) -> &ash::Device {
