@@ -80,11 +80,10 @@ impl Device {
         let device_extension_names = vec![
             khr::Swapchain::name().as_ptr(),
             khr::Maintenance4::name().as_ptr(),
-            vk::KhrImagelessFramebufferFn::name().as_ptr(),
-            vk::KhrImageFormatListFn::name().as_ptr(),
             khr::BufferDeviceAddress::name().as_ptr(),
             vk::ExtDescriptorIndexingFn::name().as_ptr(),
             khr::Synchronization2::name().as_ptr(),
+            khr::CopyCommands2::name().as_ptr(),
         ];
 
         for ext in &device_extension_names {
@@ -106,7 +105,6 @@ impl Device {
             .index;
 
         let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
-        let mut imageless_framebuffers = vk::PhysicalDeviceImagelessFramebufferFeatures::default();
         let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
         let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default();
         let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::builder()
@@ -120,7 +118,6 @@ impl Device {
             .descriptor_binding_uniform_buffer_update_after_bind(true);
 
         let mut features = vk::PhysicalDeviceFeatures2::builder()
-            .push_next(&mut imageless_framebuffers)
             .push_next(&mut buffer_device_address)
             .push_next(&mut maintenance4)
             .push_next(&mut descriptor_indexing)
