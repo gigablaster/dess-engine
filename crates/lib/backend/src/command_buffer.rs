@@ -158,7 +158,7 @@ impl<'a> CommandBufferRecorder<'a> {
                             .subpass(subpass as _)
                             .build(),
                     )
-                    .build()
+                    .build(),
             )
         }
         .unwrap();

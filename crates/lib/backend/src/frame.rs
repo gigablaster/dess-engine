@@ -22,7 +22,7 @@ use std::{
 use ash::vk::{self, CommandBuffer};
 use parking_lot::Mutex;
 
-use crate::{AsVulkanCommandBuffer, CommandBufferRecorder, Device, Result, RenderPass, AsVulkan};
+use crate::{AsVulkan, AsVulkanCommandBuffer, CommandBufferRecorder, Device, RenderPass, Result};
 
 use super::{DropList, GpuAllocator};
 
@@ -37,12 +37,23 @@ struct SecondaryCommandBufferPool {
 
 pub struct SecondaryCommandBuffer<'a> {
     device: &'a ash::Device,
-    cb: vk::CommandBuffer
+    cb: vk::CommandBuffer,
 }
 
 impl<'a> SecondaryCommandBuffer<'a> {
-    pub fn record(self, render_pass: &'a RenderPass, subpass: usize, framebuffer: vk::Framebuffer) -> CommandBufferRecorder {
-        CommandBufferRecorder::secondary(self.device, self.cb, render_pass.as_vk(), subpass, framebuffer)
+    pub fn record(
+        self,
+        render_pass: &'a RenderPass,
+        subpass: usize,
+        framebuffer: vk::Framebuffer,
+    ) -> CommandBufferRecorder {
+        CommandBufferRecorder::secondary(
+            self.device,
+            self.cb,
+            render_pass.as_vk(),
+            subpass,
+            framebuffer,
+        )
     }
 }
 

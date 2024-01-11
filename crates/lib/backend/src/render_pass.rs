@@ -141,9 +141,16 @@ impl FramebufferDesc {
             .expect("Need at least one attacment");
         let mut views = ArrayVec::<_, MAX_ATTACHMENTS>::new();
         for attachment in attachments {
-            views.push(attachment.image.view(ImageViewDesc::new(attachment.aspect))?);
+            views.push(
+                attachment
+                    .image
+                    .view(ImageViewDesc::new(attachment.aspect))?,
+            );
         }
-        Ok(Self { dims, attachments: views })
+        Ok(Self {
+            dims,
+            attachments: views,
+        })
     }
 }
 
