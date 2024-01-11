@@ -22,17 +22,16 @@ use std::{
 
 use arrayvec::ArrayVec;
 use ash::vk::{self};
+use dess_backend::{
+    AsVulkan, Buffer, BufferCreateDesc, CommandBuffer, Device, Image, ImageSubresourceData,
+};
 use dess_common::BumpAllocator;
 use parking_lot::Mutex;
-
-use crate::{
-    vulkan::{Buffer, CommandBuffer, Device, Image},
-    AsVulkan, BufferCreateDesc, Error, ImageSubresourceData, Result,
-};
 
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
 
+#[derive(Debug)]
 pub struct Staging {
     device: Arc<Device>,
     command_buffers: Vec<CommandBuffer>,
@@ -61,10 +60,7 @@ pub struct StagingDesc {
 
 impl Default for StagingDesc {
     fn default() -> Self {
-        Self {
-            pages: 4,
-            page_size: 32 * 1024 * 1024,
-        }
+        Self::new(32 * 1024 * 1024, 4)
     }
 }
 
@@ -74,7 +70,7 @@ impl StagingDesc {
     }
 }
 
-fn create_semaphore(device: &Device, index: usize) -> Result<vk::Semaphore> {
+fn create_semaphore(device: &Device, index: usize) -> dess_backend::Result<vk::Semaphore> {
     let semaphore = unsafe {
         device
             .get()
@@ -85,7 +81,7 @@ fn create_semaphore(device: &Device, index: usize) -> Result<vk::Semaphore> {
 }
 
 impl Staging {
-    pub fn new(device: &Arc<Device>, desc: StagingDesc) -> Result<Self> {
+    pub fn new(device: &Arc<Device>, desc: StagingDesc) -> dess_backend::Result<Self> {
         let transfer_cbs = Vec::from_iter(
             (0..desc.pages)
                 .map(|n| CommandBuffer::transfer(device, Some(format!("Staging {n}"))).unwrap()),
@@ -98,7 +94,7 @@ impl Staging {
         let mut buffer = Buffer::new(
             device,
             BufferCreateDesc::upload(desc.page_size * desc.pages)
-                .source()
+                .usage(vk::BufferUsageFlags::TRANSFER_SRC)
                 .name("Staging buffer")
                 .dedicated(true),
         )?;
@@ -134,7 +130,7 @@ impl Staging {
         target: &Buffer,
         offset: usize,
         data: &[T],
-    ) -> Result<()> {
+    ) -> dess_backend::Result<()> {
         let mut current_offset = 0;
         loop {
             let data_len = mem::size_of_val(data);
@@ -153,7 +149,11 @@ impl Staging {
         }
     }
 
-    pub fn upload_image(&mut self, target: &Image, data: &[ImageSubresourceData]) -> Result<()> {
+    pub fn upload_image(
+        &mut self,
+        target: &Image,
+        data: &[ImageSubresourceData],
+    ) -> dess_backend::Result<()> {
         for (mip, data) in data.iter().enumerate() {
             while !self.try_push_mip(target, mip as _, data)? {
                 self.upload_impl(false)?;
@@ -167,10 +167,10 @@ impl Staging {
         target: &Image,
         mip: u32,
         data: &ImageSubresourceData,
-    ) -> Result<bool> {
+    ) -> dess_backend::Result<bool> {
         let size = data.data.len();
         if size > self.page_size {
-            return Err(Error::TooBig);
+            return Err(dess_backend::Error::TooBig);
         }
         if let Some(allocated_offset) = self.allocator.allocate(size) {
             let buffer_offset = self.page_size * self.current + allocated_offset;
@@ -221,7 +221,7 @@ impl Staging {
         offset: usize,
         bytes: usize,
         data: *const u8,
-    ) -> Result<usize> {
+    ) -> dess_backend::Result<usize> {
         let can_send = self.allocator.validate(bytes);
         let allocated = self.allocator.allocate(can_send).unwrap(); // Already checked that allocator can allocate enough space
         let src_offset = self.page_size * self.current + allocated;
@@ -239,14 +239,14 @@ impl Staging {
         Ok(can_send)
     }
 
-    pub fn upload(&mut self) -> Result<(vk::Semaphore, vk::PipelineStageFlags)> {
+    pub fn upload(&mut self) -> dess_backend::Result<(vk::Semaphore, vk::PipelineStageFlags)> {
         self.upload_impl(true)
     }
 
     fn upload_impl(
         &mut self,
         client_will_wait: bool,
-    ) -> Result<(vk::Semaphore, vk::PipelineStageFlags)> {
+    ) -> dess_backend::Result<(vk::Semaphore, vk::PipelineStageFlags)> {
         puffin::profile_function!();
         let cb = &self.command_buffers[self.current];
 
