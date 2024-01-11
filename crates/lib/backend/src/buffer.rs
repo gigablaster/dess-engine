@@ -25,12 +25,12 @@ use super::{AsVulkan, Device, GpuMemory};
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferDesc {
     pub size: usize,
-    pub ty: vk::BufferUsageFlags,
+    pub usage: vk::BufferUsageFlags,
 }
 
 impl BufferDesc {
     pub fn new(ty: vk::BufferUsageFlags, size: usize) -> Self {
-        Self { ty, size }
+        Self { usage: ty, size }
     }
 }
 
@@ -45,7 +45,7 @@ pub struct Buffer {
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferCreateDesc<'a> {
     pub size: usize,
-    pub ty: vk::BufferUsageFlags,
+    pub usage: vk::BufferUsageFlags,
     pub alignment: Option<u64>,
     pub dedicated: bool,
     pub name: Option<&'a str>,
@@ -56,7 +56,7 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn gpu(size: usize) -> Self {
         Self {
             size,
-            ty: vk::BufferUsageFlags::empty(),
+            usage: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
             dedicated: false,
@@ -67,8 +67,9 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn host(size: usize) -> Self {
         Self {
             size,
-            ty: vk::BufferUsageFlags::empty(),
-            memory_location: gpu_alloc::UsageFlags::HOST_ACCESS,
+            usage: vk::BufferUsageFlags::empty(),
+            memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
+                | gpu_alloc::UsageFlags::DEVICE_ADDRESS,
             alignment: None,
             dedicated: false,
             name: None,
@@ -78,7 +79,7 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn upload(size: usize) -> Self {
         Self {
             size,
-            ty: vk::BufferUsageFlags::empty(),
+            usage: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::UPLOAD,
             alignment: None,
             dedicated: false,
@@ -89,37 +90,18 @@ impl<'a> BufferCreateDesc<'a> {
     pub fn shared(size: usize) -> Self {
         Self {
             size,
-            ty: vk::BufferUsageFlags::empty(),
+            usage: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
-                | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
+                | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS
+                | gpu_alloc::UsageFlags::DEVICE_ADDRESS,
             alignment: None,
             dedicated: true,
             name: None,
         }
     }
 
-    pub fn source(mut self) -> Self {
-        self.ty |= vk::BufferUsageFlags::TRANSFER_SRC;
-        self
-    }
-
-    pub fn destinaton(mut self) -> Self {
-        self.ty |= vk::BufferUsageFlags::TRANSFER_DST;
-        self
-    }
-
-    pub fn vertex(mut self) -> Self {
-        self.ty |= vk::BufferUsageFlags::VERTEX_BUFFER;
-        self
-    }
-
-    pub fn index(mut self) -> Self {
-        self.ty |= vk::BufferUsageFlags::INDEX_BUFFER;
-        self
-    }
-
-    pub fn storage(mut self) -> Self {
-        self.ty |= vk::BufferUsageFlags::STORAGE_BUFFER;
+    pub fn usage(mut self, usage: vk::BufferUsageFlags) -> Self {
+        self.usage = usage;
         self
     }
 
@@ -140,7 +122,7 @@ impl<'a> BufferCreateDesc<'a> {
 
     fn build(&self) -> vk::BufferCreateInfo {
         vk::BufferCreateInfo::builder()
-            .usage(self.ty)
+            .usage(self.usage)
             .size(self.size as _)
             .build()
     }
@@ -170,7 +152,7 @@ impl Buffer {
             raw: buffer,
             desc: BufferDesc {
                 size: desc.size,
-                ty: desc.ty,
+                usage: desc.usage,
             },
             memory: Some(memory),
         })
