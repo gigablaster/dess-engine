@@ -63,8 +63,8 @@ pub struct SubpassLayout<'a> {
 
 #[derive(Debug, Default)]
 pub struct RenderPassLayout<'a> {
-    pub depth_attachments: Option<RenderPassAttachmentDesc>,
     pub color_attachments: &'a [RenderPassAttachmentDesc],
+    pub depth_attachments: Option<RenderPassAttachmentDesc>,
     pub subpasses: &'a [SubpassLayout<'a>],
 }
 
@@ -122,7 +122,7 @@ impl RenderPassAttachmentDesc {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq)]
-pub struct FramebufferDesc {
+struct FramebufferDesc {
     pub dims: [u32; 2],
     pub attachments: ArrayVec<vk::ImageView, MAX_ATTACHMENTS>,
 }
@@ -133,19 +133,17 @@ pub struct RenderPassAttachment<'a> {
 }
 
 impl FramebufferDesc {
-    pub fn new<'a, I: Iterator<Item = RenderPassAttachment<'a>>>(attachments: I) -> Self {
-        let attachments = attachments.collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
+    pub fn new(attachments: &[RenderPassAttachment]) -> Result<Self> {
         let dims = attachments
             .iter()
             .map(|x| x.image.desc().dims)
             .next()
             .expect("Need at least one attacment");
-        let attachments = attachments
-            .iter()
-            .map(|x| x.image.view(ImageViewDesc::new(x.aspect)).unwrap()) // FIXME: use imageless fbos
-            .collect::<ArrayVec<_, MAX_ATTACHMENTS>>();
-
-        Self { dims, attachments }
+        let mut views = ArrayVec::<_, MAX_ATTACHMENTS>::new();
+        for attachment in attachments {
+            views.push(attachment.image.view(ImageViewDesc::new(attachment.aspect))?);
+        }
+        Ok(Self { dims, attachments: views })
     }
 }
 
@@ -333,8 +331,9 @@ impl RenderPass {
         })
     }
 
-    pub fn get_or_create_framebuffer(&self, key: FramebufferDesc) -> Result<vk::Framebuffer> {
+    pub fn framebuffer(&self, attachments: &[RenderPassAttachment]) -> Result<vk::Framebuffer> {
         let mut cache = self.framebuffers.lock();
+        let key = FramebufferDesc::new(attachments)?;
         if let Some(fbo) = cache.get(&key) {
             Ok(*fbo)
         } else {
