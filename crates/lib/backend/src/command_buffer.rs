@@ -13,11 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{slice, sync::Arc};
+use std::{mem, slice, sync::Arc};
 
 use ash::vk;
 
-use crate::{Device, Result};
+use crate::{AsVulkan, Buffer, Device, Image, Result};
 
 #[derive(Debug)]
 pub struct CommandBuffer {
@@ -126,7 +126,7 @@ pub struct CommandBufferRecorder<'a> {
 }
 
 impl<'a> CommandBufferRecorder<'a> {
-    pub(crate) fn new(device: &'a ash::Device, cb: vk::CommandBuffer) -> Self {
+    pub(crate) fn primary(device: &'a ash::Device, cb: vk::CommandBuffer) -> Self {
         unsafe {
             device.begin_command_buffer(
                 cb,
@@ -137,6 +137,117 @@ impl<'a> CommandBufferRecorder<'a> {
         }
         .unwrap();
         Self { device, cb }
+    }
+
+    pub(crate) fn secondary(
+        device: &'a ash::Device,
+        cb: vk::CommandBuffer,
+        render_pass: vk::RenderPass,
+        subpass: usize,
+        framebuffer: vk::Framebuffer,
+    ) -> Self {
+        unsafe {
+            device.begin_command_buffer(
+                cb,
+                &vk::CommandBufferBeginInfo::builder()
+                    .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT)
+                    .inheritance_info(
+                        &vk::CommandBufferInheritanceInfo::builder()
+                            .framebuffer(framebuffer)
+                            .render_pass(render_pass)
+                            .subpass(subpass as _)
+                            .build(),
+                    )
+                    .build()
+            )
+        }
+        .unwrap();
+        Self { device, cb }
+    }
+
+    pub fn barrier(
+        &self,
+        flags: vk::DependencyFlags,
+        image_barriers: &[vk::ImageMemoryBarrier2],
+        buffer_barriers: &[vk::BufferMemoryBarrier2],
+    ) {
+        let depenency = vk::DependencyInfo::builder()
+            .buffer_memory_barriers(buffer_barriers)
+            .image_memory_barriers(image_barriers)
+            .dependency_flags(flags)
+            .build();
+        unsafe { self.device.cmd_pipeline_barrier2(self.cb, &depenency) }
+    }
+
+    pub fn finish(self) -> vk::CommandBuffer {
+        self.cb
+    }
+
+    pub fn copy_buffer(&self, src: &Buffer, dst: &Buffer, regions: &[vk::BufferCopy2]) {
+        let info = vk::CopyBufferInfo2::builder()
+            .src_buffer(src.as_vk())
+            .dst_buffer(dst.as_vk())
+            .regions(regions);
+        unsafe { self.device.cmd_copy_buffer2(self.cb, &info) }
+    }
+
+    pub fn copy_buffer_to_image(
+        &self,
+        src: &Buffer,
+        dst: &Image,
+        regions: &[vk::BufferImageCopy2],
+    ) {
+        let info = vk::CopyBufferToImageInfo2::builder()
+            .src_buffer(src.as_vk())
+            .dst_image(dst.as_vk())
+            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+            .regions(regions)
+            .build();
+        unsafe { self.device.cmd_copy_buffer_to_image2(self.cb, &info) }
+    }
+
+    pub fn set_viewport(&self, viewports: &[vk::Viewport]) {
+        unsafe { self.device.cmd_set_viewport(self.cb, 0, viewports) }
+    }
+
+    pub fn set_scissor(&self, scissors: &[vk::Rect2D]) {
+        unsafe { self.device.cmd_set_scissor(self.cb, 0, scissors) };
+    }
+
+    pub fn set_push_constants<T: Sized + Copy>(
+        &self,
+        layout: vk::PipelineLayout,
+        stages: vk::ShaderStageFlags,
+        data: &T,
+    ) {
+        unsafe {
+            let constants = slice::from_raw_parts(
+                slice::from_ref(&data).as_ptr() as *const u8,
+                mem::size_of::<T>(),
+            );
+            self.device
+                .cmd_push_constants(self.cb, layout, stages, 0, constants)
+        };
+    }
+
+    pub fn draw_indexed(
+        &self,
+        index_count: usize,
+        instance_count: usize,
+        first_index: usize,
+        vertex_offset: isize,
+        first_instance: usize,
+    ) {
+        unsafe {
+            self.device.cmd_draw_indexed(
+                self.cb,
+                index_count as _,
+                instance_count as _,
+                first_index as _,
+                vertex_offset as _,
+                first_instance as _,
+            )
+        };
     }
 }
 

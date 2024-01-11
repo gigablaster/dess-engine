@@ -19,10 +19,10 @@ use std::{
     thread::{self},
 };
 
-use ash::vk::{self};
+use ash::vk::{self, CommandBuffer};
 use parking_lot::Mutex;
 
-use crate::{AsVulkanCommandBuffer, CommandBufferRecorder, Device, Result};
+use crate::{AsVulkanCommandBuffer, CommandBufferRecorder, Device, Result, RenderPass, AsVulkan};
 
 use super::{DropList, GpuAllocator};
 
@@ -33,6 +33,17 @@ struct SecondaryCommandBufferPool {
     pool: vk::CommandPool,
     buffers: Vec<vk::CommandBuffer>,
     free: Vec<vk::CommandBuffer>,
+}
+
+pub struct SecondaryCommandBuffer<'a> {
+    device: &'a ash::Device,
+    cb: vk::CommandBuffer
+}
+
+impl<'a> SecondaryCommandBuffer<'a> {
+    pub fn record(self, render_pass: &'a RenderPass, subpass: usize, framebuffer: vk::Framebuffer) -> CommandBufferRecorder {
+        CommandBufferRecorder::secondary(self.device, self.cb, render_pass.as_vk(), subpass, framebuffer)
+    }
 }
 
 impl SecondaryCommandBufferPool {
@@ -112,7 +123,7 @@ impl<'a> Drop for FrameContext<'a> {
 
 impl<'a> FrameContext<'a> {
     pub fn record_command_buffer(&self) -> CommandBufferRecorder {
-        CommandBufferRecorder::new(self.device.get(), self.frame.clone().unwrap().cb)
+        CommandBufferRecorder::primary(self.device.get(), self.frame.clone().unwrap().cb)
     }
 }
 
