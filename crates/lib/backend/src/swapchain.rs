@@ -197,6 +197,7 @@ impl Swapchain {
                         tiling: vk::ImageTiling::OPTIMAL,
                         mip_levels: 1,
                         array_elements: 1,
+                        name: None,
                     },
                 )
             })

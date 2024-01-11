@@ -17,12 +17,13 @@ use std::{collections::HashMap, sync::Arc};
 
 use ash::vk::{self};
 use parking_lot::Mutex;
+use smol_str::SmolStr;
 
 use crate::Result;
 
 use super::{AsVulkan, Device, GpuMemory};
 
-#[derive(Debug, Default, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 pub struct ImageDesc {
     pub dims: [u32; 2],
     pub ty: vk::ImageType,
@@ -30,7 +31,8 @@ pub struct ImageDesc {
     pub format: vk::Format,
     pub mip_levels: u32,
     pub array_elements: u32,
-    pub(crate) tiling: vk::ImageTiling,
+    pub tiling: vk::ImageTiling,
+    pub name: Option<SmolStr>,
 }
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -178,6 +180,7 @@ impl Image {
                 tiling: desc.tiling,
                 mip_levels: desc.mip_levels as u32,
                 array_elements: desc.array_elements as u32,
+                name: desc.name.map(|x| x.into()),
             },
             memory: Some(memory),
             views: Mutex::default(),

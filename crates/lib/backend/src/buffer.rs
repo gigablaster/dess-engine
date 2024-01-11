@@ -17,21 +17,17 @@ use std::{ptr::NonNull, sync::Arc};
 
 use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
+use smol_str::SmolStr;
 
 use crate::{Error, Result};
 
 use super::{AsVulkan, Device, GpuMemory};
 
-#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct BufferDesc {
     pub size: usize,
     pub usage: vk::BufferUsageFlags,
-}
-
-impl BufferDesc {
-    pub fn new(ty: vk::BufferUsageFlags, size: usize) -> Self {
-        Self { usage: ty, size }
-    }
+    pub name: Option<SmolStr>,
 }
 
 #[derive(Debug)]
@@ -151,6 +147,7 @@ impl Buffer {
             desc: BufferDesc {
                 size: desc.size,
                 usage: desc.usage,
+                name: desc.name.map(|x| x.into()),
             },
             memory: Some(memory),
         })
