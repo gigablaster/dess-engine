@@ -101,15 +101,7 @@ impl Staging {
         Ok(Self {
             device: device.clone(),
             command_buffers: transfer_cbs,
-            allocator: BumpAllocator::new(
-                desc.page_size,
-                device
-                    .physical_device()
-                    .properties()
-                    .limits
-                    .buffer_image_granularity
-                    .max(512) as _,
-            ),
+            allocator: BumpAllocator::new(desc.page_size),
             upload_buffers: HashMap::with_capacity(64),
             upload_images: HashMap::with_capacity(64),
             mapping: buffer.map()?,
@@ -172,7 +164,13 @@ impl Staging {
         if size > self.page_size {
             return Err(dess_backend::Error::TooBig);
         }
-        if let Some(allocated_offset) = self.allocator.allocate(size) {
+        let aligment = self
+            .device
+            .physical_device()
+            .properties()
+            .limits
+            .buffer_image_granularity;
+        if let Some(allocated_offset) = self.allocator.allocate(size, aligment as _) {
             let buffer_offset = self.page_size * self.current + allocated_offset;
             unsafe {
                 copy_nonoverlapping(
@@ -222,8 +220,14 @@ impl Staging {
         bytes: usize,
         data: *const u8,
     ) -> dess_backend::Result<usize> {
-        let can_send = self.allocator.validate(bytes);
-        let allocated = self.allocator.allocate(can_send).unwrap(); // Already checked that allocator can allocate enough space
+        let aligment = self
+            .device
+            .physical_device()
+            .properties()
+            .limits
+            .optimal_buffer_copy_offset_alignment;
+        let can_send = self.allocator.validate(bytes, aligment as _);
+        let allocated = self.allocator.allocate(bytes, aligment as _).unwrap(); // Already checked that allocator can allocate enough space
         let src_offset = self.page_size * self.current + allocated;
         unsafe { copy_nonoverlapping(data, self.mapping.as_ptr().add(src_offset), can_send) };
         let op = vk::BufferCopy::builder()
