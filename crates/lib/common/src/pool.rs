@@ -413,6 +413,7 @@ impl<T, Wrapper: PoolValueWrapper<T>> Iterator for Drain<T, Wrapper> {
     }
 }
 
+#[derive(Debug)]
 pub struct HotColdPool<T, U, WrapperT = OptionPoolStrategy<T>, WrapperU = OptionPoolStrategy<U>>
 where
     WrapperT: PoolValueWrapper<T>,
