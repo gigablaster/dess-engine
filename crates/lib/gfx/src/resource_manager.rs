@@ -18,7 +18,7 @@ use std::{mem, slice, sync::Arc};
 use ash::vk;
 use dess_backend::{
     AsVulkan, Buffer, BufferCreateDesc, Device, Image, ImageCreateDesc, ImageSubresourceData,
-    ImageViewDesc,
+    ImageViewDesc, Program,
 };
 use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
 use parking_lot::{Mutex, RwLock};
@@ -26,12 +26,13 @@ use parking_lot::{Mutex, RwLock};
 use crate::staging::{Staging, StagingDesc};
 
 pub type ImageHandle = Handle<Arc<Image>>;
-pub type BufferHandle = Handle<u64>;
+pub type BufferHandle = Handle<vk::Buffer>;
+pub type ProgramHandle = Pool<Arc<Program>>;
 
 type ImagePool = Pool<Arc<Image>>;
-type BufferPool = HotColdPool<u64, (Arc<Buffer>, usize, usize), SentinelPoolStrategy<u64>>;
+type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>, SentinelPoolStrategy<vk::Buffer>>;
+type ProgramPool = Pool<Arc<Program>>;
 
-#[derive(Debug)]
 pub struct ResourceManager {
     device: Arc<Device>,
     images: RwLock<ImagePool>,
@@ -235,82 +236,87 @@ impl ResourceManager {
 
     pub fn create_buffer_from<T: Sized + Copy>(
         &self,
+        usage: vk::BufferUsageFlags,
         data: &[T],
         name: Option<&str>,
     ) -> dess_backend::Result<BufferHandle> {
-        let mut desc = BufferCreateDesc::gpu(mem::size_of_val(data)).usage(
-            vk::BufferUsageFlags::STORAGE_BUFFER
-                | vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-        );
+        let mut desc = BufferCreateDesc::gpu(mem::size_of_val(data))
+            .usage(usage | vk::BufferUsageFlags::TRANSFER_DST);
         if let Some(name) = name {
             desc = desc.name(name);
         }
         let handle = self.create_buffer(desc)?;
-        self.upload_buffer(handle, data)?;
+        self.upload_buffer(handle, 0, data)?;
 
         Ok(handle)
     }
 
     pub fn add_buffer(&self, buffer: Arc<Buffer>) -> BufferHandle {
         let size = buffer.desc().size;
-        self.add_buffer_range(buffer, 0, size)
-    }
-
-    pub fn add_buffer_range(
-        &self,
-        buffer: Arc<Buffer>,
-        offset: usize,
-        size: usize,
-    ) -> BufferHandle {
-        let address = buffer.device_address() + offset as u64;
-        let handle = self
-            .buffers
-            .write()
-            .push(address, (buffer.clone(), offset, size));
-        if buffer.desc().usage.contains(
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-        ) {
+        let desc = *buffer.desc();
+        let raw = buffer.as_vk();
+        let handle = self.buffers.write().push(buffer.as_vk(), buffer);
+        if desc.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
             self.storage_buffer_updates.lock().push((
                 handle.index(),
                 vk::DescriptorBufferInfo::builder()
-                    .buffer(buffer.as_vk())
-                    .offset(offset as _)
+                    .buffer(raw)
+                    .offset(0)
                     .range(size as _)
                     .build(),
             ));
         }
-
         handle
     }
 
     pub fn update_buffer(&self, handle: BufferHandle, buffer: Arc<Buffer>) {
-        let size = buffer.desc().size;
-        self.update_buffer_range(handle, buffer, 0, size);
-    }
-
-    pub fn update_buffer_range(
-        &self,
-        handle: BufferHandle,
-        buffer: Arc<Buffer>,
-        offset: usize,
-        size: usize,
-    ) {
         let mut buffers = self.buffers.write();
-        buffers.replace(handle, buffer.device_address() + offset as u64);
-        buffers.replace_cold(handle, (buffer.clone(), offset, size));
-        if buffer.desc().usage.contains(
-            vk::BufferUsageFlags::STORAGE_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-        ) {
+        buffers.replace(handle, buffer.as_vk());
+        if buffer
+            .desc()
+            .usage
+            .contains(vk::BufferUsageFlags::STORAGE_BUFFER)
+        {
             self.storage_buffer_updates.lock().push((
                 handle.index(),
                 vk::DescriptorBufferInfo::builder()
                     .buffer(buffer.as_vk())
-                    .offset(offset as _)
-                    .range(size as _)
+                    .offset(0)
+                    .range(buffer.desc().size as _)
                     .build(),
             ));
         }
+        buffers.replace_cold(handle, buffer);
+    }
+
+    pub fn update_buffer_from<T: Sized + Copy>(
+        &self,
+        handle: BufferHandle,
+        data: &[T],
+    ) -> dess_backend::Result<()> {
+        let size = mem::size_of_val(data);
+        let mut buffers = self.buffers.write();
+        if let Some(buffer) = buffers.get_cold(handle) {
+            let usage = buffer.desc().usage | vk::BufferUsageFlags::TRANSFER_DST;
+            let buffer = Arc::new(Buffer::new(
+                &self.device,
+                BufferCreateDesc::gpu(size).usage(usage),
+            )?);
+            self.staging.lock().upload_buffer(&buffer, 0, data)?;
+            buffers.replace(handle, buffer.as_vk());
+            if usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+                self.storage_buffer_updates.lock().push((
+                    handle.index(),
+                    vk::DescriptorBufferInfo::builder()
+                        .buffer(buffer.as_vk())
+                        .offset(0)
+                        .range(size as _)
+                        .build(),
+                ));
+            }
+            buffers.replace_cold(handle, buffer);
+        }
+        Ok(())
     }
 
     pub fn remove_buffer(&self, handle: BufferHandle) {
@@ -320,16 +326,18 @@ impl ResourceManager {
     pub fn upload_buffer<T: Sized + Copy>(
         &self,
         handle: BufferHandle,
+        offset: usize,
         data: &[T],
     ) -> dess_backend::Result<()> {
-        if let Some((buffer, offset, size)) = self.buffers.read().get_cold(handle).cloned() {
-            assert_eq!(size, mem::size_of_val(data));
+        let size = mem::size_of_val(data);
+        if let Some(buffer) = self.buffers.read().get_cold(handle).cloned() {
+            assert!(size + offset <= buffer.desc().size);
             self.staging.lock().upload_buffer(&buffer, offset, data)?;
         }
         Ok(())
     }
 
-    pub fn buffer(&self, handle: BufferHandle) -> Option<(Arc<Buffer>, usize, usize)> {
+    pub fn buffer(&self, handle: BufferHandle) -> Option<Arc<Buffer>> {
         self.buffers.read().get_cold(handle).cloned()
     }
 

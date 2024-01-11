@@ -15,7 +15,7 @@
 
 use std::{ptr::NonNull, sync::Arc};
 
-use ash::vk::{self, BufferDeviceAddressInfo};
+use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 
 use crate::{Error, Result};
@@ -68,8 +68,7 @@ impl<'a> BufferCreateDesc<'a> {
         Self {
             size,
             usage: vk::BufferUsageFlags::empty(),
-            memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
-                | gpu_alloc::UsageFlags::DEVICE_ADDRESS,
+            memory_location: gpu_alloc::UsageFlags::HOST_ACCESS,
             alignment: None,
             dedicated: false,
             name: None,
@@ -92,8 +91,7 @@ impl<'a> BufferCreateDesc<'a> {
             size,
             usage: vk::BufferUsageFlags::empty(),
             memory_location: gpu_alloc::UsageFlags::HOST_ACCESS
-                | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS
-                | gpu_alloc::UsageFlags::DEVICE_ADDRESS,
+                | gpu_alloc::UsageFlags::FAST_DEVICE_ACCESS,
             alignment: None,
             dedicated: true,
             name: None,
@@ -173,14 +171,6 @@ impl Buffer {
     pub fn unmap(&mut self) {
         if let Some(memory) = &mut self.memory {
             unsafe { memory.unmap(AshMemoryDevice::wrap(self.device.get())) };
-        }
-    }
-
-    pub fn device_address(&self) -> u64 {
-        unsafe {
-            self.device
-                .get()
-                .get_buffer_device_address(&BufferDeviceAddressInfo::builder().buffer(self.raw))
         }
     }
 }
