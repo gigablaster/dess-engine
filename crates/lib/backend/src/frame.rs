@@ -19,7 +19,7 @@ use std::{
     thread::{self},
 };
 
-use ash::vk::{self, CommandBuffer};
+use ash::vk::{self};
 use parking_lot::Mutex;
 
 use crate::{AsVulkan, AsVulkanCommandBuffer, CommandBufferRecorder, Device, RenderPass, Result};
