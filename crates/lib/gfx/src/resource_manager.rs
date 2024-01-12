@@ -23,7 +23,11 @@ use dess_backend::{
 use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
 use parking_lot::{Mutex, RwLock};
 
-use crate::staging::{Staging, StagingDesc};
+use crate::{
+    staging::{Staging, StagingDesc},
+    temp::TempBuffer,
+    BufferSlice, Error, GpuBuferWriter, GpuBufferWriterImpl,
+};
 
 pub type ImageHandle = Handle<Arc<Image>>;
 pub type BufferHandle = Handle<vk::Buffer>;
@@ -44,6 +48,8 @@ pub struct ResourceManager {
     storage_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
     storage_buffer_updates: Mutex<Vec<(u32, vk::DescriptorBufferInfo)>>,
     staging: Mutex<Staging>,
+    temp: TempBuffer,
+    temp_buffer_handle: BufferHandle,
 }
 
 // For every possible item in Pool.
@@ -51,6 +57,7 @@ const MAX_RESOURCES: u32 = 262143;
 const SAMPLED_IMAGE_BINDING: u32 = 0;
 const STORAGE_IMAGE_BINDING: u32 = 1;
 const STORAGE_BUFFER_BINDING: u32 = 2;
+const TEMP_BUFFER_PAGE_SIZE: usize = 32 * 1024 * 1024;
 
 impl ResourceManager {
     pub fn new(device: &Arc<Device>) -> dess_backend::Result<Self> {
@@ -118,17 +125,32 @@ impl ResourceManager {
         alloc_info.descriptor_set_count = 1;
         let bindless_set = unsafe { device.get().allocate_descriptor_sets(&alloc_info) }?[0];
 
+        let temp = TempBuffer::new(device, TEMP_BUFFER_PAGE_SIZE)?;
+        let mut buffers = BufferPool::default();
+        let temp_buffer = temp.get();
+        let temp_buffer_raw = temp_buffer.as_vk();
+        let temp_buffer_handle = buffers.push(temp_buffer_raw, temp_buffer.clone());
+        let storage_buffer_updates = vec![(
+            temp_buffer_handle.index(),
+            vk::DescriptorBufferInfo::builder()
+                .buffer(temp_buffer_raw)
+                .offset(0)
+                .range(temp_buffer.desc().size as _)
+                .build(),
+        )];
         Ok(Self {
             device: device.clone(),
             images: RwLock::default(),
-            buffers: RwLock::default(),
+            buffers: RwLock::new(buffers),
             bindless_pool,
             bindless_layout,
             bindless_set,
             sampled_image_updates: Mutex::default(),
             storage_image_updates: Mutex::default(),
-            storage_buffer_updates: Mutex::default(),
+            storage_buffer_updates: Mutex::new(storage_buffer_updates),
             staging: Mutex::new(Staging::new(device, StagingDesc::default())?),
+            temp,
+            temp_buffer_handle,
         })
     }
 
@@ -253,10 +275,10 @@ impl ResourceManager {
 
     pub fn add_buffer(&self, buffer: Arc<Buffer>) -> BufferHandle {
         let size = buffer.desc().size;
-        let desc = *buffer.desc();
+        let usage = buffer.desc().usage;
         let raw = buffer.as_vk();
         let handle = self.buffers.write().push(buffer.as_vk(), buffer);
-        if desc.usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+        if usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
             self.storage_buffer_updates.lock().push((
                 handle.index(),
                 vk::DescriptorBufferInfo::builder()
@@ -347,6 +369,7 @@ impl ResourceManager {
 
     pub fn tick(&self) {
         self.update_bindless_descriptors();
+        self.temp.next_frame();
     }
 
     fn update_bindless_descriptors(&self) {
@@ -389,6 +412,23 @@ impl ResourceManager {
         sampled_image_updates.clear();
         storage_image_updates.clear();
         storage_buffer_updates.clear();
+    }
+
+    pub fn push_uniform<T: Sized + Copy>(&self, data: &T) -> Result<usize, Error> {
+        self.temp.push_uniform(data)
+    }
+
+    pub fn push_buffer<T: Sized + Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
+        let offset = self.temp.push_bufer(data)?;
+        Ok(BufferSlice(self.temp_buffer_handle, offset as _))
+    }
+
+    pub fn write_buffer<T: Sized + Copy>(&self, count: usize) -> Result<GpuBuferWriter<T>, Error> {
+        let writer = self.temp.write_buffer(count)?;
+        Ok(GpuBuferWriter {
+            handle: self.temp_buffer_handle,
+            writer,
+        })
     }
 }
 
