@@ -54,6 +54,13 @@ pub(crate) struct GpuBufferWriterImpl<T: Sized + Copy> {
 
 pub enum Error {
     OutOfSpace,
+    BackendEror(dess_backend::Error),
+}
+
+impl From<dess_backend::Error> for Error {
+    fn from(value: dess_backend::Error) -> Self {
+        Self::BackendEror(value)
+    }
 }
 
 impl<T: Sized + Copy> GpuBufferWriterImpl<T> {

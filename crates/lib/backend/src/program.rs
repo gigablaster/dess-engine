@@ -336,12 +336,10 @@ pub struct Program {
 }
 
 impl Program {
-    pub fn new<'a, I: Iterator<Item = ShaderDesc<'a>>>(
-        device: &Arc<Device>,
-        shaders: I,
-    ) -> Result<Self> {
+    pub fn new(device: &Arc<Device>, shaders: &[ShaderDesc]) -> Result<Self> {
         let mut stages = vk::ShaderStageFlags::empty();
         let shaders = shaders
+            .iter()
             .map(|desc| {
                 stages |= desc.stage;
                 Shader::new(device, &desc).unwrap()

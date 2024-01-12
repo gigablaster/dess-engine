@@ -13,25 +13,18 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{mem, slice, sync::Arc};
+use std::{slice, sync::Arc};
 
 use ash::vk;
-use dess_backend::{
-    AsVulkan, Buffer, BufferCreateDesc, Device, Image, ImageCreateDesc, ImageSubresourceData,
-    ImageViewDesc, Program,
-};
+use dess_backend::{AsVulkan, Buffer, Device, Image, ImageViewDesc, Program};
 use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
 use parking_lot::{Mutex, RwLock};
 
-use crate::{
-    staging::{Staging, StagingDesc},
-    temp::TempBuffer,
-    BufferSlice, Error, GpuBuferWriter, GpuBufferWriterImpl,
-};
+use crate::{temp::TempBuffer, BufferSlice, Error, GpuBuferWriter};
 
 pub type ImageHandle = Handle<Arc<Image>>;
 pub type BufferHandle = Handle<vk::Buffer>;
-pub type ProgramHandle = Pool<Arc<Program>>;
+pub type ProgramHandle = Handle<Arc<Program>>;
 
 type ImagePool = Pool<Arc<Image>>;
 type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>, SentinelPoolStrategy<vk::Buffer>>;
@@ -41,13 +34,13 @@ pub struct ResourceManager {
     device: Arc<Device>,
     images: RwLock<ImagePool>,
     buffers: RwLock<BufferPool>,
+    programs: RwLock<ProgramPool>,
     bindless_pool: vk::DescriptorPool,
     bindless_layout: vk::DescriptorSetLayout,
     bindless_set: vk::DescriptorSet,
     sampled_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
     storage_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
     storage_buffer_updates: Mutex<Vec<(u32, vk::DescriptorBufferInfo)>>,
-    staging: Mutex<Staging>,
     temp: TempBuffer,
     temp_buffer_handle: BufferHandle,
 }
@@ -142,30 +135,16 @@ impl ResourceManager {
             device: device.clone(),
             images: RwLock::default(),
             buffers: RwLock::new(buffers),
+            programs: RwLock::default(),
             bindless_pool,
             bindless_layout,
             bindless_set,
             sampled_image_updates: Mutex::default(),
             storage_image_updates: Mutex::default(),
             storage_buffer_updates: Mutex::new(storage_buffer_updates),
-            staging: Mutex::new(Staging::new(device, StagingDesc::default())?),
             temp,
             temp_buffer_handle,
         })
-    }
-
-    pub fn create_image(
-        &self,
-        desc: ImageCreateDesc,
-        view: ImageViewDesc,
-        layout: vk::ImageLayout,
-        data: Option<&[ImageSubresourceData]>,
-    ) -> dess_backend::Result<ImageHandle> {
-        let image = Arc::new(Image::new(&self.device, desc)?);
-        if let Some(data) = data {
-            self.staging.lock().upload_image(&image, data)?;
-        }
-        self.add_image(&image, view, layout)
     }
 
     pub fn add_image(
@@ -235,42 +214,8 @@ impl ResourceManager {
         Ok(())
     }
 
-    pub fn upload_image(
-        &self,
-        handle: ImageHandle,
-        data: &[ImageSubresourceData],
-    ) -> dess_backend::Result<()> {
-        if let Some(image) = self.images.read().get(handle).cloned() {
-            self.staging.lock().upload_image(&image, data)?;
-        }
-
-        Ok(())
-    }
-
     pub fn image(&self, handle: ImageHandle) -> Option<Arc<Image>> {
         self.images.read().get(handle).cloned()
-    }
-
-    pub fn create_buffer(&self, desc: BufferCreateDesc) -> dess_backend::Result<BufferHandle> {
-        let buffer = Arc::new(Buffer::new(&self.device, desc)?);
-        Ok(self.add_buffer(buffer))
-    }
-
-    pub fn create_buffer_from<T: Sized + Copy>(
-        &self,
-        usage: vk::BufferUsageFlags,
-        data: &[T],
-        name: Option<&str>,
-    ) -> dess_backend::Result<BufferHandle> {
-        let mut desc = BufferCreateDesc::gpu(mem::size_of_val(data))
-            .usage(usage | vk::BufferUsageFlags::TRANSFER_DST);
-        if let Some(name) = name {
-            desc = desc.name(name);
-        }
-        let handle = self.create_buffer(desc)?;
-        self.upload_buffer(handle, 0, data)?;
-
-        Ok(handle)
     }
 
     pub fn add_buffer(&self, buffer: Arc<Buffer>) -> BufferHandle {
@@ -311,52 +256,8 @@ impl ResourceManager {
         buffers.replace_cold(handle, buffer);
     }
 
-    pub fn update_buffer_from<T: Sized + Copy>(
-        &self,
-        handle: BufferHandle,
-        data: &[T],
-    ) -> dess_backend::Result<()> {
-        let size = mem::size_of_val(data);
-        let mut buffers = self.buffers.write();
-        if let Some(buffer) = buffers.get_cold(handle) {
-            let usage = buffer.desc().usage | vk::BufferUsageFlags::TRANSFER_DST;
-            let buffer = Arc::new(Buffer::new(
-                &self.device,
-                BufferCreateDesc::gpu(size).usage(usage),
-            )?);
-            self.staging.lock().upload_buffer(&buffer, 0, data)?;
-            buffers.replace(handle, buffer.as_vk());
-            if usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
-                self.storage_buffer_updates.lock().push((
-                    handle.index(),
-                    vk::DescriptorBufferInfo::builder()
-                        .buffer(buffer.as_vk())
-                        .offset(0)
-                        .range(size as _)
-                        .build(),
-                ));
-            }
-            buffers.replace_cold(handle, buffer);
-        }
-        Ok(())
-    }
-
     pub fn remove_buffer(&self, handle: BufferHandle) {
         self.buffers.write().remove(handle);
-    }
-
-    pub fn upload_buffer<T: Sized + Copy>(
-        &self,
-        handle: BufferHandle,
-        offset: usize,
-        data: &[T],
-    ) -> dess_backend::Result<()> {
-        let size = mem::size_of_val(data);
-        if let Some(buffer) = self.buffers.read().get_cold(handle).cloned() {
-            assert!(size + offset <= buffer.desc().size);
-            self.staging.lock().upload_buffer(&buffer, offset, data)?;
-        }
-        Ok(())
     }
 
     pub fn buffer(&self, handle: BufferHandle) -> Option<Arc<Buffer>> {
@@ -429,6 +330,18 @@ impl ResourceManager {
             handle: self.temp_buffer_handle,
             writer,
         })
+    }
+
+    pub fn add_program(&self, program: Arc<Program>) -> ProgramHandle {
+        self.programs.write().push(program)
+    }
+
+    pub fn update_program(&self, handle: ProgramHandle, program: Arc<Program>) {
+        self.programs.write().replace(handle, program);
+    }
+
+    pub fn remove_program(&self, handle: ProgramHandle) {
+        self.programs.write().remove(handle);
     }
 }
 
