@@ -19,7 +19,7 @@ use ash::vk;
 use gpu_alloc_ash::AshMemoryDevice;
 use smol_str::SmolStr;
 
-use crate::{Error, Result};
+use crate::Result;
 
 use super::{AsVulkan, Device, GpuMemory};
 
@@ -158,11 +158,11 @@ impl Buffer {
     }
 
     pub fn map(&mut self) -> Result<NonNull<u8>> {
-        if let Some(memory) = &mut self.memory {
-            Ok(unsafe { memory.map(AshMemoryDevice::wrap(self.device.get()), 0, self.desc.size) }?)
-        } else {
-            Err(Error::NotAllocated)
-        }
+        let memory = self
+            .memory
+            .as_mut()
+            .expect("Buffer must point to allocated data");
+        Ok(unsafe { memory.map(AshMemoryDevice::wrap(self.device.get()), 0, self.desc.size) }?)
     }
 
     pub fn unmap(&mut self) {

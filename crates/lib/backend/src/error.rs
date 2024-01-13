@@ -13,26 +13,37 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{io, sync::Arc};
+use std::io;
 
 use ash::vk;
+use thiserror::Error;
 
 // use crate::DrawStreamError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Error)]
 pub enum Error {
-    OutOfMemory,
+    #[error("Out of device memory")]
+    OutOfDevicecMemory,
+    #[error("Out of host memory")]
+    OutOfHostMemory,
+    #[error("Too many objects")]
     TooManyObjects,
+    #[error("Not supported")]
     NotSupported,
-    NotFound,
+    #[error("Vulkan not found or failed to load")]
+    VulkanFailedToLoad,
+    #[error("Can't find suitable device")]
     NoSuitableDevice,
+    #[error("Extension {0} not found")]
     ExtensionNotFound(String),
+    #[error("Can't find suitable queue")]
     NoSuitableQueue,
-    Io(Arc<io::Error>),
-    TooBig,
-    Fail,
-    NotAllocated,
+    #[error("Shader reflection failed")]
     ReflectionFailed,
+    #[error("Failed to map memory")]
+    MemoryMapFailed,
+    #[error("IO error: {0}")]
+    Io(io::Error),
 }
 
 impl From<vk::Result> for Error {
@@ -40,11 +51,10 @@ impl From<vk::Result> for Error {
         match value {
             vk::Result::ERROR_FORMAT_NOT_SUPPORTED
             | vk::Result::ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR => Self::NotSupported,
-            vk::Result::ERROR_OUT_OF_HOST_MEMORY
-            | vk::Result::ERROR_OUT_OF_DEVICE_MEMORY
-            | vk::Result::ERROR_OUT_OF_POOL_MEMORY => Self::OutOfMemory,
+            vk::Result::ERROR_OUT_OF_HOST_MEMORY => Self::OutOfHostMemory,
+            vk::Result::ERROR_OUT_OF_DEVICE_MEMORY => Self::OutOfDevicecMemory,
             vk::Result::ERROR_TOO_MANY_OBJECTS => Self::TooManyObjects,
-            _ => Self::Fail,
+            _ => panic!("Unexpected error {:?}", value),
         }
     }
 }
@@ -53,8 +63,8 @@ impl From<gpu_alloc::AllocationError> for Error {
     fn from(value: gpu_alloc::AllocationError) -> Self {
         match value {
             gpu_alloc::AllocationError::NoCompatibleMemoryTypes => Self::NotSupported,
-            gpu_alloc::AllocationError::OutOfDeviceMemory
-            | gpu_alloc::AllocationError::OutOfHostMemory => Self::OutOfMemory,
+            gpu_alloc::AllocationError::OutOfDeviceMemory => Self::OutOfDevicecMemory,
+            gpu_alloc::AllocationError::OutOfHostMemory => Self::OutOfHostMemory,
             gpu_alloc::AllocationError::TooManyObjects => Self::TooManyObjects,
         }
     }
@@ -64,20 +74,18 @@ impl From<gpu_alloc::MapError> for Error {
     fn from(value: gpu_alloc::MapError) -> Self {
         match value {
             gpu_alloc::MapError::NonHostVisible => Self::NotSupported,
-            gpu_alloc::MapError::AlreadyMapped | gpu_alloc::MapError::MapFailed => Self::Fail,
-            gpu_alloc::MapError::OutOfDeviceMemory | gpu_alloc::MapError::OutOfHostMemory => {
-                Self::OutOfMemory
+            gpu_alloc::MapError::AlreadyMapped | gpu_alloc::MapError::MapFailed => {
+                Self::MemoryMapFailed
             }
+            gpu_alloc::MapError::OutOfDeviceMemory => Self::OutOfDevicecMemory,
+            gpu_alloc::MapError::OutOfHostMemory => Self::OutOfHostMemory,
         }
     }
 }
 
 impl From<ash::LoadingError> for Error {
-    fn from(value: ash::LoadingError) -> Self {
-        match value {
-            ash::LoadingError::LibraryLoadFailure(..) => Self::Fail,
-            ash::LoadingError::MissingEntryPoint(..) => Self::NotFound,
-        }
+    fn from(_: ash::LoadingError) -> Self {
+        Self::VulkanFailedToLoad
     }
 }
 
@@ -87,14 +95,14 @@ impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
     }
 }
 
-impl From<io::Error> for Error {
-    fn from(value: io::Error) -> Self {
-        Self::Io(Arc::new(value))
-    }
-}
-
 impl From<rspirv_reflect::ReflectError> for Error {
     fn from(_value: rspirv_reflect::ReflectError) -> Self {
         Self::ReflectionFailed
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
     }
 }
