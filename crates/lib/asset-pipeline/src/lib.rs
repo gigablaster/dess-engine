@@ -1,6 +1,5 @@
 mod gltf;
 mod image;
-mod shader;
 
 use std::{
     collections::{HashMap, HashSet},
