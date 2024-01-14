@@ -155,14 +155,10 @@ impl TempImagePool {
         images: &mut Vec<(TempImageDesc, ImageHandle)>,
         desc: &TempImageDesc,
     ) -> Option<ImageHandle> {
-        if let Some(index) = images
+        images
             .iter()
             .enumerate()
             .find_map(|(index, (x, _))| (x == desc).then_some(index))
-        {
-            Some(images.remove(index).1)
-        } else {
-            None
-        }
+            .map(|index| images.remove(index).1)
     }
 }

@@ -442,6 +442,7 @@ version = "0.1.0"
 dependencies = [
  "arrayvec",
  "ash",
+ "bevy_tasks",
  "bitflags 2.4.1",
  "dess-backend",
  "dess-common",

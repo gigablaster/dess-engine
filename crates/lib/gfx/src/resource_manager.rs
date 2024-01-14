@@ -16,9 +16,11 @@
 use std::{collections::HashMap, slice, sync::Arc};
 
 use ash::vk;
+use bevy_tasks::AsyncComputeTaskPool;
 use dess_backend::{
-    AsVulkan, Buffer, CommandBufferRecorder, Device, Image, ImageCreateDesc, ImageSubresourceData,
-    ImageViewDesc, Program, RasterPipelineCreateDesc, RenderPass, ShaderDesc,
+    compile_raster_pipeline, AsVulkan, Buffer, CommandBufferRecorder, Device, Image,
+    ImageCreateDesc, ImageSubresourceData, ImageViewDesc, Program, RasterPipelineCreateDesc,
+    RenderPass, ShaderDesc,
 };
 use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
 use parking_lot::{Mutex, RwLock};
@@ -79,6 +81,9 @@ const SAMPLED_IMAGE_BINDING: u32 = 0;
 const STORAGE_IMAGE_BINDING: u32 = 1;
 const STORAGE_BUFFER_BINDING: u32 = 2;
 const TEMP_BUFFER_PAGE_SIZE: usize = 32 * 1024 * 1024;
+
+unsafe impl Send for ResourceManager {}
+unsafe impl Sync for ResourceManager {}
 
 impl ResourceManager {
     pub fn new(device: &Arc<Device>) -> Result<Self, Error> {
@@ -457,6 +462,52 @@ impl ResourceManager {
             descs.insert(desc, handle);
             handle
         }
+    }
+
+    pub async fn compile_pipelines(&self) -> Result<(), Error> {
+        let descs = self.pipeline_descriptons.lock();
+        let compiled_pipelines = AsyncComputeTaskPool::get().scope(|s| {
+            let pipelines = self.pipelines.read();
+            descs
+                .iter()
+                .filter(|(_, handle)| pipelines[handle.0 as usize].0 == vk::Pipeline::null())
+                .for_each(|(desc, handle)| s.spawn(self.compile_single_pipeline(*handle, desc)));
+        });
+        let mut pipelines = self.pipelines.write();
+        for it in compiled_pipelines {
+            let (handle, data) = it?;
+            pipelines[handle.0 as usize] = data;
+        }
+        Ok(())
+    }
+
+    async fn compile_single_pipeline(
+        &self,
+        handle: RasterPipelineHandle,
+        desc: &RasterPipelineDesc,
+    ) -> Result<(RasterPipelineHandle, (vk::Pipeline, vk::PipelineLayout)), Error> {
+        let program = self
+            .programs
+            .read()
+            .get(handle.0 as usize)
+            .ok_or(Error::InvalidHandle)?
+            .clone();
+        let render_pass = self
+            .render_passes
+            .read()
+            .get(desc.render_pass.0 as usize)
+            .ok_or(Error::InvalidHandle)?
+            .clone();
+        Ok((
+            handle,
+            compile_raster_pipeline(
+                &self.device,
+                &program,
+                &render_pass,
+                desc.subpass,
+                &desc.desc,
+            )?,
+        ))
     }
 }
 

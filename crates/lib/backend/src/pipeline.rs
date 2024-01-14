@@ -269,7 +269,7 @@ pub fn compile_raster_pipeline(
     program: &Program,
     render_pass: &RenderPass,
     subpass: usize,
-    desc: RasterPipelineCreateDesc,
+    desc: &RasterPipelineCreateDesc,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
     let shader_create_info = program
         .shaders()
