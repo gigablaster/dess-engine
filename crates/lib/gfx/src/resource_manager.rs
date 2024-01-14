@@ -179,12 +179,7 @@ impl ResourceManager {
         })
     }
 
-    pub fn add_image(
-        &self,
-        image: Arc<Image>,
-        view: ImageViewDesc,
-        layout: vk::ImageLayout,
-    ) -> Result<ImageHandle, Error> {
+    pub fn add_image(&self, image: Arc<Image>, view: ImageViewDesc) -> Result<ImageHandle, Error> {
         let mut images = self.images.write();
         let view = image.view(view)?;
         let handle = images.push(image.clone());
@@ -193,7 +188,7 @@ impl ResourceManager {
                 handle.index(),
                 vk::DescriptorImageInfo::builder()
                     .image_view(view)
-                    .image_layout(layout)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .build(),
             ))
         }
@@ -202,7 +197,7 @@ impl ResourceManager {
                 handle.index(),
                 vk::DescriptorImageInfo::builder()
                     .image_view(view)
-                    .image_layout(layout)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                     .build(),
             ))
         }
@@ -214,11 +209,11 @@ impl ResourceManager {
         &self,
         desc: ImageCreateDesc,
         view: ImageViewDesc,
-        layout: vk::ImageLayout,
     ) -> Result<ImageHandle, Error> {
         let image = Image::new(&self.device, desc)?.into();
-        self.add_image(image, view, layout)
+        self.add_image(image, view)
     }
+
     pub fn remove_image(&self, handle: ImageHandle) {
         self.images.write().remove(handle);
     }

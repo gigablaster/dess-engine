@@ -43,7 +43,6 @@ struct TempImageDesc {
     format: vk::Format,
     usage: vk::ImageUsageFlags,
     aspect: vk::ImageAspectFlags,
-    layout: vk::ImageLayout,
     dims: [u32; 2],
 }
 
@@ -102,13 +101,11 @@ impl TempImagePool {
         &self,
         desc: ImageCreateDesc,
         aspect: vk::ImageAspectFlags,
-        layout: vk::ImageLayout,
     ) -> Result<TemporaryImage, Error> {
         let temp_desc = TempImageDesc {
             format: desc.format,
             usage: desc.usage,
             aspect,
-            layout,
             dims: desc.dims,
         };
         let mut images = self.images.lock();
@@ -116,7 +113,7 @@ impl TempImagePool {
             handle
         } else {
             self.resource_manager
-                .create_image(desc, ImageViewDesc::new(aspect), layout)?
+                .create_image(desc, ImageViewDesc::new(aspect))?
         };
         Ok(TemporaryImage {
             pool: self,
@@ -135,7 +132,6 @@ impl TempImagePool {
                 vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             ),
             vk::ImageAspectFlags::DEPTH,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         )
     }
 
@@ -148,7 +144,6 @@ impl TempImagePool {
             ImageCreateDesc::new(format, dims.to_actual(self.backbuffer_dims))
                 .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT),
             vk::ImageAspectFlags::COLOR,
-            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         )
     }
 
