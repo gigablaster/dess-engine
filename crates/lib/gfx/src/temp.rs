@@ -83,26 +83,6 @@ impl TempBuffer {
             + (self.current_frame.load(Ordering::Acquire) % PAGES) * self.page_size)
     }
 
-    pub fn allocate_uniform(&self, size: usize) -> Result<usize, Error> {
-        let alignment = self
-            .device
-            .physical_device()
-            .properties()
-            .limits
-            .min_uniform_buffer_offset_alignment;
-        self.allocate(size, alignment as _)
-    }
-
-    pub fn allocate_buffer(&self, size: usize) -> Result<usize, Error> {
-        let alignment = self
-            .device
-            .physical_device()
-            .properties()
-            .limits
-            .min_storage_buffer_offset_alignment;
-        self.allocate(size, alignment as _)
-    }
-
     fn push<T: Sized + Copy>(&self, alignment: usize, data: &[T]) -> Result<usize, Error> {
         let size = mem::size_of_val(data);
         let offset = self.allocate(size, alignment)?;

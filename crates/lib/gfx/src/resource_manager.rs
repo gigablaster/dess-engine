@@ -17,12 +17,17 @@ use std::{collections::HashMap, slice, sync::Arc};
 
 use ash::vk;
 use dess_backend::{
-    AsVulkan, Buffer, Device, Image, ImageViewDesc, Program, RasterPipelineCreateDesc, RenderPass,
+    AsVulkan, Buffer, CommandBufferRecorder, Device, Image, ImageCreateDesc, ImageSubresourceData,
+    ImageViewDesc, Program, RasterPipelineCreateDesc, RenderPass, ShaderDesc,
 };
 use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
 use parking_lot::{Mutex, RwLock};
 
-use crate::{temp::TempBuffer, BufferSlice, Error, GpuBuferWriter};
+use crate::{
+    staging::{Staging, StagingDesc},
+    temp::TempBuffer,
+    BufferSlice, Error, GpuBuferWriter,
+};
 
 pub type ImageHandle = Handle<Arc<Image>>;
 pub type BufferHandle = Handle<vk::Buffer>;
@@ -65,6 +70,7 @@ pub struct ResourceManager {
     storage_buffer_updates: Mutex<Vec<(u32, vk::DescriptorBufferInfo)>>,
     temp: TempBuffer,
     temp_buffer_handle: BufferHandle,
+    staging: Mutex<Staging>,
 }
 
 // For every possible item in Pool.
@@ -75,7 +81,7 @@ const STORAGE_BUFFER_BINDING: u32 = 2;
 const TEMP_BUFFER_PAGE_SIZE: usize = 32 * 1024 * 1024;
 
 impl ResourceManager {
-    pub fn new(device: &Arc<Device>) -> dess_backend::Result<Self> {
+    pub fn new(device: &Arc<Device>) -> Result<Self, Error> {
         let pool_sizes = [
             vk::DescriptorPoolSize {
                 ty: vk::DescriptorType::SAMPLED_IMAGE,
@@ -169,15 +175,16 @@ impl ResourceManager {
             storage_buffer_updates: Mutex::new(storage_buffer_updates),
             temp,
             temp_buffer_handle,
+            staging: Mutex::new(Staging::new(device, StagingDesc::default())?),
         })
     }
 
     pub fn add_image(
         &self,
-        image: &Arc<Image>,
+        image: Arc<Image>,
         view: ImageViewDesc,
         layout: vk::ImageLayout,
-    ) -> dess_backend::Result<ImageHandle> {
+    ) -> Result<ImageHandle, Error> {
         let mut images = self.images.write();
         let view = image.view(view)?;
         let handle = images.push(image.clone());
@@ -203,6 +210,15 @@ impl ResourceManager {
         Ok(handle)
     }
 
+    pub fn create_image(
+        &self,
+        desc: ImageCreateDesc,
+        view: ImageViewDesc,
+        layout: vk::ImageLayout,
+    ) -> Result<ImageHandle, Error> {
+        let image = Image::new(&self.device, desc)?.into();
+        self.add_image(image, view, layout)
+    }
     pub fn remove_image(&self, handle: ImageHandle) {
         self.images.write().remove(handle);
     }
@@ -210,7 +226,7 @@ impl ResourceManager {
     pub fn update_image(
         &self,
         handle: ImageHandle,
-        image: &Arc<Image>,
+        image: Arc<Image>,
         view: ImageViewDesc,
         layout: vk::ImageLayout,
     ) -> dess_backend::Result<()> {
@@ -239,6 +255,16 @@ impl ResourceManager {
         Ok(())
     }
 
+    pub fn upload_image(
+        &self,
+        handle: ImageHandle,
+        data: &[ImageSubresourceData],
+    ) -> Result<(), Error> {
+        if let Some(image) = self.images.read().get(handle) {
+            self.staging.lock().upload_image(&image, data)?;
+        }
+        Ok(())
+    }
     pub fn image(&self, handle: ImageHandle) -> Option<Arc<Image>> {
         self.images.read().get(handle).cloned()
     }
@@ -285,6 +311,19 @@ impl ResourceManager {
         self.buffers.write().remove(handle);
     }
 
+    pub fn upload_buffer<T: Sized + Copy>(
+        &self,
+        buffer: BufferSlice,
+        data: &[T],
+    ) -> Result<(), Error> {
+        if let Some(target) = self.buffers.read().get_cold(buffer.handle()) {
+            self.staging
+                .lock()
+                .upload_buffer(&target, buffer.offset() as _, data)?;
+        }
+        Ok(())
+    }
+
     pub fn buffer(&self, handle: BufferHandle) -> Option<Arc<Buffer>> {
         self.buffers.read().get_cold(handle).cloned()
     }
@@ -293,9 +332,17 @@ impl ResourceManager {
         self.bindless_set
     }
 
-    pub fn before_frame_submit(&self) {
+    /// Update bindings, submits staging buffer uploads. Returns sempahore to wait
+    /// before starting actual render.
+    pub fn before_frame_record(&self) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
         self.update_bindless_descriptors();
         self.temp.next_frame();
+        self.staging.lock().upload()
+    }
+
+    /// Finalizes resource uploading.
+    pub fn before_start_renering(&self, recorder: &CommandBufferRecorder) {
+        self.staging.lock().execute_pending_barriers(recorder);
     }
 
     fn update_bindless_descriptors(&self) {
@@ -362,6 +409,15 @@ impl ResourceManager {
         let index = programs.len() as u32;
         programs.push(program);
         ProgramHandle(index)
+    }
+
+    pub fn create_program(&self, shaders: &[ShaderDesc]) -> Result<ProgramHandle, Error> {
+        let program = Program::new(&self.device, shaders)?.into();
+        Ok(self.add_program(program))
+    }
+
+    pub fn program(&self, handle: ProgramHandle) -> Option<Arc<Program>> {
+        self.programs.read().get(handle.0 as usize).cloned()
     }
 
     pub fn update_program(&self, handle: ProgramHandle, program: Arc<Program>) {
