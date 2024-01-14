@@ -15,7 +15,7 @@
 
 use std::{hash::Hash, io, path::Path};
 
-use ash::vk::{self, Image};
+use ash::vk::{self};
 use bytes::Bytes;
 use siphasher::sip128::Hasher128;
 use speedy::{Context, Readable, Writable};

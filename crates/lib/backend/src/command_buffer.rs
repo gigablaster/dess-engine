@@ -17,7 +17,7 @@ use std::{mem, slice, sync::Arc};
 
 use ash::vk;
 
-use crate::{AsVulkan, Buffer, Device, Image, Result};
+use crate::{AsVulkan, Device, Result};
 
 #[derive(Debug)]
 pub struct CommandBuffer {
@@ -183,7 +183,12 @@ impl<'a> CommandBufferRecorder<'a> {
         self.cb
     }
 
-    pub fn copy_buffer(&self, src: &Buffer, dst: &Buffer, regions: &[vk::BufferCopy2]) {
+    pub fn copy_buffer<Src: AsVulkan<vk::Buffer>, Dst: AsVulkan<vk::Buffer>>(
+        &self,
+        src: Src,
+        dst: Dst,
+        regions: &[vk::BufferCopy2],
+    ) {
         let info = vk::CopyBufferInfo2::builder()
             .src_buffer(src.as_vk())
             .dst_buffer(dst.as_vk())
@@ -191,10 +196,10 @@ impl<'a> CommandBufferRecorder<'a> {
         unsafe { self.device.cmd_copy_buffer2(self.cb, &info) }
     }
 
-    pub fn copy_buffer_to_image(
+    pub fn copy_buffer_to_image<Src: AsVulkan<vk::Buffer>, Dst: AsVulkan<vk::Image>>(
         &self,
-        src: &Buffer,
-        dst: &Image,
+        src: Src,
+        dst: Dst,
         regions: &[vk::BufferImageCopy2],
     ) {
         let info = vk::CopyBufferToImageInfo2::builder()

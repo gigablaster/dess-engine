@@ -342,7 +342,7 @@ impl Program {
             .iter()
             .map(|desc| {
                 stages |= desc.stage;
-                Shader::new(device, &desc).unwrap()
+                Shader::new(device, desc).unwrap()
             })
             .collect::<Vec<_>>();
         let sets = shaders

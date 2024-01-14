@@ -261,7 +261,7 @@ impl ResourceManager {
         data: &[ImageSubresourceData],
     ) -> Result<(), Error> {
         if let Some(image) = self.images.read().get(handle) {
-            self.staging.lock().upload_image(&image, data)?;
+            self.staging.lock().upload_image(image, data)?;
         }
         Ok(())
     }
@@ -319,7 +319,7 @@ impl ResourceManager {
         if let Some(target) = self.buffers.read().get_cold(buffer.handle()) {
             self.staging
                 .lock()
-                .upload_buffer(&target, buffer.offset() as _, data)?;
+                .upload_buffer(target, buffer.offset() as _, data)?;
         }
         Ok(())
     }

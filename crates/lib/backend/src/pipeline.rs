@@ -27,7 +27,7 @@ use ash::vk::{self};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use uuid::Uuid;
 
-use crate::{program, AsVulkan, Program, RenderPass, Result};
+use crate::{AsVulkan, Program, RenderPass, Result};
 
 use super::{Device, PhysicalDevice};
 
@@ -171,7 +171,7 @@ impl InputVertexStreamDesc {
 /// Data to create pipeline.
 ///
 /// Contains all data to create new pipeline.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Hash, PartialEq, Eq)]
 pub struct RasterPipelineCreateDesc {
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(PipelineBlendDesc, PipelineBlendDesc)>,
@@ -183,18 +183,6 @@ pub struct RasterPipelineCreateDesc {
     pub depth_write: bool,
     /// Vertex streams layout
     pub streams: Vec<InputVertexStreamDesc>,
-}
-
-impl Default for RasterPipelineCreateDesc {
-    fn default() -> Self {
-        Self {
-            blend: None,
-            cull: None,
-            depth_test: None,
-            depth_write: false,
-            streams: Vec::default(),
-        }
-    }
 }
 
 impl RasterPipelineCreateDesc {
