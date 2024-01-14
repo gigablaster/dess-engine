@@ -12,12 +12,13 @@
 
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
-use std::marker::PhantomData;
+use std::sync::Arc;
 
-use crate::{
-    BackendResult, Device, Format, FrameContext, ImageCreateDesc, ImageHandle, ImageUsage,
-    ImageView, ImageViewDesc,
-};
+use ash::vk::{self};
+use dess_backend::{ImageCreateDesc, ImageViewDesc};
+use parking_lot::Mutex;
+
+use crate::{Error, ImageHandle, ResourceManager};
 
 #[derive(Debug, Default, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum TemporaryImageDims {
@@ -38,108 +39,135 @@ impl TemporaryImageDims {
 }
 
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-pub(crate) struct TempImageDesc {
-    pub format: Format,
-    pub usage: ImageUsage,
-    pub dims: [u32; 2],
+struct TempImageDesc {
+    format: vk::Format,
+    usage: vk::ImageUsageFlags,
+    aspect: vk::ImageAspectFlags,
+    layout: vk::ImageLayout,
+    dims: [u32; 2],
 }
 
-#[derive(Debug)]
 pub struct TemporaryImage<'frame> {
-    device: &'frame Device,
-    image: ImageHandle,
+    handle: ImageHandle,
     desc: TempImageDesc,
-    _marker: PhantomData<&'frame ()>,
+    pool: &'frame TempImagePool,
 }
 
 impl<'frame> TemporaryImage<'frame> {
-    pub fn get_or_create_view(&self, desc: ImageViewDesc) -> BackendResult<ImageView> {
-        self.device.get_or_create_view(self.image, desc)
-    }
-
-    pub fn as_color(&self) -> BackendResult<ImageView> {
-        self.get_or_create_view(ImageViewDesc::color())
-    }
-
-    pub fn as_depth(&self) -> BackendResult<ImageView> {
-        self.get_or_create_view(ImageViewDesc::depth())
-    }
-
     pub fn as_handle(&self) -> ImageHandle {
-        self.image
+        self.handle
+    }
+
+    pub fn as_color(&self) -> Result<vk::ImageView, Error> {
+        Ok(self
+            .pool
+            .resource_manager
+            .image(self.handle)
+            .ok_or(Error::InvalidHandle)?
+            .view(ImageViewDesc::color())?)
+    }
+
+    pub fn as_depth(&self) -> Result<vk::ImageView, Error> {
+        Ok(self
+            .pool
+            .resource_manager
+            .image(self.handle)
+            .ok_or(Error::InvalidHandle)?
+            .view(ImageViewDesc::depth())?)
     }
 }
 
 impl<'frame> Drop for TemporaryImage<'frame> {
     fn drop(&mut self) {
-        self.device.release_temp_image(self.desc, self.image);
+        self.pool.release(self.handle, self.desc);
     }
 }
 
-fn get_free_image(
-    images: &mut Vec<(TempImageDesc, ImageHandle)>,
-    key: &TempImageDesc,
-) -> Option<ImageHandle> {
-    images
-        .iter()
-        .enumerate()
-        .find_map(
-            |(index, (image_key, _))| {
-                if image_key == key {
-                    Some(index)
-                } else {
-                    None
-                }
-            },
-        )
-        .map(|index| images.remove(index).1)
+pub struct TempImagePool {
+    resource_manager: Arc<ResourceManager>,
+    images: Mutex<Vec<(TempImageDesc, ImageHandle)>>,
+    backbuffer_dims: [u32; 2],
 }
 
-impl Device {
-    pub(crate) fn get_or_create_temp_image(
-        &self,
-        desc: TempImageDesc,
-    ) -> BackendResult<ImageHandle> {
-        let mut free_images = self.free_temp_images.lock();
-        if let Some(image) = get_free_image(&mut free_images, &desc) {
-            Ok(image)
-        } else {
-            let mut all_images = self.temp_images.lock();
-            let image = self.create_image(
-                ImageCreateDesc::new(desc.format, desc.dims)
-                    .usage(desc.usage)
-                    .name(&format!("{} - {:?}", all_images.len(), desc)),
-            )?;
-            all_images.push((desc, image));
-            Ok(image)
+impl TempImagePool {
+    pub fn new(resource_manager: &Arc<ResourceManager>) -> Self {
+        Self {
+            resource_manager: resource_manager.clone(),
+            images: Mutex::default(),
+            backbuffer_dims: [0; 2],
         }
     }
 
-    pub(crate) fn release_temp_image(&self, desc: TempImageDesc, image: ImageHandle) {
-        let mut free_image = self.free_temp_images.lock();
-        free_image.push((desc, image));
-    }
-}
-
-impl<'device, 'frame> FrameContext<'device, 'frame> {
-    pub fn get_temporary_image(
+    fn attachment(
         &self,
-        format: Format,
-        usage: ImageUsage,
-        dims: TemporaryImageDims,
-    ) -> BackendResult<TemporaryImage> {
-        let dims = dims.to_actual(self.dims);
-        let desc = TempImageDesc {
-            format,
-            usage,
-            dims,
+        desc: ImageCreateDesc,
+        aspect: vk::ImageAspectFlags,
+        layout: vk::ImageLayout,
+    ) -> Result<TemporaryImage, Error> {
+        let temp_desc = TempImageDesc {
+            format: desc.format,
+            usage: desc.usage,
+            aspect,
+            layout,
+            dims: desc.dims,
         };
-        let image = self.device.get_or_create_temp_image(desc)?;
+        let mut images = self.images.lock();
+        let handle = if let Some(handle) = Self::find_image(&mut images, &temp_desc) {
+            handle
+        } else {
+            self.resource_manager
+                .create_image(desc, ImageViewDesc::new(aspect), layout)?
+        };
         Ok(TemporaryImage {
-            device: self.device,
-            image,
-            desc,
-            _marker: PhantomData,
+            pool: self,
+            desc: temp_desc,
+            handle,
         })
+    }
+
+    pub fn depth_attachment(
+        &self,
+        format: vk::Format,
+        dims: TemporaryImageDims,
+    ) -> Result<TemporaryImage, Error> {
+        self.attachment(
+            ImageCreateDesc::new(format, dims.to_actual(self.backbuffer_dims)).usage(
+                vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            ),
+            vk::ImageAspectFlags::DEPTH,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        )
+    }
+
+    pub fn color_attachment(
+        &self,
+        format: vk::Format,
+        dims: TemporaryImageDims,
+    ) -> Result<TemporaryImage, Error> {
+        self.attachment(
+            ImageCreateDesc::new(format, dims.to_actual(self.backbuffer_dims))
+                .usage(vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::COLOR_ATTACHMENT),
+            vk::ImageAspectFlags::COLOR,
+            vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        )
+    }
+
+    fn release(&self, image: ImageHandle, desc: TempImageDesc) {
+        self.images.lock().push((desc, image));
+    }
+
+    fn find_image(
+        images: &mut Vec<(TempImageDesc, ImageHandle)>,
+        desc: &TempImageDesc,
+    ) -> Option<ImageHandle> {
+        if let Some(index) = images
+            .iter()
+            .enumerate()
+            .find_map(|(index, (x, _))| (x == desc).then_some(index))
+        {
+            Some(images.remove(index).1)
+        } else {
+            None
+        }
     }
 }

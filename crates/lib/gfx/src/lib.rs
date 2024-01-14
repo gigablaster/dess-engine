@@ -16,6 +16,7 @@
 mod resource_manager;
 mod staging;
 mod temp;
+mod temp_images;
 
 use std::{
     io,
@@ -27,6 +28,7 @@ use std::{
 
 use ash::vk;
 pub use resource_manager::*;
+pub use temp_images::*;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferSlice(BufferHandle, u32);
@@ -68,6 +70,8 @@ pub enum Error {
     ShaderCompilationFailed(String),
     #[error("Image is too big for staging")]
     ImageTooBig,
+    #[error("Handle isn't valid")]
+    InvalidHandle,
 }
 
 impl From<dess_backend::Error> for Error {
