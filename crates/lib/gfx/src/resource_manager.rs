@@ -13,10 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{slice, sync::Arc};
+use std::{collections::HashMap, slice, sync::Arc};
 
 use ash::vk;
-use dess_backend::{AsVulkan, Buffer, Device, Image, ImageViewDesc, Program};
+use dess_backend::{
+    AsVulkan, Buffer, Device, Image, ImageViewDesc, Program, RasterPipelineCreateDesc, RenderPass,
+};
 use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
 use parking_lot::{Mutex, RwLock};
 
@@ -24,17 +26,37 @@ use crate::{temp::TempBuffer, BufferSlice, Error, GpuBuferWriter};
 
 pub type ImageHandle = Handle<Arc<Image>>;
 pub type BufferHandle = Handle<vk::Buffer>;
-pub type ProgramHandle = Handle<Arc<Program>>;
+
+#[derive(Debug, Clone, Hash, Copy, PartialEq, Eq)]
+pub struct ProgramHandle(u32);
+
+#[derive(Debug, Clone, Hash, Copy, PartialEq, Eq)]
+pub struct RenderPassHandle(u32);
+
+#[derive(Debug, Clone, Hash, Copy, PartialEq, Eq)]
+pub struct RasterPipelineHandle(u32);
 
 type ImagePool = Pool<Arc<Image>>;
 type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>, SentinelPoolStrategy<vk::Buffer>>;
-type ProgramPool = Pool<Arc<Program>>;
+type ProgramPool = Vec<Arc<Program>>;
+type RenderPassPool = Vec<Arc<RenderPass>>;
+
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+struct RasterPipelineDesc {
+    program: ProgramHandle,
+    render_pass: RenderPassHandle,
+    subpass: usize,
+    desc: RasterPipelineCreateDesc,
+}
 
 pub struct ResourceManager {
     device: Arc<Device>,
     images: RwLock<ImagePool>,
     buffers: RwLock<BufferPool>,
     programs: RwLock<ProgramPool>,
+    pipelines: RwLock<Vec<(vk::Pipeline, vk::PipelineLayout)>>,
+    pipeline_descriptons: Mutex<HashMap<RasterPipelineDesc, RasterPipelineHandle>>,
+    render_passes: RwLock<RenderPassPool>,
     bindless_pool: vk::DescriptorPool,
     bindless_layout: vk::DescriptorSetLayout,
     bindless_set: vk::DescriptorSet,
@@ -136,6 +158,9 @@ impl ResourceManager {
             images: RwLock::default(),
             buffers: RwLock::new(buffers),
             programs: RwLock::default(),
+            render_passes: RwLock::default(),
+            pipelines: RwLock::default(),
+            pipeline_descriptons: Mutex::default(),
             bindless_pool,
             bindless_layout,
             bindless_set,
@@ -268,7 +293,7 @@ impl ResourceManager {
         self.bindless_set
     }
 
-    pub fn tick(&self) {
+    pub fn before_frame_submit(&self) {
         self.update_bindless_descriptors();
         self.temp.next_frame();
     }
@@ -333,15 +358,54 @@ impl ResourceManager {
     }
 
     pub fn add_program(&self, program: Arc<Program>) -> ProgramHandle {
-        self.programs.write().push(program)
+        let mut programs = self.programs.write();
+        let index = programs.len() as u32;
+        programs.push(program);
+        ProgramHandle(index)
     }
 
     pub fn update_program(&self, handle: ProgramHandle, program: Arc<Program>) {
-        self.programs.write().replace(handle, program);
+        self.programs.write()[handle.0 as usize] = program;
+        let descs = self.pipeline_descriptons.lock();
+        let mut pipelines = self.pipelines.write();
+        descs
+            .iter()
+            .filter_map(|(desc, index)| (desc.program == handle).then_some(*index))
+            .for_each(|handle| {
+                pipelines[handle.0 as usize] = (vk::Pipeline::null(), vk::PipelineLayout::null())
+            });
     }
 
-    pub fn remove_program(&self, handle: ProgramHandle) {
-        self.programs.write().remove(handle);
+    pub fn add_render_pass(&self, render_pass: Arc<RenderPass>) -> RenderPassHandle {
+        let mut render_passes = self.render_passes.write();
+        let index = render_passes.len() as u32;
+        render_passes.push(render_pass);
+        RenderPassHandle(index)
+    }
+
+    pub fn create_pipeline(
+        &self,
+        program: ProgramHandle,
+        render_pass: RenderPassHandle,
+        subpass: usize,
+        desc: RasterPipelineCreateDesc,
+    ) -> RasterPipelineHandle {
+        let desc = RasterPipelineDesc {
+            program,
+            render_pass,
+            subpass,
+            desc,
+        };
+        let mut descs = self.pipeline_descriptons.lock();
+        if let Some(handle) = descs.get(&desc) {
+            *handle
+        } else {
+            let mut pipelines = self.pipelines.write();
+            let handle = RasterPipelineHandle(pipelines.len() as u32);
+            pipelines.push((vk::Pipeline::null(), vk::PipelineLayout::null()));
+            descs.insert(desc, handle);
+            handle
+        }
     }
 }
 

@@ -27,7 +27,7 @@ use ash::vk::{self};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use uuid::Uuid;
 
-use crate::{AsVulkan, Program, RenderPass, Result};
+use crate::{program, AsVulkan, Program, RenderPass, Result};
 
 use super::{Device, PhysicalDevice};
 
@@ -44,7 +44,7 @@ impl PipelineBlendDesc {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Clone, Debug, Hash, PartialEq, Eq)]
 pub struct InputVertexStreamDesc {
     attributes: Vec<(vk::Format, usize, usize)>,
 }
@@ -171,14 +171,8 @@ impl InputVertexStreamDesc {
 /// Data to create pipeline.
 ///
 /// Contains all data to create new pipeline.
-#[derive(Debug)]
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct RasterPipelineCreateDesc {
-    /// Associated program
-    pub program: Arc<Program>,
-    /// Render pass
-    pub render_pass: Arc<RenderPass>,
-    /// Subpass in said render pass
-    pub subpass: usize,
     /// Blend data, None if opaque. Order: color, alpha
     pub blend: Option<(PipelineBlendDesc, PipelineBlendDesc)>,
     /// Culling
@@ -188,31 +182,22 @@ pub struct RasterPipelineCreateDesc {
     /// Depth writing
     pub depth_write: bool,
     /// Vertex streams layout
-    pub streams: Vec<(usize, Vec<vk::VertexInputAttributeDescription>)>,
+    pub streams: Vec<InputVertexStreamDesc>,
 }
 
-impl RasterPipelineCreateDesc {
-    pub fn new<I: Iterator<Item = InputVertexStreamDesc>>(
-        program: &Arc<Program>,
-        render_pass: &Arc<RenderPass>,
-        streams: I,
-    ) -> Self {
-        let streams = streams
-            .enumerate()
-            .map(|(binding, attributes)| attributes.build(binding))
-            .collect();
+impl Default for RasterPipelineCreateDesc {
+    fn default() -> Self {
         Self {
-            program: program.clone(),
-            render_pass: render_pass.clone(),
-            subpass: 0,
             blend: None,
             cull: None,
             depth_test: None,
             depth_write: false,
-            streams,
+            streams: Vec::default(),
         }
     }
+}
 
+impl RasterPipelineCreateDesc {
     pub fn blending(mut self, color: PipelineBlendDesc, alpha: PipelineBlendDesc) -> Self {
         self.blend = Some((color, alpha));
 
@@ -285,18 +270,20 @@ impl RasterPipelineCreateDesc {
         self
     }
 
-    pub fn subpass(mut self, value: usize) -> Self {
-        self.subpass = value;
+    pub fn vertex_stream(mut self, stream: InputVertexStreamDesc) -> Self {
+        self.streams.push(stream);
         self
     }
 }
 
 pub fn compile_raster_pipeline(
     device: &Arc<Device>,
+    program: &Program,
+    render_pass: &RenderPass,
+    subpass: usize,
     desc: RasterPipelineCreateDesc,
 ) -> Result<(vk::Pipeline, vk::PipelineLayout)> {
-    let shader_create_info = desc
-        .program
+    let shader_create_info = program
         .shaders()
         .map(|shader| {
             vk::PipelineShaderStageCreateInfo::builder()
@@ -317,14 +304,19 @@ pub fn compile_raster_pipeline(
         .dynamic_states(&dynamic_states)
         .build();
 
-    let strides = desc
+    let streams = desc
         .streams
+        .iter()
+        .enumerate()
+        .map(|(index, stream)| stream.build(index))
+        .collect::<Vec<_>>();
+
+    let strides = streams
         .iter()
         .map(|(stride, _)| stride)
         .copied()
         .collect::<Vec<_>>();
-    let attributes = desc
-        .streams
+    let attributes = streams
         .iter()
         .flat_map(|(_, attributes)| attributes)
         .copied()
@@ -401,9 +393,9 @@ pub fn compile_raster_pipeline(
         .build();
 
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-        .layout(desc.program.pipeline_layout())
-        .render_pass(desc.render_pass.as_vk())
-        .subpass(desc.subpass as _)
+        .layout(program.pipeline_layout())
+        .render_pass(render_pass.as_vk())
+        .subpass(subpass as _)
         .stages(&shader_create_info)
         .dynamic_state(&dynamic_state_create_info)
         .viewport_state(&viewport_state)
@@ -423,7 +415,7 @@ pub fn compile_raster_pipeline(
         )
     }?[0];
 
-    Ok((pipeline, desc.program.pipeline_layout()))
+    Ok((pipeline, program.pipeline_layout()))
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";
