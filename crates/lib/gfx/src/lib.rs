@@ -18,12 +18,14 @@ mod staging;
 mod temp;
 
 use std::{
+    io,
     marker::PhantomData,
     mem,
     ptr::{copy_nonoverlapping, NonNull},
     slice,
 };
 
+use ash::vk;
 pub use resource_manager::*;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
@@ -52,14 +54,37 @@ pub(crate) struct GpuBufferWriterImpl<T: Sized + Copy> {
     _marker: PhantomData<T>,
 }
 
+#[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("Out of space in descriptor pool")]
     OutOfSpace,
+    #[error("Backend error: {0}")]
     BackendEror(dess_backend::Error),
+    #[error("IO operation failed: {0}")]
+    Io(io::Error),
+    #[error("Shader parsing failed: {0}")]
+    ShaderParsingFailed(String),
+    #[error("Shader compilation failed:\n{0}")]
+    ShaderCompilationFailed(String),
+    #[error("Image is too big for staging")]
+    ImageTooBig,
 }
 
 impl From<dess_backend::Error> for Error {
     fn from(value: dess_backend::Error) -> Self {
         Self::BackendEror(value)
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(value: io::Error) -> Self {
+        Self::Io(value)
+    }
+}
+
+impl From<vk::Result> for Error {
+    fn from(value: vk::Result) -> Self {
+        dess_backend::Error::from(value).into()
     }
 }
 

@@ -28,6 +28,8 @@ use dess_backend::{
 use dess_common::BumpAllocator;
 use parking_lot::Mutex;
 
+use crate::Error;
+
 #[derive(Debug, Clone, Copy)]
 struct ImageUploadRequest(vk::BufferImageCopy, vk::ImageSubresourceRange);
 
@@ -70,7 +72,7 @@ impl StagingDesc {
     }
 }
 
-fn create_semaphore(device: &Device, index: usize) -> dess_backend::Result<vk::Semaphore> {
+fn create_semaphore(device: &Device, index: usize) -> Result<vk::Semaphore, Error> {
     let semaphore = unsafe {
         device
             .get()
@@ -81,7 +83,7 @@ fn create_semaphore(device: &Device, index: usize) -> dess_backend::Result<vk::S
 }
 
 impl Staging {
-    pub fn new(device: &Arc<Device>, desc: StagingDesc) -> dess_backend::Result<Self> {
+    pub fn new(device: &Arc<Device>, desc: StagingDesc) -> Result<Self, Error> {
         let transfer_cbs = Vec::from_iter(
             (0..desc.pages)
                 .map(|n| CommandBuffer::transfer(device, Some(format!("Staging {n}"))).unwrap()),
@@ -122,7 +124,7 @@ impl Staging {
         target: &Buffer,
         offset: usize,
         data: &[T],
-    ) -> dess_backend::Result<()> {
+    ) -> Result<(), Error> {
         let mut current_offset = 0;
         loop {
             let data_len = mem::size_of_val(data);
@@ -145,7 +147,7 @@ impl Staging {
         &mut self,
         target: &Image,
         data: &[ImageSubresourceData],
-    ) -> dess_backend::Result<()> {
+    ) -> Result<(), Error> {
         for (mip, data) in data.iter().enumerate() {
             while !self.try_push_mip(target, mip as _, data)? {
                 self.upload_impl(false)?;
@@ -159,10 +161,10 @@ impl Staging {
         target: &Image,
         mip: u32,
         data: &ImageSubresourceData,
-    ) -> dess_backend::Result<bool> {
+    ) -> Result<bool, Error> {
         let size = data.data.len();
         if size > self.page_size {
-            return Err(dess_backend::Error::TooBig);
+            return Err(Error::ImageTooBig);
         }
         let aligment = self
             .device
@@ -219,7 +221,7 @@ impl Staging {
         offset: usize,
         bytes: usize,
         data: *const u8,
-    ) -> dess_backend::Result<usize> {
+    ) -> Result<usize, Error> {
         let aligment = self
             .device
             .physical_device()
@@ -243,14 +245,14 @@ impl Staging {
         Ok(can_send)
     }
 
-    pub fn upload(&mut self) -> dess_backend::Result<(vk::Semaphore, vk::PipelineStageFlags)> {
+    pub fn upload(&mut self) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
         self.upload_impl(true)
     }
 
     fn upload_impl(
         &mut self,
         client_will_wait: bool,
-    ) -> dess_backend::Result<(vk::Semaphore, vk::PipelineStageFlags)> {
+    ) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
         puffin::profile_function!();
         let cb = &self.command_buffers[self.current];
 

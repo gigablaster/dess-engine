@@ -770,6 +770,7 @@ dependencies = [
  "parking_lot",
  "puffin",
  "smol_str",
+ "thiserror",
 ]
 
 [[package]]
