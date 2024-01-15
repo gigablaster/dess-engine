@@ -13,26 +13,36 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{collections::HashMap, sync::Arc};
+use core::slice;
+use std::{
+    collections::{HashMap, HashSet},
+    mem,
+    sync::Arc,
+};
 
 use ash::vk;
 use bevy_tasks::AsyncComputeTaskPool;
+use bytes::Bytes;
 use dess_backend::{
-    compile_raster_pipeline, AsVulkan, Buffer, CommandBufferRecorder, Device, Image,
-    ImageCreateDesc, ImageSubresourceData, Program, RasterPipelineCreateDesc, RenderPass,
-    ShaderDesc,
+    compile_raster_pipeline, AsVulkan, Buffer, CommandBufferRecorder, DescriptorSetLayout, Device,
+    Image, ImageCreateDesc, ImageSubresourceData, ImageViewDesc, Program, RasterPipelineCreateDesc,
+    RenderPass, ShaderDesc,
 };
 use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
+use gpu_descriptor::DescriptorTotalCount;
 use parking_lot::{Mutex, RwLock};
+use smol_str::SmolStr;
 
 use crate::{
     staging::{Staging, StagingDesc},
     temp::TempBuffer,
-    BufferSlice, Error, GpuBuferWriter,
+    uniforms::UniformPool,
+    BufferSlice, Error, GpuBuferWriter, GpuDescriptorSet,
 };
 
 pub type ImageHandle = Handle<Arc<Image>>;
 pub type BufferHandle = Handle<vk::Buffer>;
+pub type DescriptorHandle = Handle<vk::DescriptorSet>;
 
 #[derive(Debug, Clone, Hash, Copy, PartialEq, Eq)]
 pub struct ProgramHandle(u32);
@@ -47,6 +57,7 @@ type ImagePool = Pool<Arc<Image>>;
 type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>, SentinelPoolStrategy<vk::Buffer>>;
 type ProgramPool = Vec<Arc<Program>>;
 type RenderPassPool = Vec<Arc<RenderPass>>;
+type DescriptorSetPool = HotColdPool<vk::DescriptorSet, Box<DescriptorSetData>>;
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct RasterPipelineDesc {
@@ -56,17 +67,140 @@ struct RasterPipelineDesc {
     desc: RasterPipelineCreateDesc,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BindingPoint<T> {
+    pub binding: u32,
+    pub data: Option<T>,
+}
+
+#[derive(Debug)]
+struct DescriptorSetData {
+    descriptor: GpuDescriptorSet,
+    uniform_buffers: Vec<BindingPoint<(vk::Buffer, u32, u32)>>,
+    dynamic_uniform_bufffers: Vec<BindingPoint<(vk::Buffer, usize)>>,
+    storage_buffers: Vec<BindingPoint<(vk::Buffer, u32, u32)>>,
+    dynamic_storage_buffers: Vec<BindingPoint<(vk::Buffer, usize)>>,
+    storage_images: Vec<BindingPoint<(ImageHandle, vk::ImageView, vk::ImageLayout)>>,
+    sampled_images: Vec<BindingPoint<(ImageHandle, vk::ImageView, vk::ImageLayout)>>,
+    layout: vk::DescriptorSetLayout,
+    names: HashMap<SmolStr, usize>,
+}
+
+impl DescriptorSetData {
+    pub fn is_valid(&self) -> bool {
+        self.uniform_buffers
+            .iter()
+            .all(|buffer| buffer.data.is_some())
+            && self.sampled_images.iter().all(|image| image.data.is_some())
+            && self
+                .storage_buffers
+                .iter()
+                .all(|buffer| buffer.data.is_some())
+            && self.storage_images.iter().all(|image| image.data.is_some())
+            && self
+                .dynamic_uniform_bufffers
+                .iter()
+                .all(|buffer| buffer.data.is_some())
+    }
+
+    fn bind_to_slot<T>(
+        bindings: &mut Vec<BindingPoint<T>>,
+        slot: usize,
+        data: T,
+    ) -> Result<Option<T>, Error> {
+        let slot = bindings
+            .iter()
+            .enumerate()
+            .find_map(|(index, point)| (point.binding == slot as u32).then_some(index))
+            .ok_or(Error::BindingNotFoun(slot as usize))?;
+        Ok(bindings[slot].data.replace(data))
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum DescriptorSetBinding {
+    TempUniform(usize),
+    TempStorage(usize),
+    Uniform(Bytes),
+    Storage(BufferSlice, usize),
+    SampledImage(ImageHandle, vk::ImageLayout),
+    StorageImage(ImageHandle, vk::ImageLayout),
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+pub struct DescriptorBindings {
+    pub bindings: Vec<(usize, DescriptorSetBinding)>,
+}
+
+impl DescriptorBindings {
+    pub fn temp_uniform(mut self, slot: usize, size: usize) -> Self {
+        self.bindings
+            .push((slot, DescriptorSetBinding::TempUniform(size)));
+        self
+    }
+
+    pub fn temp_storage(mut self, slot: usize, size: usize) -> Self {
+        self.bindings
+            .push((slot, DescriptorSetBinding::TempStorage(size)));
+        self
+    }
+
+    pub fn uniform<T: Sized + Copy>(mut self, slot: usize, data: &T) -> Self {
+        let data = Bytes::copy_from_slice(unsafe {
+            slice::from_raw_parts(
+                slice::from_ref(data).as_ptr() as *const u8,
+                mem::size_of::<T>(),
+            )
+        });
+        self.bindings
+            .push((slot, DescriptorSetBinding::Uniform(data)));
+        self
+    }
+
+    pub fn storage(mut self, slot: usize, buffer: BufferSlice, size: usize) -> Self {
+        self.bindings
+            .push((slot, DescriptorSetBinding::Storage(buffer, size)));
+        self
+    }
+
+    pub fn sampled_image(
+        mut self,
+        slot: usize,
+        image: ImageHandle,
+        layout: vk::ImageLayout,
+    ) -> Self {
+        self.bindings
+            .push((slot, DescriptorSetBinding::SampledImage(image, layout)));
+        self
+    }
+
+    pub fn storage_image(
+        mut self,
+        slot: usize,
+        image: ImageHandle,
+        layout: vk::ImageLayout,
+    ) -> Self {
+        self.bindings
+            .push((slot, DescriptorSetBinding::StorageImage(image, layout)));
+        self
+    }
+}
+
 pub struct ResourceManager {
     device: Arc<Device>,
     images: RwLock<ImagePool>,
     buffers: RwLock<BufferPool>,
     programs: RwLock<ProgramPool>,
     pipelines: RwLock<Vec<(vk::Pipeline, vk::PipelineLayout)>>,
+    descriptors: RwLock<DescriptorSetPool>,
     pipeline_descriptons: Mutex<HashMap<RasterPipelineDesc, RasterPipelineHandle>>,
     render_passes: RwLock<RenderPassPool>,
     temp: TempBuffer,
     temp_buffer_handle: BufferHandle,
     staging: Mutex<Staging>,
+    descritptors_to_delete: Mutex<Vec<GpuDescriptorSet>>,
+    uniforms_to_free: Mutex<Vec<u32>>,
+    uniforms: Mutex<UniformPool>,
 }
 
 const TEMP_BUFFER_PAGE_SIZE: usize = 32 * 1024 * 1024;
@@ -87,11 +221,15 @@ impl ResourceManager {
             buffers: RwLock::new(buffers),
             programs: RwLock::default(),
             render_passes: RwLock::default(),
+            descriptors: RwLock::default(),
             pipelines: RwLock::default(),
             pipeline_descriptons: Mutex::default(),
             temp,
             temp_buffer_handle,
             staging: Mutex::new(Staging::new(device, StagingDesc::default())?),
+            descritptors_to_delete: Mutex::default(),
+            uniforms_to_free: Mutex::default(),
+            uniforms: Mutex::new(UniformPool::new(device)?),
         })
     }
 
@@ -177,16 +315,19 @@ impl ResourceManager {
         self.staging.lock().execute_pending_barriers(recorder);
     }
 
-    pub fn push_uniform<T: Sized + Copy>(&self, data: &T) -> Result<usize, Error> {
+    pub fn push_temp_uniform<T: Sized + Copy>(&self, data: &T) -> Result<usize, Error> {
         self.temp.push_uniform(data)
     }
 
-    pub fn push_buffer<T: Sized + Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
+    pub fn push_temp_buffer<T: Sized + Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
         let offset = self.temp.push_bufer(data)?;
         Ok(BufferSlice(self.temp_buffer_handle, offset as _))
     }
 
-    pub fn write_buffer<T: Sized + Copy>(&self, count: usize) -> Result<GpuBuferWriter<T>, Error> {
+    pub fn write_temp_buffer<T: Sized + Copy>(
+        &self,
+        count: usize,
+    ) -> Result<GpuBuferWriter<T>, Error> {
         let writer = self.temp.write_buffer(count)?;
         Ok(GpuBuferWriter {
             handle: self.temp_buffer_handle,
@@ -298,5 +439,85 @@ impl ResourceManager {
                 &desc.desc,
             )?,
         ))
+    }
+
+    pub fn create_descritpro_set(
+        &self,
+        set: &DescriptorSetLayout,
+        bindings: DescriptorBindings,
+    ) -> Result<DescriptorHandle, Error> {
+        todo!()
+    }
+
+    fn update_bindings_impl(
+        &self,
+        descriptor: &mut DescriptorSetData,
+        bindings: DescriptorBindings,
+    ) -> Result<(), Error> {
+        let buffers = self.buffers.read();
+        let images = self.images.read();
+        let mut uniforms = self.uniforms.lock();
+        let mut to_retire = self.uniforms_to_free.lock();
+        for (slot, binding) in bindings.bindings {
+            match binding {
+                DescriptorSetBinding::TempUniform(size) => {
+                    DescriptorSetData::bind_to_slot(
+                        &mut descriptor.dynamic_uniform_bufffers,
+                        slot,
+                        (self.temp.get().as_vk(), size),
+                    )?;
+                }
+                DescriptorSetBinding::TempStorage(size) => {
+                    DescriptorSetData::bind_to_slot(
+                        &mut descriptor.dynamic_storage_buffers,
+                        slot,
+                        (self.temp.get().as_vk(), size),
+                    )?;
+                }
+                DescriptorSetBinding::Uniform(data) => {
+                    let offset = uniforms.push_bytes(&data)?;
+                    let old_uniform = DescriptorSetData::bind_to_slot(
+                        &mut descriptor.uniform_buffers,
+                        slot,
+                        (uniforms.get().as_vk(), offset as u32, data.len() as u32),
+                    )?;
+                    if let Some((_, offset, _)) = old_uniform {
+                        to_retire.push(offset);
+                    }
+                }
+                DescriptorSetBinding::Storage(buffer, size) => {
+                    let offset = buffer.offset();
+                    let buffer = buffers
+                        .get(buffer.handle())
+                        .copied()
+                        .ok_or(Error::InvalidHandle)?;
+                    DescriptorSetData::bind_to_slot(
+                        &mut descriptor.storage_buffers,
+                        slot,
+                        (buffer, offset, size as u32),
+                    )?;
+                }
+                DescriptorSetBinding::SampledImage(handle, layout) => {
+                    let image = images.get(handle).ok_or(Error::InvalidHandle)?;
+                    let view = image.view(ImageViewDesc::color())?;
+                    DescriptorSetData::bind_to_slot(
+                        &mut descriptor.sampled_images,
+                        slot,
+                        (handle, view, layout),
+                    )?;
+                }
+                DescriptorSetBinding::StorageImage(handle, layout) => {
+                    let image = images.get(handle).ok_or(Error::InvalidHandle)?;
+                    let view = image.view(ImageViewDesc::color())?;
+                    DescriptorSetData::bind_to_slot(
+                        &mut descriptor.storage_images,
+                        slot,
+                        (handle, view, layout),
+                    )?;
+                }
+            }
+        }
+
+        Ok(())
     }
 }

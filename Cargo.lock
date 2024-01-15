@@ -444,6 +444,7 @@ dependencies = [
  "ash",
  "bevy_tasks",
  "bitflags 2.4.1",
+ "bytes",
  "dess-backend",
  "dess-common",
  "gpu-descriptor",

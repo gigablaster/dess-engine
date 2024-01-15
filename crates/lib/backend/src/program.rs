@@ -393,8 +393,8 @@ impl Program {
         self.layout
     }
 
-    pub fn descriptopr_set_layouts(&self) -> impl Iterator<Item = (&usize, &DescriptorSetLayout)> {
-        self.sets.iter()
+    pub fn descriptor_set_layout(&self, index: usize) -> Option<&DescriptorSetLayout> {
+        self.sets.get(&index)
     }
 
     fn merge_descriptor_sets(
@@ -421,5 +421,6 @@ impl Drop for Program {
         self.shaders
             .iter()
             .for_each(|shader| shader.free(&self.device));
+        unsafe { self.device.get().destroy_pipeline_layout(self.layout, None) }
     }
 }

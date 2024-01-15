@@ -13,10 +13,12 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+// mod descriptors;
 mod resource_manager;
 mod staging;
 mod temp;
 mod temp_images;
+mod uniforms;
 
 use std::{
     io,
@@ -72,6 +74,8 @@ pub enum Error {
     ImageTooBig,
     #[error("Handle isn't valid")]
     InvalidHandle,
+    #[error("Descriptor binding {0} not found")]
+    BindingNotFoun(usize),
 }
 
 impl From<dess_backend::Error> for Error {
@@ -130,3 +134,7 @@ impl<T: Sized + Copy> GpuBuferWriter<T> {
         BufferSlice::new(self.handle, self.writer.offset() as _)
     }
 }
+
+type GpuDescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
+type GpuDescriptorAllocator =
+    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
