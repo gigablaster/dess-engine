@@ -88,7 +88,7 @@ impl Instance {
     }
 
     pub(crate) fn vulkan_version() -> u32 {
-        vk::make_api_version(0, 1, 3, 0)
+        vk::make_api_version(0, 1, 1, 0)
     }
 
     pub fn new(builder: InstanceBuilder, display_handle: RawDisplayHandle) -> Result<Self> {

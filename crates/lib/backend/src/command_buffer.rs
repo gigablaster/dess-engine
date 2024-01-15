@@ -167,16 +167,23 @@ impl<'a> CommandBufferRecorder<'a> {
 
     pub fn barrier(
         &self,
+        src_stage: vk::PipelineStageFlags,
+        dst_stage: vk::PipelineStageFlags,
         flags: vk::DependencyFlags,
-        image_barriers: &[vk::ImageMemoryBarrier2],
-        buffer_barriers: &[vk::BufferMemoryBarrier2],
+        buffer_barriers: &[vk::BufferMemoryBarrier],
+        image_barriers: &[vk::ImageMemoryBarrier],
     ) {
-        let depenency = vk::DependencyInfo::builder()
-            .buffer_memory_barriers(buffer_barriers)
-            .image_memory_barriers(image_barriers)
-            .dependency_flags(flags)
-            .build();
-        unsafe { self.device.cmd_pipeline_barrier2(self.cb, &depenency) }
+        unsafe {
+            self.device.cmd_pipeline_barrier(
+                self.cb,
+                src_stage,
+                dst_stage,
+                flags,
+                &[],
+                buffer_barriers,
+                image_barriers,
+            )
+        }
     }
 
     pub fn finish(self) -> vk::CommandBuffer {
@@ -187,28 +194,29 @@ impl<'a> CommandBufferRecorder<'a> {
         &self,
         src: Src,
         dst: Dst,
-        regions: &[vk::BufferCopy2],
+        regions: &[vk::BufferCopy],
     ) {
-        let info = vk::CopyBufferInfo2::builder()
-            .src_buffer(src.as_vk())
-            .dst_buffer(dst.as_vk())
-            .regions(regions);
-        unsafe { self.device.cmd_copy_buffer2(self.cb, &info) }
+        unsafe {
+            self.device
+                .cmd_copy_buffer(self.cb, src.as_vk(), dst.as_vk(), regions)
+        }
     }
 
     pub fn copy_buffer_to_image<Src: AsVulkan<vk::Buffer>, Dst: AsVulkan<vk::Image>>(
         &self,
         src: Src,
         dst: Dst,
-        regions: &[vk::BufferImageCopy2],
+        regions: &[vk::BufferImageCopy],
     ) {
-        let info = vk::CopyBufferToImageInfo2::builder()
-            .src_buffer(src.as_vk())
-            .dst_image(dst.as_vk())
-            .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-            .regions(regions)
-            .build();
-        unsafe { self.device.cmd_copy_buffer_to_image2(self.cb, &info) }
+        unsafe {
+            self.device.cmd_copy_buffer_to_image(
+                self.cb,
+                src.as_vk(),
+                dst.as_vk(),
+                vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                regions,
+            )
+        }
     }
 
     pub fn set_viewport(&self, viewports: &[vk::Viewport]) {
