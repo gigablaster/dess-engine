@@ -22,6 +22,7 @@ use std::{
 use arrayvec::ArrayVec;
 use ash::vk::{self, PipelineLayoutCreateInfo};
 use byte_slice_cast::AsSliceOf;
+use gpu_descriptor::DescriptorTotalCount;
 use smol_str::SmolStr;
 
 use crate::{AsVulkan, Result};
@@ -40,6 +41,7 @@ pub struct DescriptorSetLayout {
     layout: vk::DescriptorSetLayout,
     pub types: HashMap<usize, vk::DescriptorType>,
     pub names: HashMap<SmolStr, usize>,
+    pub count: DescriptorTotalCount,
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
@@ -58,6 +60,55 @@ pub struct BindGroupLayoutDesc<'a> {
 
 impl DescriptorSetLayout {
     pub fn new(device: &Arc<Device>, set: &BindGroupLayoutDesc) -> Result<Self> {
+        let mut count = DescriptorTotalCount::default();
+        count.combined_image_sampler = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+            .count() as u32;
+
+        count.sampled_image = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::SAMPLED_IMAGE)
+            .count() as u32;
+
+        count.sampler = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::SAMPLER)
+            .count() as u32;
+
+        count.storage_buffer = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::STORAGE_BUFFER)
+            .count() as u32;
+
+        count.storage_buffer_dynamic = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+            .count() as u32;
+
+        count.storage_image = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::STORAGE_IMAGE)
+            .count() as u32;
+
+        count.uniform_buffer = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::UNIFORM_BUFFER)
+            .count() as u32;
+
+        count.uniform_buffer_dynamic = set
+            .set
+            .iter()
+            .filter(|x| x.ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+            .count() as u32;
+
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
         let mut bindings = HashMap::with_capacity(set.set.len());
         for binding in set.set.iter() {
@@ -110,6 +161,7 @@ impl DescriptorSetLayout {
             types,
             names,
             layout,
+            count,
         })
     }
 
@@ -153,6 +205,12 @@ impl DescriptorSetLayout {
             address_mode,
             anisotropy_level: 16, // TODO:: control anisotropy level
         }
+    }
+}
+
+impl AsVulkan<vk::DescriptorSetLayout> for DescriptorSetLayout {
+    fn as_vk(&self) -> vk::DescriptorSetLayout {
+        self.layout
     }
 }
 
@@ -331,7 +389,7 @@ impl Shader {
 pub struct Program {
     device: Arc<Device>,
     shaders: Vec<Shader>,
-    sets: HashMap<usize, DescriptorSetLayout>,
+    sets: HashMap<usize, Arc<DescriptorSetLayout>>,
     layout: vk::PipelineLayout,
 }
 
@@ -353,9 +411,20 @@ impl Program {
 
         let sets = sets
             .iter()
-            .map(|(index, set)| (*index, Self::create_layout(device, stages, set).unwrap()))
+            .map(|(index, set)| {
+                (
+                    *index,
+                    Self::create_layout(device, stages, set.into())
+                        .unwrap()
+                        .into(),
+                )
+            })
             .collect::<HashMap<_, _>>();
-        let layouts = sets.values().map(|x| x.layout).collect::<Vec<_>>();
+        let layouts = sets
+            .values()
+            .cloned()
+            .map(|x: Arc<DescriptorSetLayout>| x.as_vk())
+            .collect::<Vec<_>>();
         let info = PipelineLayoutCreateInfo::builder()
             .set_layouts(&layouts)
             .build();
@@ -393,8 +462,8 @@ impl Program {
         self.layout
     }
 
-    pub fn descriptor_set_layout(&self, index: usize) -> Option<&DescriptorSetLayout> {
-        self.sets.get(&index)
+    pub fn descriptor_set_layout(&self, index: usize) -> Option<Arc<DescriptorSetLayout>> {
+        self.sets.get(&index).cloned()
     }
 
     fn merge_descriptor_sets(

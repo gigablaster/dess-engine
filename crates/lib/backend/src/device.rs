@@ -14,6 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use arrayvec::ArrayVec;
+use ash::vk::Handle;
 use ash::{extensions::khr, vk};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
@@ -27,7 +28,8 @@ use std::sync::Arc;
 use std::{mem, slice};
 
 use crate::{
-    AsVulkan, AsVulkanCommandBuffer, Error, GpuDescriptorAllocator, Result, SwapchainImage,
+    AsVulkan, AsVulkanCommandBuffer, DescriptorSetLayout, Error, GpuDescriptorAllocator,
+    GpuDescriptorSet, Result, SwapchainImage,
 };
 
 use super::frame::FrameContext;
@@ -335,6 +337,30 @@ impl Device {
         Ok(())
     }
 
+    pub fn allocate_descriptor_set(
+        &self,
+        layout: &DescriptorSetLayout,
+    ) -> Result<GpuDescriptorSet> {
+        Ok(unsafe {
+            self.descriptor_allocator.lock().allocate(
+                AshDescriptorDevice::wrap(&self.raw),
+                &layout.as_vk(),
+                gpu_descriptor::DescriptorSetLayoutCreateFlags::empty(),
+                &layout.count,
+                1,
+            )
+        }?
+        .remove(0))
+    }
+
+    pub fn free_descriptor_set(&self, descriptor_set: GpuDescriptorSet) {
+        unsafe {
+            self.descriptor_allocator
+                .lock()
+                .free(AshDescriptorDevice::wrap(&self.raw), [descriptor_set])
+        };
+    }
+
     pub fn with_descriptor_allocator<
         E: std::error::Error,
         CB: FnOnce(&mut GpuDescriptorAllocator) -> std::result::Result<(), E>,
@@ -345,7 +371,7 @@ impl Device {
         cb(&mut self.descriptor_allocator.lock())
     }
 
-    pub(crate) fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
+    pub fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
         cb(&mut self.current_drop_list.lock());
     }
 
