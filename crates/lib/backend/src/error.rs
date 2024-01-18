@@ -23,7 +23,7 @@ use thiserror::Error;
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("Out of device memory")]
-    OutOfDevicecMemory,
+    OutOfDeviceMemory,
     #[error("Out of host memory")]
     OutOfHostMemory,
     #[error("Too many objects")]
@@ -54,7 +54,7 @@ impl From<vk::Result> for Error {
             vk::Result::ERROR_FORMAT_NOT_SUPPORTED
             | vk::Result::ERROR_IMAGE_USAGE_NOT_SUPPORTED_KHR => Self::NotSupported,
             vk::Result::ERROR_OUT_OF_HOST_MEMORY => Self::OutOfHostMemory,
-            vk::Result::ERROR_OUT_OF_DEVICE_MEMORY => Self::OutOfDevicecMemory,
+            vk::Result::ERROR_OUT_OF_DEVICE_MEMORY => Self::OutOfDeviceMemory,
             vk::Result::ERROR_TOO_MANY_OBJECTS => Self::TooManyObjects,
             _ => panic!("Unexpected error {:?}", value),
         }
@@ -65,7 +65,7 @@ impl From<gpu_alloc::AllocationError> for Error {
     fn from(value: gpu_alloc::AllocationError) -> Self {
         match value {
             gpu_alloc::AllocationError::NoCompatibleMemoryTypes => Self::NotSupported,
-            gpu_alloc::AllocationError::OutOfDeviceMemory => Self::OutOfDevicecMemory,
+            gpu_alloc::AllocationError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
             gpu_alloc::AllocationError::OutOfHostMemory => Self::OutOfHostMemory,
             gpu_alloc::AllocationError::TooManyObjects => Self::TooManyObjects,
         }
@@ -79,7 +79,7 @@ impl From<gpu_alloc::MapError> for Error {
             gpu_alloc::MapError::AlreadyMapped | gpu_alloc::MapError::MapFailed => {
                 Self::MemoryMapFailed
             }
-            gpu_alloc::MapError::OutOfDeviceMemory => Self::OutOfDevicecMemory,
+            gpu_alloc::MapError::OutOfDeviceMemory => Self::OutOfDeviceMemory,
             gpu_alloc::MapError::OutOfHostMemory => Self::OutOfHostMemory,
         }
     }
@@ -106,15 +106,5 @@ impl From<rspirv_reflect::ReflectError> for Error {
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl From<gpu_descriptor::AllocationError> for Error {
-    fn from(value: gpu_descriptor::AllocationError) -> Self {
-        match value {
-            gpu_descriptor::AllocationError::OutOfDeviceMemory => Self::OutOfDevicecMemory,
-            gpu_descriptor::AllocationError::OutOfHostMemory => Error::OutOfHostMemory,
-            gpu_descriptor::AllocationError::Fragmentation => Error::Fragmentation,
-        }
     }
 }

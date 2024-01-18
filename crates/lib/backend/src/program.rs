@@ -414,9 +414,7 @@ impl Program {
             .map(|(index, set)| {
                 (
                     *index,
-                    Self::create_layout(device, stages, set.into())
-                        .unwrap()
-                        .into(),
+                    Self::create_layout(device, stages, set).unwrap().into(),
                 )
             })
             .collect::<HashMap<_, _>>();

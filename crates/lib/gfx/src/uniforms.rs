@@ -14,9 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 use std::{
-    mem::size_of,
     ptr::{copy_nonoverlapping, NonNull},
-    slice,
     sync::Arc,
 };
 
@@ -100,7 +98,6 @@ impl Bucket {
 }
 
 pub struct UniformPool {
-    device: Arc<Device>,
     buffer: Buffer,
     mapping: NonNull<u8>,
     buckets: ArrayVec<Bucket, BUCKET_COUNT>,
@@ -121,17 +118,11 @@ impl UniformPool {
         )?;
         let mapping = buffer.map()?;
         Ok(Self {
-            device: device.clone(),
             buffer,
             mapping,
             buckets: ArrayVec::default(),
             free_buckets: ArrayVec::default(),
         })
-    }
-
-    pub fn push<T: Sized>(&mut self, data: &T) -> Result<usize, Error> {
-        let size = size_of::<T>();
-        unsafe { self.push_raw(slice::from_ref(data).as_ptr() as *const u8, size) }
     }
 
     pub fn push_bytes(&mut self, data: &[u8]) -> Result<usize, Error> {

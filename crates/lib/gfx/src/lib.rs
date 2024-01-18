@@ -63,7 +63,7 @@ pub enum Error {
     #[error("Out of space in descriptor pool")]
     OutOfSpace,
     #[error("Backend error: {0}")]
-    BackendEror(dess_backend::Error),
+    BackendError(dess_backend::Error),
     #[error("IO operation failed: {0}")]
     Io(io::Error),
     #[error("Shader parsing failed: {0}")]
@@ -75,12 +75,14 @@ pub enum Error {
     #[error("Handle isn't valid")]
     InvalidHandle,
     #[error("Descriptor binding {0} not found")]
-    BindingNotFoun(usize),
+    BindingNotFound(usize),
+    #[error("Descrptor set isn't fully initialized")]
+    InvalidDescriptorSet,
 }
 
 impl From<dess_backend::Error> for Error {
     fn from(value: dess_backend::Error) -> Self {
-        Self::BackendEror(value)
+        Self::BackendError(value)
     }
 }
 
@@ -93,6 +95,22 @@ impl From<io::Error> for Error {
 impl From<vk::Result> for Error {
     fn from(value: vk::Result) -> Self {
         dess_backend::Error::from(value).into()
+    }
+}
+
+impl From<gpu_descriptor::AllocationError> for Error {
+    fn from(value: gpu_descriptor::AllocationError) -> Self {
+        match value {
+            gpu_descriptor::AllocationError::OutOfDeviceMemory => {
+                Self::BackendError(dess_backend::Error::OutOfDeviceMemory)
+            }
+            gpu_descriptor::AllocationError::OutOfHostMemory => {
+                Self::BackendError(dess_backend::Error::OutOfHostMemory)
+            }
+            gpu_descriptor::AllocationError::Fragmentation => {
+                Self::BackendError(dess_backend::Error::Fragmentation)
+            }
+        }
     }
 }
 
@@ -135,6 +153,6 @@ impl<T: Sized + Copy> GpuBuferWriter<T> {
     }
 }
 
-type GpuDescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
-type GpuDescriptorAllocator =
+pub type GpuDescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
+pub type GpuDescriptorAllocator =
     gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
