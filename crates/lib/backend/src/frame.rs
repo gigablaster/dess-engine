@@ -22,7 +22,10 @@ use std::{
 use ash::vk::{self};
 use parking_lot::Mutex;
 
-use crate::{AsVulkan, AsVulkanCommandBuffer, CommandBufferRecorder, Device, RenderPass, Result};
+use crate::{
+    AsVulkan, AsVulkanCommandBuffer, CommandBufferRecorder, Device, GpuDescriptorAllocator,
+    RenderPass, Result,
+};
 
 use super::{DropList, GpuAllocator};
 
@@ -182,8 +185,10 @@ impl Frame {
         &mut self,
         device: &ash::Device,
         memory_allocator: &mut GpuAllocator,
+        descriptor_allocator: &mut GpuDescriptorAllocator,
     ) -> Result<()> {
-        self.drop_list.purge(device, memory_allocator);
+        self.drop_list
+            .purge(device, memory_allocator, descriptor_allocator);
         unsafe { device.reset_command_pool(self.pool, vk::CommandPoolResetFlags::empty()) }?;
         self.per_thread_buffers
             .lock()
@@ -196,13 +201,19 @@ impl Frame {
         Ok(())
     }
 
-    pub(crate) fn free(&mut self, device: &ash::Device, memory_allocator: &mut GpuAllocator) {
+    pub(crate) fn free(
+        &mut self,
+        device: &ash::Device,
+        memory_allocator: &mut GpuAllocator,
+        descriptor_allocator: &mut GpuDescriptorAllocator,
+    ) {
         unsafe {
             device.destroy_command_pool(self.pool, None);
             device.destroy_fence(self.fence, None);
             device.destroy_semaphore(self.finished, None);
         }
-        self.drop_list.purge(device, memory_allocator);
+        self.drop_list
+            .purge(device, memory_allocator, descriptor_allocator);
         self.per_thread_buffers
             .lock()
             .drain()

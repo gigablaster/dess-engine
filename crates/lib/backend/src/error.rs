@@ -28,6 +28,8 @@ pub enum Error {
     OutOfHostMemory,
     #[error("Too many objects")]
     TooManyObjects,
+    #[error("Memory fragmentation")]
+    Fragmentation,
     #[error("Not supported")]
     NotSupported,
     #[error("Vulkan not found or failed to load")]

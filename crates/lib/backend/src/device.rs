@@ -17,6 +17,7 @@ use arrayvec::ArrayVec;
 use ash::{extensions::khr, vk};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
+use gpu_descriptor_ash::AshDescriptorDevice;
 use log::info;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -25,7 +26,9 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::{mem, slice};
 
-use crate::{AsVulkan, AsVulkanCommandBuffer, Error, Result, SwapchainImage};
+use crate::{
+    AsVulkan, AsVulkanCommandBuffer, Error, GpuDescriptorAllocator, Result, SwapchainImage,
+};
 
 use super::frame::FrameContext;
 use super::{frame::Frame, DropList, GpuAllocator, GpuMemory, Instance, PhysicalDevice};
@@ -54,6 +57,7 @@ pub struct Device {
     instance: Instance,
     pdevice: PhysicalDevice,
     memory_allocator: Mutex<GpuAllocator>,
+    descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     current_drop_list: Mutex<DropList>,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
@@ -165,6 +169,7 @@ impl Device {
             samplers: Self::generate_samplers(&device),
             pdevice,
             memory_allocator,
+            descriptor_allocator: Mutex::new(GpuDescriptorAllocator::new(0)),
             universal_queue,
             transfer_queue,
             frames,
@@ -231,7 +236,11 @@ impl Device {
                 self.raw
                     .wait_for_fences(slice::from_ref(&frame.fence()), true, u64::MAX)?
             };
-            frame.reset(&self.raw, &mut self.memory_allocator.lock())?;
+            frame.reset(
+                &self.raw,
+                &mut self.memory_allocator.lock(),
+                &mut self.descriptor_allocator.lock(),
+            )?;
         }
         Ok(FrameContext {
             device: self,
@@ -326,7 +335,17 @@ impl Device {
         Ok(())
     }
 
-    pub fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
+    pub fn with_descriptor_allocator<
+        E: std::error::Error,
+        CB: FnOnce(&mut GpuDescriptorAllocator) -> std::result::Result<(), E>,
+    >(
+        &self,
+        cb: CB,
+    ) -> std::result::Result<(), E> {
+        cb(&mut self.descriptor_allocator.lock())
+    }
+
+    pub(crate) fn with_drop_list<CB: FnOnce(&mut DropList)>(&self, cb: CB) {
         cb(&mut self.current_drop_list.lock());
     }
 
@@ -430,15 +449,18 @@ impl Drop for Device {
         info!("Cleanup...");
         unsafe { self.raw.device_wait_idle() }.unwrap();
         let mut memory_allocator = self.memory_allocator.lock();
+        let mut descriptor_allocator = self.descriptor_allocator.lock();
 
-        self.current_drop_list
-            .lock()
-            .purge(&self.raw, &mut memory_allocator);
+        self.current_drop_list.lock().purge(
+            &self.raw,
+            &mut memory_allocator,
+            &mut descriptor_allocator,
+        );
 
         self.frames.iter().for_each(|frame| {
             let mut frame = frame.lock();
             let frame = Arc::get_mut(&mut frame).unwrap();
-            frame.free(&self.raw, &mut memory_allocator)
+            frame.free(&self.raw, &mut memory_allocator, &mut descriptor_allocator)
         });
 
         for (_, sampler) in self.samplers.drain() {
@@ -447,6 +469,7 @@ impl Drop for Device {
 
         unsafe {
             memory_allocator.cleanup(AshMemoryDevice::wrap(&self.raw));
+            descriptor_allocator.cleanup(AshDescriptorDevice::wrap(&self.raw));
             self.raw.destroy_device(None);
         }
     }

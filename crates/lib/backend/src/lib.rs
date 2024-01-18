@@ -44,6 +44,9 @@ pub use render_pass::*;
 pub use swapchain::*;
 pub type GpuAllocator = gpu_alloc::GpuAllocator<vk::DeviceMemory>;
 pub type GpuMemory = gpu_alloc::MemoryBlock<vk::DeviceMemory>;
+type GpuDescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
+type GpuDescriptorAllocator =
+    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
 
 pub trait AsVulkan<T: vk::Handle> {
     fn as_vk(&self) -> T;
