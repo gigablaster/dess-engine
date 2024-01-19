@@ -146,6 +146,11 @@ impl TempImagePool {
         )
     }
 
+    pub fn backbuffer_size(&mut self, dims: [u32; 2]) {
+        self.images.lock().clear();
+        self.backbuffer_dims = dims;
+    }
+
     fn release(&self, image: ImageHandle, desc: TempImageDesc) {
         self.images.lock().push((desc, image));
     }

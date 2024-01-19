@@ -833,6 +833,13 @@ impl ResourceManager {
                 .for_each(|x| writes.push(x));
         }
     }
+
+    pub fn purge_backbuffer_dependent_views(&self) {
+        self.render_passes
+            .write()
+            .iter()
+            .for_each(|x| x.clear_framebuffers());
+    }
 }
 
 impl Drop for ResourceManager {
