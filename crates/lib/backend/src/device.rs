@@ -77,7 +77,14 @@ impl Device {
             return Err(Error::NoSuitableDevice);
         };
 
-        let device_extension_names = vec![khr::Swapchain::name().as_ptr()];
+        let device_extension_names = vec![
+            khr::Swapchain::name().as_ptr(),
+            khr::Maintenance4::name().as_ptr(),
+            khr::BufferDeviceAddress::name().as_ptr(),
+            vk::ExtDescriptorIndexingFn::name().as_ptr(),
+            khr::Synchronization2::name().as_ptr(),
+            khr::CopyCommands2::name().as_ptr(),
+        ];
 
         for ext in &device_extension_names {
             let ext = unsafe { CStr::from_ptr(*ext).to_str() }.unwrap();
@@ -97,13 +104,25 @@ impl Device {
             .unwrap_or(universal_queue_family)
             .index;
 
-        let mut features = vk::PhysicalDeviceFeatures2::builder().build();
+        let mut synchronization2 = vk::PhysicalDeviceSynchronization2Features::default();
+        let mut buffer_device_address = vk::PhysicalDeviceBufferDeviceAddressFeatures::default();
+        let mut maintenance4 = vk::PhysicalDeviceMaintenance4Features::default();
+        let mut descriptor_indexing = vk::PhysicalDeviceDescriptorIndexingFeatures::builder()
+            .runtime_descriptor_array(true)
+            .descriptor_binding_partially_bound(true)
+            .shader_storage_buffer_array_non_uniform_indexing(true)
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .shader_uniform_buffer_array_non_uniform_indexing(true)
+            .descriptor_binding_storage_buffer_update_after_bind(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_uniform_buffer_update_after_bind(true);
 
-        unsafe {
-            instance
-                .get()
-                .get_physical_device_features2(pdevice.get(), &mut features)
-        };
+        let mut features = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut buffer_device_address)
+            .push_next(&mut maintenance4)
+            .push_next(&mut descriptor_indexing)
+            .push_next(&mut synchronization2)
+            .build();
 
         let queue_priorities = [1.0];
         let mut queue_info = Vec::new();

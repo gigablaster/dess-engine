@@ -261,6 +261,12 @@ pub struct ResourceManager {
     descriptors: RwLock<DescriptorSetPool>,
     pipeline_descriptons: Mutex<HashMap<RasterPipelineDesc, RasterPipelineHandle>>,
     render_passes: RwLock<RenderPassPool>,
+    bindless_pool: vk::DescriptorPool,
+    bindless_layout: vk::DescriptorSetLayout,
+    bindless_set: vk::DescriptorSet,
+    sampled_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
+    storage_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
+    storage_buffer_updates: Mutex<Vec<(u32, vk::DescriptorBufferInfo)>>,
     temp: TempBuffer,
     temp_buffer_handle: BufferHandle,
     staging: Mutex<Staging>,
@@ -274,6 +280,11 @@ pub struct ResourceManager {
     descriptors_to_free: Mutex<Vec<GpuDescriptorSet>>,
 }
 
+// For every possible item in Pool.
+const MAX_RESOURCES: u32 = 262143;
+const SAMPLED_IMAGE_BINDING: u32 = 0;
+const STORAGE_IMAGE_BINDING: u32 = 1;
+const STORAGE_BUFFER_BINDING: u32 = 2;
 const TEMP_BUFFER_PAGE_SIZE: usize = 32 * 1024 * 1024;
 
 unsafe impl Send for ResourceManager {}
@@ -281,11 +292,83 @@ unsafe impl Sync for ResourceManager {}
 
 impl ResourceManager {
     pub fn new(device: &Arc<Device>) -> Result<Self, Error> {
+        let pool_sizes = [
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: MAX_RESOURCES,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_IMAGE,
+                descriptor_count: MAX_RESOURCES,
+            },
+            vk::DescriptorPoolSize {
+                ty: vk::DescriptorType::STORAGE_BUFFER,
+                descriptor_count: MAX_RESOURCES,
+            },
+        ];
+        let bindless_pool = unsafe {
+            device.get().create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::builder()
+                    .pool_sizes(&pool_sizes)
+                    .max_sets(1)
+                    .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+                    .build(),
+                None,
+            )
+        }?;
+        let bindings = [
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(SAMPLED_IMAGE_BINDING)
+                .descriptor_count(MAX_RESOURCES)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(STORAGE_IMAGE_BINDING)
+                .descriptor_count(MAX_RESOURCES)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(STORAGE_BUFFER_BINDING)
+                .descriptor_count(MAX_RESOURCES)
+                .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                .stage_flags(vk::ShaderStageFlags::ALL)
+                .build(),
+        ];
+        let binding_flags = [vk::DescriptorBindingFlags::PARTIALLY_BOUND
+            | vk::DescriptorBindingFlags::UPDATE_AFTER_BIND; 3];
+        let mut layout_binding_flags =
+            vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder().binding_flags(&binding_flags);
+        let bindless_layout = unsafe {
+            device.get().create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::builder()
+                    .bindings(&bindings)
+                    .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
+                    .push_next(&mut layout_binding_flags)
+                    .build(),
+                None,
+            )
+        }?;
+        let mut alloc_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(bindless_pool)
+            .set_layouts(slice::from_ref(&bindless_layout));
+        alloc_info.descriptor_set_count = 1;
+        let bindless_set = unsafe { device.get().allocate_descriptor_sets(&alloc_info) }?[0];
+
         let temp = TempBuffer::new(device, TEMP_BUFFER_PAGE_SIZE)?;
         let mut buffers = BufferPool::default();
         let temp_buffer = temp.get();
         let temp_buffer_raw = temp_buffer.as_vk();
         let temp_buffer_handle = buffers.push(temp_buffer_raw, temp_buffer.clone());
+        let storage_buffer_updates = vec![(
+            temp_buffer_handle.index(),
+            vk::DescriptorBufferInfo::builder()
+                .buffer(temp_buffer_raw)
+                .offset(0)
+                .range(temp_buffer.desc().size as _)
+                .build(),
+        )];
         Ok(Self {
             device: device.clone(),
             images: RwLock::default(),
@@ -295,6 +378,12 @@ impl ResourceManager {
             descriptors: RwLock::default(),
             pipelines: RwLock::default(),
             pipeline_descriptons: Mutex::default(),
+            bindless_pool,
+            bindless_layout,
+            bindless_set,
+            sampled_image_updates: Mutex::default(),
+            storage_image_updates: Mutex::default(),
+            storage_buffer_updates: Mutex::new(storage_buffer_updates),
             temp,
             temp_buffer_handle,
             staging: Mutex::new(Staging::new(device, StagingDesc::default())?),
@@ -309,25 +398,73 @@ impl ResourceManager {
         })
     }
 
-    pub fn add_image(&self, image: Arc<Image>) -> Result<ImageHandle, Error> {
+    pub fn add_image(&self, image: Arc<Image>, view: ImageViewDesc) -> Result<ImageHandle, Error> {
         let mut images = self.images.write();
+        let view = image.view(view)?;
         let handle = images.push(image.clone());
+        if image.desc().usage.contains(vk::ImageUsageFlags::SAMPLED) {
+            self.sampled_image_updates.lock().push((
+                handle.index(),
+                vk::DescriptorImageInfo::builder()
+                    .image_view(view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .build(),
+            ))
+        }
+        if image.desc().usage.contains(vk::ImageUsageFlags::STORAGE) {
+            self.storage_image_updates.lock().push((
+                handle.index(),
+                vk::DescriptorImageInfo::builder()
+                    .image_view(view)
+                    .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                    .build(),
+            ))
+        }
 
         Ok(handle)
     }
 
-    pub fn create_image(&self, desc: ImageCreateDesc) -> Result<ImageHandle, Error> {
+    pub fn create_image(
+        &self,
+        desc: ImageCreateDesc,
+        view: ImageViewDesc,
+    ) -> Result<ImageHandle, Error> {
         let image = Image::new(&self.device, desc)?.into();
-        self.add_image(image)
+        self.add_image(image, view)
     }
 
     pub fn remove_image(&self, handle: ImageHandle) {
         self.images.write().remove(handle);
     }
 
-    pub fn update_image(&self, handle: ImageHandle, image: Arc<Image>) -> dess_backend::Result<()> {
+    pub fn update_image(
+        &self,
+        handle: ImageHandle,
+        image: Arc<Image>,
+        view: ImageViewDesc,
+        layout: vk::ImageLayout,
+    ) -> dess_backend::Result<()> {
         let mut images = self.images.write();
+        let view = image.view(view)?;
         images.replace(handle, image.clone());
+        if image.desc().usage.contains(vk::ImageUsageFlags::SAMPLED) {
+            self.sampled_image_updates.lock().push((
+                handle.index() as _,
+                vk::DescriptorImageInfo::builder()
+                    .image_view(view)
+                    .image_layout(layout)
+                    .build(),
+            ))
+        }
+        if image.desc().usage.contains(vk::ImageUsageFlags::STORAGE) {
+            self.storage_image_updates.lock().push((
+                handle.index() as _,
+                vk::DescriptorImageInfo::builder()
+                    .image_view(view)
+                    .image_layout(layout)
+                    .build(),
+            ))
+        }
 
         Ok(())
     }
@@ -347,14 +484,40 @@ impl ResourceManager {
     }
 
     pub fn add_buffer(&self, buffer: Arc<Buffer>) -> BufferHandle {
+        let size = buffer.desc().size;
+        let usage = buffer.desc().usage;
+        let raw = buffer.as_vk();
         let handle = self.buffers.write().push(buffer.as_vk(), buffer);
-
+        if usage.contains(vk::BufferUsageFlags::STORAGE_BUFFER) {
+            self.storage_buffer_updates.lock().push((
+                handle.index(),
+                vk::DescriptorBufferInfo::builder()
+                    .buffer(raw)
+                    .offset(0)
+                    .range(size as _)
+                    .build(),
+            ));
+        }
         handle
     }
 
     pub fn update_buffer(&self, handle: BufferHandle, buffer: Arc<Buffer>) {
         let mut buffers = self.buffers.write();
         buffers.replace(handle, buffer.as_vk());
+        if buffer
+            .desc()
+            .usage
+            .contains(vk::BufferUsageFlags::STORAGE_BUFFER)
+        {
+            self.storage_buffer_updates.lock().push((
+                handle.index(),
+                vk::DescriptorBufferInfo::builder()
+                    .buffer(buffer.as_vk())
+                    .offset(0)
+                    .range(buffer.desc().size as _)
+                    .build(),
+            ));
+        }
         buffers.replace_cold(handle, buffer);
     }
 
@@ -379,9 +542,14 @@ impl ResourceManager {
         self.buffers.read().get_cold(handle).cloned()
     }
 
+    pub fn bindless_set(&self) -> vk::DescriptorSet {
+        self.bindless_set
+    }
+
     /// Update bindings, submits staging buffer uploads. Returns sempahore to wait
     /// before starting actual render.
     pub fn before_frame_record(&self) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
+        //self.update_bindless_descriptors();
         self.temp.next_frame();
         let mut uniforms_to_free = self.uniforms_to_free.lock();
         let mut descriptors_to_free = self.descriptors_to_free.lock();

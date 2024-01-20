@@ -112,7 +112,8 @@ impl TempImagePool {
         let handle = if let Some(handle) = Self::find_image(&mut images, &temp_desc) {
             handle
         } else {
-            self.resource_manager.create_image(desc)?
+            self.resource_manager
+                .create_image(desc, ImageViewDesc::new(aspect))?
         };
         Ok(TemporaryImage {
             pool: self,
