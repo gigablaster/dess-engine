@@ -44,6 +44,17 @@ pub struct DescriptorSetLayout {
     pub count: DescriptorTotalCount,
 }
 
+pub struct DescriptorSet {
+    device: Arc<Device>,
+    raw: vk::DescriptorSet,
+}
+
+impl AsVulkan<vk::DescriptorSet> for DescriptorSet {
+    fn as_vk(&self) -> vk::DescriptorSet {
+        self.raw
+    }
+}
+
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
 pub struct DescriptorBindingDesc<'a> {
     pub slot: usize,

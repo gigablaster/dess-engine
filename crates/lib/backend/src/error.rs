@@ -108,3 +108,13 @@ impl From<io::Error> for Error {
         Self::Io(value)
     }
 }
+
+impl From<gpu_descriptor::AllocationError> for Error {
+    fn from(value: gpu_descriptor::AllocationError) -> Self {
+        match value {
+            gpu_descriptor::AllocationError::OutOfDeviceMemory => Error::OutOfDeviceMemory,
+            gpu_descriptor::AllocationError::OutOfHostMemory => Error::OutOfHostMemory,
+            gpu_descriptor::AllocationError::Fragmentation => Error::Fragmentation,
+        }
+    }
+}

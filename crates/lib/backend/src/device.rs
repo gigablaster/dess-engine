@@ -17,6 +17,8 @@ use arrayvec::ArrayVec;
 use ash::{extensions::khr, vk};
 use gpu_alloc::{Dedicated, Request};
 use gpu_alloc_ash::{device_properties, AshMemoryDevice};
+use gpu_descriptor::DescriptorTotalCount;
+use gpu_descriptor_ash::AshDescriptorDevice;
 use log::info;
 use parking_lot::Mutex;
 use std::collections::HashMap;
@@ -25,7 +27,10 @@ use std::fmt::Debug;
 use std::sync::Arc;
 use std::{mem, slice};
 
-use crate::{AsVulkan, AsVulkanCommandBuffer, Error, Result, SwapchainImage};
+use crate::{
+    AsVulkan, AsVulkanCommandBuffer, Error, GpuDescriptorAllocator, GpuDescriptorSet, Result,
+    SwapchainImage,
+};
 
 use super::frame::FrameContext;
 use super::{frame::Frame, DropList, GpuAllocator, GpuMemory, Instance, PhysicalDevice};
@@ -54,6 +59,7 @@ pub struct Device {
     instance: Instance,
     pdevice: PhysicalDevice,
     memory_allocator: Mutex<GpuAllocator>,
+    descriptor_allocator: Mutex<GpuDescriptorAllocator>,
     current_drop_list: Mutex<DropList>,
     samplers: HashMap<SamplerDesc, vk::Sampler>,
     universal_queue: Arc<Mutex<vk::Queue>>,
@@ -71,8 +77,31 @@ impl Debug for Device {
 unsafe impl Send for Device {}
 unsafe impl Sync for Device {}
 
+pub struct DeviceCreateDesc {
+    pub instance: Instance,
+    pub pdevice: PhysicalDevice,
+    pub update_after_bind_descriptors: usize,
+}
+
+impl DeviceCreateDesc {
+    pub fn new(instance: Instance, pdevice: PhysicalDevice) -> Self {
+        Self {
+            instance,
+            pdevice,
+            update_after_bind_descriptors: 0,
+        }
+    }
+
+    pub fn update_after_bind_descriptors(mut self, value: usize) -> Self {
+        self.update_after_bind_descriptors = value;
+        self
+    }
+}
+
 impl Device {
-    pub fn new(instance: Instance, pdevice: PhysicalDevice) -> Result<Arc<Self>> {
+    pub fn new(desc: DeviceCreateDesc) -> Result<Arc<Self>> {
+        let pdevice = desc.pdevice;
+        let instance = desc.instance;
         if !pdevice.is_queue_flag_supported(vk::QueueFlags::GRAPHICS) {
             return Err(Error::NoSuitableDevice);
         };
@@ -178,12 +207,15 @@ impl Device {
             Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
             Mutex::new(Arc::new(Frame::new(&device, universal_queue_index)?)),
         ];
-
+        let descriptor_allocator = Mutex::new(GpuDescriptorAllocator::new(
+            desc.update_after_bind_descriptors as _,
+        ));
         Ok(Arc::new(Self {
             instance,
             samplers: Self::generate_samplers(&device),
             pdevice,
             memory_allocator,
+            descriptor_allocator,
             universal_queue,
             transfer_queue,
             frames,
@@ -250,7 +282,11 @@ impl Device {
                 self.raw
                     .wait_for_fences(slice::from_ref(&frame.fence()), true, u64::MAX)?
             };
-            frame.reset(&self.raw, &mut self.memory_allocator.lock())?;
+            frame.reset(
+                &self.raw,
+                &mut self.memory_allocator.lock(),
+                &mut self.descriptor_allocator.lock(),
+            )?;
         }
         Ok(FrameContext {
             device: self,
@@ -355,6 +391,30 @@ impl Device {
         }
     }
 
+    pub(crate) fn allocate_descriptor(
+        &self,
+        layout: vk::DescriptorSetLayout,
+        descriptor_count: DescriptorTotalCount,
+        count: usize,
+        bindless: bool,
+    ) -> Result<GpuDescriptorSet> {
+        let flags = if bindless {
+            gpu_descriptor::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND
+        } else {
+            gpu_descriptor::DescriptorSetLayoutCreateFlags::empty()
+        };
+        Ok(unsafe {
+            self.descriptor_allocator.lock().allocate(
+                AshDescriptorDevice::wrap(&self.raw),
+                &layout,
+                flags,
+                &descriptor_count,
+                count as _,
+            )
+        }?
+        .remove(0))
+    }
+
     pub(crate) fn allocate(
         &self,
         requirements: vk::MemoryRequirements,
@@ -449,15 +509,18 @@ impl Drop for Device {
         info!("Cleanup...");
         unsafe { self.raw.device_wait_idle() }.unwrap();
         let mut memory_allocator = self.memory_allocator.lock();
+        let mut descriptor_allocator = self.descriptor_allocator.lock();
 
-        self.current_drop_list
-            .lock()
-            .purge(&self.raw, &mut memory_allocator);
+        self.current_drop_list.lock().purge(
+            &self.raw,
+            &mut memory_allocator,
+            &mut descriptor_allocator,
+        );
 
         self.frames.iter().for_each(|frame| {
             let mut frame = frame.lock();
             let frame = Arc::get_mut(&mut frame).unwrap();
-            frame.free(&self.raw, &mut memory_allocator)
+            frame.free(&self.raw, &mut memory_allocator, &mut descriptor_allocator)
         });
 
         for (_, sampler) in self.samplers.drain() {

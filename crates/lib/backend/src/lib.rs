@@ -62,3 +62,7 @@ impl AsVulkan<vk::Buffer> for vk::Buffer {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub type GpuDescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
+pub type GpuDescriptorAllocator =
+    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;

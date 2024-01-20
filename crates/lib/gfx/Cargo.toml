@@ -17,4 +17,3 @@ thiserror = "1.0.56"
 bevy_tasks = { version = "0.12.1", features = ["multi-threaded"] }
 bytes = "1.5.0"
 gpu-descriptor = "0.2.4"
-gpu-descriptor-ash = "0.2.0"

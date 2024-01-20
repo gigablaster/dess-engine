@@ -18,7 +18,6 @@ mod resource_manager;
 mod staging;
 mod temp;
 mod temp_images;
-mod uniforms;
 
 use std::{
     io,
@@ -152,7 +151,3 @@ impl<T: Sized + Copy> GpuBuferWriter<T> {
         BufferSlice::new(self.handle, self.writer.offset() as _)
     }
 }
-
-pub type GpuDescriptorSet = gpu_descriptor::DescriptorSet<vk::DescriptorSet>;
-pub type GpuDescriptorAllocator =
-    gpu_descriptor::DescriptorAllocator<vk::DescriptorPool, vk::DescriptorSet>;
