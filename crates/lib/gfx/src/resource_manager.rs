@@ -332,10 +332,55 @@ impl ResourceManager {
     /// Update bindings, submits staging buffer uploads. Returns sempahore to wait
     /// before starting actual render.
     pub fn before_frame_record(&self) -> Result<(vk::Semaphore, vk::PipelineStageFlags), Error> {
-        //self.update_bindless_descriptors();
+        self.update_bindless_descriptors();
         self.temp.next_frame();
-
         self.staging.lock().upload()
+    }
+
+    fn update_bindless_descriptors(&self) {
+        let mut storage_buffers_update = self.storage_buffer_updates.lock();
+        let mut sampled_images_update = self.sampled_image_updates.lock();
+        let mut storage_images_update = self.storage_image_updates.lock();
+        let mut writes = Vec::default();
+        storage_buffers_update.iter().for_each(|(index, write)| {
+            writes.push(
+                vk::WriteDescriptorSet::builder()
+                    .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
+                    .dst_array_element(*index)
+                    .dst_set(self.bindless_set)
+                    .dst_binding(STORAGE_BUFFER_BINDING)
+                    .buffer_info(slice::from_ref(write))
+                    .build(),
+            );
+        });
+        sampled_images_update.iter().for_each(|(index, write)| {
+            writes.push(
+                vk::WriteDescriptorSet::builder()
+                    .descriptor_type(vk::DescriptorType::SAMPLED_IMAGE)
+                    .dst_array_element(*index)
+                    .dst_set(self.bindless_set)
+                    .dst_binding(SAMPLED_IMAGE_BINDING)
+                    .image_info(slice::from_ref(write))
+                    .build(),
+            );
+        });
+        storage_images_update.iter().for_each(|(index, write)| {
+            writes.push(
+                vk::WriteDescriptorSet::builder()
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .dst_array_element(*index)
+                    .dst_set(self.bindless_set)
+                    .dst_binding(STORAGE_IMAGE_BINDING)
+                    .image_info(slice::from_ref(write))
+                    .build(),
+            );
+        });
+        unsafe {
+            self.device.get().update_descriptor_sets(&writes, &[]);
+        }
+        storage_buffers_update.clear();
+        sampled_images_update.clear();
+        storage_images_update.clear();
     }
 
     /// Finalizes resource uploading.
