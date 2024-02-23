@@ -16,22 +16,17 @@
 use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::{
-    vulkan::{BindGroupHandle, BufferHandle, BufferSlice, ExecutionContext, RasterPipelineHandle},
-    RenderArea,
-};
+use crate::{BufferHandle, BufferPool, BufferSlice, RasterPipelineHandle};
 
 pub(crate) const MAX_VERTEX_STREAMS: usize = 2;
-pub(crate) const MAX_DESCRIPTOR_SETS: usize = 3;
-pub(crate) const MAX_DYNAMIC_OFFSETS: usize = 4;
+pub(crate) const MAX_OFFSETS: usize = 4;
 
 #[derive(Debug, Clone, Copy)]
 struct Draw {
     pipeline: RasterPipelineHandle,
     vertex_buffers: [BufferSlice; MAX_VERTEX_STREAMS],
     index_buffer: BufferSlice,
-    descriptors: [BindGroupHandle; MAX_DESCRIPTOR_SETS],
-    dynamic_offsets: [u32; MAX_DYNAMIC_OFFSETS],
+    offsets: [u32; MAX_OFFSETS],
     first_index: u32,
     index_count: u32,
     instance_count: u32,
@@ -45,8 +40,7 @@ impl Default for Draw {
             pipeline: RasterPipelineHandle::default(),
             vertex_buffers: [BufferSlice::default(); MAX_VERTEX_STREAMS],
             index_buffer: BufferSlice::default(),
-            descriptors: [BindGroupHandle::default(); MAX_DESCRIPTOR_SETS],
-            dynamic_offsets: [u32::MAX; MAX_DYNAMIC_OFFSETS],
+            offsets: [u32::MAX; MAX_OFFSETS],
             first_index: u32::MAX,
             index_count: u32::MAX,
             instance_count: u32::MAX,
@@ -60,12 +54,47 @@ const PIPELINE: u16 = 1;
 const VERTEX_BUFFER0: u16 = PIPELINE << 1;
 const INDEX_BUFFER: u16 = VERTEX_BUFFER0 << MAX_VERTEX_STREAMS;
 const DYNAMIC_OFFSET0: u16 = INDEX_BUFFER << 1;
-const DS1: u16 = DYNAMIC_OFFSET0 << MAX_DYNAMIC_OFFSETS;
-const INDEX_COUNT: u16 = DS1 << MAX_DESCRIPTOR_SETS;
+const INDEX_COUNT: u16 = DYNAMIC_OFFSET0 << MAX_OFFSETS;
 const FIRST_INDEX: u16 = INDEX_COUNT << 1;
 const INSTANCE_COUNT: u16 = FIRST_INDEX << 1;
 const FIRST_INSTANCE: u16 = INSTANCE_COUNT << 1;
 const VERTEX_OFFSET: u16 = FIRST_INSTANCE << 1;
+
+#[derive(Debug, Clone, Copy)]
+pub struct RenderArea {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl From<RenderArea> for vk::Viewport {
+    fn from(value: RenderArea) -> Self {
+        vk::Viewport {
+            x: value.x,
+            y: value.y,
+            width: value.width,
+            height: value.height,
+            min_depth: 0.0,
+            max_depth: 1.0,
+        }
+    }
+}
+
+impl From<RenderArea> for vk::Rect2D {
+    fn from(value: RenderArea) -> Self {
+        Self {
+            offset: vk::Offset2D {
+                x: value.x as i32,
+                y: value.y as i32,
+            },
+            extent: vk::Extent2D {
+                width: value.width as u32,
+                height: value.height as u32,
+            },
+        }
+    }
+}
 
 /// Collect draw calls
 ///
@@ -77,7 +106,8 @@ const VERTEX_OFFSET: u16 = FIRST_INSTANCE << 1;
 pub struct DrawStream {
     subpass: usize,
     render_area: RenderArea,
-    pass_descriptor_set: BindGroupHandle,
+    bindless_descriptor_set: vk::DescriptorSet,
+    dynamic_buffers_descriptor_set: vk::DescriptorSet,
     stream: Vec<u16>,
     current: Draw,
     mask: u16,
@@ -113,29 +143,31 @@ impl<'a> DrawStreamReader<'a> {
 }
 
 impl DrawStream {
-    pub fn new(
-        pass_descriptor_set: BindGroupHandle,
-        render_area: RenderArea,
+    pub(crate) fn new(
         subpass: usize,
+        render_area: RenderArea,
+        bindless_descriptor_set: vk::DescriptorSet,
+        dynamic_buffers_descriptor_set: vk::DescriptorSet,
     ) -> Self {
         Self {
             subpass,
             render_area,
-            pass_descriptor_set,
-            stream: Vec::with_capacity(1024),
+            bindless_descriptor_set,
+            dynamic_buffers_descriptor_set,
+            stream: Vec::with_capacity(4096),
             current: Draw::default(),
             mask: 0,
         }
     }
 
-    pub fn set_pipeline(&mut self, handle: RasterPipelineHandle) {
+    pub fn bind_pipeline(&mut self, handle: RasterPipelineHandle) {
         if self.current.pipeline != handle {
             self.mask |= PIPELINE;
             self.current.pipeline = handle;
         }
     }
 
-    pub fn set_vertex_buffer(&mut self, slot: usize, buffer: Option<BufferSlice>) {
+    pub fn bind_vertex_buffer(&mut self, slot: usize, buffer: Option<BufferSlice>) {
         debug_assert!(slot < MAX_VERTEX_STREAMS);
         let buffer = buffer.unwrap_or_default();
         if self.current.vertex_buffers[slot] != buffer {
@@ -144,7 +176,7 @@ impl DrawStream {
         }
     }
 
-    pub fn set_index_buffer(&mut self, buffer: Option<BufferSlice>) {
+    pub fn bind_index_buffer(&mut self, buffer: Option<BufferSlice>) {
         let buffer = buffer.unwrap_or_default();
         if self.current.index_buffer != buffer {
             self.mask |= INDEX_BUFFER;
@@ -152,22 +184,12 @@ impl DrawStream {
         }
     }
 
-    pub fn set_bind_group(&mut self, slot: usize, ds: Option<BindGroupHandle>) {
-        debug_assert!((1..=MAX_DESCRIPTOR_SETS).contains(&slot));
-        let slot = slot - 1;
-        let ds = ds.unwrap_or_default();
-        if self.current.descriptors[slot] != ds {
-            self.mask |= DS1 << slot;
-            self.current.descriptors[slot] = ds;
-        }
-    }
-
-    pub fn set_dynamic_buffer_offset(&mut self, slot: usize, offset: Option<u32>) {
-        assert!(slot < MAX_DYNAMIC_OFFSETS);
+    pub fn set_offset(&mut self, slot: usize, offset: Option<u32>) {
+        assert!(slot < MAX_OFFSETS);
         let offset = offset.unwrap_or(u32::MAX);
-        if self.current.dynamic_offsets[slot] != offset {
+        if self.current.offsets[slot] != offset {
             self.mask |= DYNAMIC_OFFSET0 << slot;
-            self.current.dynamic_offsets[slot] = offset;
+            self.current.offsets[slot] = offset;
         }
     }
 
@@ -180,7 +202,7 @@ impl DrawStream {
         first_instance: u32,
     ) {
         debug_assert!(
-            self.current.pipeline.is_valid(),
+            self.current.pipeline.valid(),
             "Pipeline handle must be valid"
         );
         debug_assert!(index_count > 0, "Must draw at least one primitive");
@@ -217,14 +239,9 @@ impl DrawStream {
         if self.mask & INDEX_BUFFER != 0 {
             self.encode_buffer_slice(self.current.index_buffer);
         }
-        for slot in 0..MAX_DYNAMIC_OFFSETS {
+        for slot in 0..MAX_OFFSETS {
             if self.mask & (DYNAMIC_OFFSET0 << slot) != 0 {
-                self.write_u32(self.current.dynamic_offsets[slot]);
-            }
-        }
-        for slot in 0..MAX_DESCRIPTOR_SETS {
-            if self.mask & (DS1 << slot) != 0 {
-                self.write_u32(self.current.descriptors[slot].into());
+                self.write_u32(self.current.offsets[slot]);
             }
         }
         if self.mask & INDEX_COUNT != 0 {
@@ -266,47 +283,39 @@ impl DrawStream {
         let mut rebind_all_descriptors = true;
         let mut dynamic_offset_changed = false;
         let mut current_layout = vk::PipelineLayout::null();
-        let mut descriptors = [context.device.empty_ds; MAX_DESCRIPTOR_SETS + 1];
-        let mut dynamic_offsets = [u32::MAX; MAX_DYNAMIC_OFFSETS];
+        let mut dynamic_offsets = [u32::MAX; MAX_OFFSETS];
         let mut first_index = 0u32;
         let mut index_count = 0u32;
         let mut instance_count = 0u32;
         let mut first_instance = 0u32;
         let mut vertex_offset = 0u32;
-        descriptors[0] = context
-            .descriptors
-            .get(self.pass_descriptor_set)
-            .copied()
-            .ok_or(DrawStreamError::InvalidHandle)?;
+        let descriptors = [
+            self.bindless_descriptor_set,
+            self.dynamic_buffers_descriptor_set,
+        ];
 
         unsafe {
             context
                 .device
-                .raw
                 .cmd_set_viewport(cb, 0, &[self.render_area.into()]);
             context
                 .device
-                .raw
                 .cmd_set_scissor(cb, 0, &[self.render_area.into()]);
         }
         while let Some(mask) = stream.read() {
             if mask & PIPELINE != 0 {
                 let handle: RasterPipelineHandle = stream.read_u32()?.into();
                 let (pipeline, layout) = context
-                    .pipelines
-                    .get(handle)
-                    .copied()
+                    .pipeline(handle)
                     .ok_or(DrawStreamError::InvalidHandle)?;
                 if current_layout != layout {
                     rebind_all_descriptors = true;
                     current_layout = layout;
                 }
                 unsafe {
-                    context.device.raw.cmd_bind_pipeline(
-                        cb,
-                        vk::PipelineBindPoint::GRAPHICS,
-                        pipeline,
-                    )
+                    context
+                        .device
+                        .cmd_bind_pipeline(cb, vk::PipelineBindPoint::GRAPHICS, pipeline)
                 };
             }
             for index in 0..MAX_VERTEX_STREAMS {
@@ -323,7 +332,7 @@ impl DrawStream {
                         vk::Buffer::null()
                     };
                     unsafe {
-                        context.device.raw.cmd_bind_vertex_buffers(
+                        context.device.cmd_bind_vertex_buffers(
                             cb,
                             index as _,
                             &[buffer],
@@ -337,15 +346,13 @@ impl DrawStream {
                 let offset = stream.read_u32()?;
                 let buffer = if handle.is_valid() {
                     context
-                        .buffers
-                        .get(handle)
-                        .copied()
+                        .buffer(handle)
                         .ok_or(DrawStreamError::InvalidHandle)?
                 } else {
                     vk::Buffer::null()
                 };
                 unsafe {
-                    context.device.raw.cmd_bind_index_buffer(
+                    context.device.cmd_bind_index_buffer(
                         cb,
                         buffer,
                         offset as _,
@@ -353,60 +360,12 @@ impl DrawStream {
                     )
                 };
             }
-            for index in 0..MAX_DYNAMIC_OFFSETS {
+            for index in 0..MAX_OFFSETS {
                 if mask & (DYNAMIC_OFFSET0 << index) != 0 {
                     let offset = stream.read_u32()?;
                     if dynamic_offsets[index] != offset {
                         dynamic_offsets[index] = offset;
                         dynamic_offset_changed = true;
-                    }
-                }
-            }
-            for index in 0..MAX_DESCRIPTOR_SETS {
-                if mask & (DS1 << index) != 0 {
-                    let handle: BindGroupHandle = stream.read_u32()?.into();
-                    let index = index + 1;
-                    if handle.is_valid() {
-                        descriptors[index] = context
-                            .descriptors
-                            .get(handle)
-                            .copied()
-                            .ok_or(DrawStreamError::InvalidHandle)?;
-                    } else {
-                        descriptors[index] = context.device.empty_ds;
-                    }
-                    if !rebind_all_descriptors {
-                        let ds = descriptors[index];
-                        if index == 3 {
-                            let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
-                            for offset_index in 0..MAX_DYNAMIC_OFFSETS {
-                                if dynamic_offsets[offset_index] != u32::MAX {
-                                    offsets.push(dynamic_offsets[offset_index]);
-                                }
-                            }
-                            unsafe {
-                                context.device.raw.cmd_bind_descriptor_sets(
-                                    cb,
-                                    vk::PipelineBindPoint::GRAPHICS,
-                                    current_layout,
-                                    index as _,
-                                    &[ds],
-                                    &offsets,
-                                )
-                            }
-                            dynamic_offset_changed = false;
-                        } else {
-                            unsafe {
-                                context.device.raw.cmd_bind_descriptor_sets(
-                                    cb,
-                                    vk::PipelineBindPoint::GRAPHICS,
-                                    current_layout,
-                                    index as _,
-                                    &[ds],
-                                    &[],
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -426,14 +385,14 @@ impl DrawStream {
                 vertex_offset = stream.read_u32()?;
             }
             if rebind_all_descriptors {
-                let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
-                for offset_index in 0..MAX_DYNAMIC_OFFSETS {
+                let mut offsets = ArrayVec::<_, MAX_OFFSETS>::new();
+                for offset_index in 0..MAX_OFFSETS {
                     if dynamic_offsets[offset_index] != u32::MAX {
                         offsets.push(dynamic_offsets[offset_index]);
                     }
                 }
                 unsafe {
-                    context.device.raw.cmd_bind_descriptor_sets(
+                    context.device.cmd_bind_descriptor_sets(
                         cb,
                         vk::PipelineBindPoint::GRAPHICS,
                         current_layout,
@@ -445,26 +404,26 @@ impl DrawStream {
                 rebind_all_descriptors = false;
                 dynamic_offset_changed = false;
             } else if dynamic_offset_changed {
-                let mut offsets = ArrayVec::<_, MAX_DYNAMIC_OFFSETS>::new();
-                for offset_index in 0..MAX_DYNAMIC_OFFSETS {
+                let mut offsets = ArrayVec::<_, MAX_OFFSETS>::new();
+                for offset_index in 0..MAX_OFFSETS {
                     if dynamic_offsets[offset_index] != u32::MAX {
                         offsets.push(dynamic_offsets[offset_index]);
                     }
                 }
                 unsafe {
-                    context.device.raw.cmd_bind_descriptor_sets(
+                    context.device.cmd_bind_descriptor_sets(
                         cb,
                         vk::PipelineBindPoint::GRAPHICS,
                         current_layout,
                         3,
-                        &[descriptors[3]],
+                        &[descriptors[1]],
                         &offsets,
                     )
                 }
                 dynamic_offset_changed = false;
             }
             unsafe {
-                context.device.raw.cmd_draw_indexed(
+                context.device.cmd_draw_indexed(
                     cb,
                     index_count,
                     instance_count,
@@ -484,11 +443,31 @@ impl DrawStream {
     }
 
     fn encode_buffer_slice(&mut self, buffer: BufferSlice) {
-        self.write_u32(buffer.handle.into());
-        self.write_u32(buffer.offset);
+        self.write_u32(buffer.0.into());
+        self.write_u32(buffer.1);
     }
 
     pub fn is_empty(&self) -> bool {
         self.stream.is_empty()
+    }
+}
+
+pub(crate) struct ExecutionContext<'a> {
+    pub device: &'a ash::Device,
+    pipelines: &'a Vec<(vk::Pipeline, vk::PipelineLayout)>,
+    buffers: &'a BufferPool,
+}
+
+impl<'a> ExecutionContext<'a> {
+    pub fn pipeline(
+        &self,
+        handle: RasterPipelineHandle,
+    ) -> Option<(vk::Pipeline, vk::PipelineLayout)> {
+        let index: u32 = handle.into();
+        self.pipelines.get(index as usize).copied()
+    }
+
+    pub fn buffer(&self, handle: BufferHandle) -> Option<vk::Buffer> {
+        self.buffers.get(handle).copied()
     }
 }

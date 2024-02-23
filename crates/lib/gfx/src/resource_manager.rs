@@ -29,7 +29,7 @@ use parking_lot::{Mutex, RwLock};
 use crate::{
     staging::{Staging, StagingDesc},
     temp::TempBuffer,
-    BufferSlice, Error, GpuBuferWriter,
+    BufferPool, BufferSlice, Error, GpuBuferWriter, ImagePool, ProgramPool, RenderPassPool,
 };
 
 pub type ImageHandle = Handle<Arc<Image>>;
@@ -44,10 +44,29 @@ pub struct RenderPassHandle(u32);
 #[derive(Debug, Clone, Hash, Copy, PartialEq, Eq)]
 pub struct RasterPipelineHandle(u32);
 
-type ImagePool = Pool<Arc<Image>>;
-type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>, SentinelPoolStrategy<vk::Buffer>>;
-type ProgramPool = Vec<Arc<Program>>;
-type RenderPassPool = Vec<Arc<RenderPass>>;
+impl Default for RasterPipelineHandle {
+    fn default() -> Self {
+        Self(u32::MAX)
+    }
+}
+
+impl From<RasterPipelineHandle> for u32 {
+    fn from(value: RasterPipelineHandle) -> Self {
+        value.0
+    }
+}
+
+impl From<u32> for RasterPipelineHandle {
+    fn from(value: u32) -> Self {
+        Self(value)
+    }
+}
+
+impl RasterPipelineHandle {
+    pub fn valid(&self) -> bool {
+        self.0 != u32::MAX
+    }
+}
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct RasterPipelineDesc {

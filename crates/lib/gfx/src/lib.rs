@@ -13,6 +13,7 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+mod draw_stream;
 mod resource_manager;
 mod staging;
 mod temp;
@@ -24,14 +25,24 @@ use std::{
     mem,
     ptr::{copy_nonoverlapping, NonNull},
     slice,
+    sync::Arc,
 };
 
 use ash::vk;
+use dess_backend::{Buffer, Image, Program, RenderPass};
+use dess_common::{HotColdPool, Pool, SentinelPoolStrategy};
+pub use draw_stream::*;
 pub use resource_manager::*;
 pub use temp_images::*;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct BufferSlice(BufferHandle, u32);
+
+impl Default for BufferSlice {
+    fn default() -> Self {
+        Self(BufferHandle::invalid(), 0)
+    }
+}
 
 impl BufferSlice {
     pub fn new(handle: BufferHandle, offset: u32) -> Self {
@@ -150,3 +161,8 @@ impl<T: Sized + Copy> GpuBuferWriter<T> {
         BufferSlice::new(self.handle, self.writer.offset() as _)
     }
 }
+
+type ImagePool = Pool<Arc<Image>>;
+type BufferPool = HotColdPool<vk::Buffer, Arc<Buffer>, SentinelPoolStrategy<vk::Buffer>>;
+type ProgramPool = Vec<Arc<Program>>;
+type RenderPassPool = Vec<Arc<RenderPass>>;
