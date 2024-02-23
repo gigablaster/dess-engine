@@ -97,24 +97,8 @@ impl From<(Vec<vk::Pipeline>, vk::Result)> for Error {
     }
 }
 
-impl From<rspirv_reflect::ReflectError> for Error {
-    fn from(_value: rspirv_reflect::ReflectError) -> Self {
-        Self::ReflectionFailed
-    }
-}
-
 impl From<io::Error> for Error {
     fn from(value: io::Error) -> Self {
         Self::Io(value)
-    }
-}
-
-impl From<gpu_descriptor::AllocationError> for Error {
-    fn from(value: gpu_descriptor::AllocationError) -> Self {
-        match value {
-            gpu_descriptor::AllocationError::OutOfDeviceMemory => Error::OutOfDeviceMemory,
-            gpu_descriptor::AllocationError::OutOfHostMemory => Error::OutOfHostMemory,
-            gpu_descriptor::AllocationError::Fragmentation => Error::Fragmentation,
-        }
     }
 }

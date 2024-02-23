@@ -13,16 +13,11 @@
 // You should have received a copy of the GNU General Public License
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-use std::{
-    collections::{BTreeMap, HashMap},
-    slice,
-    sync::Arc,
-};
+use std::{collections::HashMap, slice, sync::Arc};
 
 use arrayvec::ArrayVec;
-use ash::vk::{self, PipelineLayoutCreateInfo};
+use ash::vk;
 use byte_slice_cast::AsSliceOf;
-use gpu_descriptor::DescriptorTotalCount;
 use smol_str::SmolStr;
 
 use crate::{AsVulkan, Result};
@@ -40,19 +35,6 @@ pub struct DescriptorSetLayout {
     device: Arc<Device>,
     layout: vk::DescriptorSetLayout,
     pub types: HashMap<usize, vk::DescriptorType>,
-    pub names: HashMap<SmolStr, usize>,
-    pub count: DescriptorTotalCount,
-}
-
-pub struct DescriptorSet {
-    device: Arc<Device>,
-    raw: vk::DescriptorSet,
-}
-
-impl AsVulkan<vk::DescriptorSet> for DescriptorSet {
-    fn as_vk(&self) -> vk::DescriptorSet {
-        self.raw
-    }
 }
 
 #[derive(Debug, Hash, Clone, Copy, PartialEq, Eq)]
@@ -64,62 +46,13 @@ pub struct DescriptorBindingDesc<'a> {
 }
 
 #[derive(Debug)]
-pub struct BindGroupLayoutDesc<'a> {
+pub struct DescriptorSetLayoutDesc<'a> {
     pub stage: vk::ShaderStageFlags,
     pub set: Vec<DescriptorBindingDesc<'a>>,
 }
 
 impl DescriptorSetLayout {
-    pub fn new(device: &Arc<Device>, set: &BindGroupLayoutDesc) -> Result<Self> {
-        let mut count = DescriptorTotalCount::default();
-        count.combined_image_sampler = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-            .count() as u32;
-
-        count.sampled_image = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::SAMPLED_IMAGE)
-            .count() as u32;
-
-        count.sampler = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::SAMPLER)
-            .count() as u32;
-
-        count.storage_buffer = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::STORAGE_BUFFER)
-            .count() as u32;
-
-        count.storage_buffer_dynamic = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
-            .count() as u32;
-
-        count.storage_image = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::STORAGE_IMAGE)
-            .count() as u32;
-
-        count.uniform_buffer = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::UNIFORM_BUFFER)
-            .count() as u32;
-
-        count.uniform_buffer_dynamic = set
-            .set
-            .iter()
-            .filter(|x| x.ty == vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-            .count() as u32;
-
+    pub fn new(device: &Arc<Device>, set: &DescriptorSetLayoutDesc) -> Result<Self> {
         let mut samplers = ArrayVec::<_, MAX_SAMPLERS>::new();
         let mut bindings = HashMap::with_capacity(set.set.len());
         for binding in set.set.iter() {
@@ -162,17 +95,10 @@ impl DescriptorSetLayout {
                 .create_descriptor_set_layout(&layout_create_info, None)
         }?;
 
-        let mut names = HashMap::with_capacity(set.set.len());
-        set.set.iter().for_each(|binding| {
-            names.insert(binding.name.into(), binding.slot);
-        });
-
         Ok(Self {
             device: device.clone(),
             types,
-            names,
             layout,
-            count,
         })
     }
 
@@ -281,17 +207,11 @@ impl<'a> ShaderDesc<'a> {
     }
 }
 
-#[derive(Debug, Clone)]
-struct DescriptorInfo(vk::DescriptorType, usize, SmolStr);
-
-type DescriptorSetInfo = HashMap<usize, DescriptorInfo>;
-
 #[derive(Debug)]
 pub(crate) struct Shader {
     raw: vk::ShaderModule,
     stage: vk::ShaderStageFlags,
     entry: SmolStr,
-    sets: HashMap<usize, DescriptorSetInfo>,
 }
 
 impl AsVulkan<vk::ShaderModule> for Shader {
@@ -311,7 +231,6 @@ impl Shader {
             raw: shader,
             stage: desc.stage,
             entry: SmolStr::new(desc.entry),
-            sets: Self::reflect(desc.code)?,
         })
     }
 
@@ -326,71 +245,6 @@ impl Shader {
     pub fn entry(&self) -> &str {
         &self.entry
     }
-
-    fn reflect(code: &[u8]) -> Result<HashMap<usize, DescriptorSetInfo>> {
-        let info = rspirv_reflect::Reflection::new_from_spirv(code)?;
-        let sets = info.get_descriptor_sets()?;
-        Ok(sets
-            .iter()
-            .map(|(index, info)| {
-                (
-                    *index as usize,
-                    Self::extract_descriptor_set(info, *index == DYNAMIC_BINDING_SLOT),
-                )
-            })
-            .collect())
-    }
-
-    fn extract_descriptor_set(
-        info: &BTreeMap<u32, rspirv_reflect::DescriptorInfo>,
-        dynamic: bool,
-    ) -> DescriptorSetInfo {
-        info.iter()
-            .map(|(index, info)| (*index as usize, Self::extract_descriptor(info, dynamic)))
-            .collect()
-    }
-
-    fn extract_descriptor(info: &rspirv_reflect::DescriptorInfo, dynamic: bool) -> DescriptorInfo {
-        let name = SmolStr::from(&info.name);
-        let count = Self::binding_count(info);
-        match info.ty {
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER if dynamic => {
-                DescriptorInfo(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC, count, name)
-            }
-            rspirv_reflect::DescriptorType::UNIFORM_BUFFER => {
-                DescriptorInfo(vk::DescriptorType::UNIFORM_BUFFER, count, name)
-            }
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER if dynamic => {
-                DescriptorInfo(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC, count, name)
-            }
-            rspirv_reflect::DescriptorType::STORAGE_BUFFER => {
-                DescriptorInfo(vk::DescriptorType::STORAGE_BUFFER, count, name)
-            }
-            rspirv_reflect::DescriptorType::SAMPLER => {
-                DescriptorInfo(vk::DescriptorType::SAMPLER, count, name)
-            }
-            rspirv_reflect::DescriptorType::SAMPLED_IMAGE => {
-                DescriptorInfo(vk::DescriptorType::SAMPLED_IMAGE, count, name)
-            }
-            rspirv_reflect::DescriptorType::STORAGE_IMAGE => {
-                DescriptorInfo(vk::DescriptorType::STORAGE_IMAGE, count, name)
-            }
-            rspirv_reflect::DescriptorType::COMBINED_IMAGE_SAMPLER => {
-                DescriptorInfo(vk::DescriptorType::COMBINED_IMAGE_SAMPLER, count, name)
-            }
-            _ => panic!("Binding of type {:?} isn't supported", info.ty),
-        }
-    }
-
-    fn binding_count(info: &rspirv_reflect::DescriptorInfo) -> usize {
-        match info.binding_count {
-            rspirv_reflect::BindingCount::One => 1,
-            rspirv_reflect::BindingCount::StaticSized(n) => n,
-            rspirv_reflect::BindingCount::Unbounded => {
-                panic!("Unbounded bindings aren't supported")
-            }
-        }
-    }
 }
 
 /// Shader program similar to what we had in OpenGL.
@@ -400,8 +254,6 @@ impl Shader {
 pub struct Program {
     device: Arc<Device>,
     shaders: Vec<Shader>,
-    sets: HashMap<usize, Arc<DescriptorSetLayout>>,
-    layout: vk::PipelineLayout,
 }
 
 impl Program {
@@ -414,83 +266,15 @@ impl Program {
                 Shader::new(device, desc).unwrap()
             })
             .collect::<Vec<_>>();
-        let sets = shaders
-            .iter()
-            .map(|shader| &shader.sets)
-            .collect::<Vec<_>>();
-        let sets = Self::merge_descriptor_sets(&sets);
 
-        let sets = sets
-            .iter()
-            .map(|(index, set)| {
-                (
-                    *index,
-                    Self::create_layout(device, stages, set).unwrap().into(),
-                )
-            })
-            .collect::<HashMap<_, _>>();
-        let layouts = sets
-            .values()
-            .cloned()
-            .map(|x: Arc<DescriptorSetLayout>| x.as_vk())
-            .collect::<Vec<_>>();
-        let info = PipelineLayoutCreateInfo::builder()
-            .set_layouts(&layouts)
-            .build();
-        let layout = unsafe { device.get().create_pipeline_layout(&info, None) }?;
         Ok(Self {
             device: device.clone(),
             shaders,
-            sets,
-            layout,
         })
-    }
-
-    fn create_layout(
-        device: &Arc<Device>,
-        stage: vk::ShaderStageFlags,
-        set: &DescriptorSetInfo,
-    ) -> Result<DescriptorSetLayout> {
-        let set = set
-            .iter()
-            .map(|(slot, info)| DescriptorBindingDesc {
-                slot: *slot,
-                ty: info.0,
-                count: info.1,
-                name: &info.2,
-            })
-            .collect::<Vec<_>>();
-        DescriptorSetLayout::new(device, &BindGroupLayoutDesc { stage, set })
     }
 
     pub(crate) fn shaders(&self) -> impl Iterator<Item = &Shader> {
         self.shaders.iter()
-    }
-
-    pub(crate) fn pipeline_layout(&self) -> vk::PipelineLayout {
-        self.layout
-    }
-
-    pub fn descriptor_set_layout(&self, index: usize) -> Option<Arc<DescriptorSetLayout>> {
-        self.sets.get(&index).cloned()
-    }
-
-    fn merge_descriptor_sets(
-        sets: &[&HashMap<usize, DescriptorSetInfo>],
-    ) -> HashMap<usize, DescriptorSetInfo> {
-        let mut result = HashMap::new();
-        for index in 0..MAX_DESCRIPTOR_SETS {
-            let entry = result.entry(index).or_insert(DescriptorSetInfo::new());
-            for set in sets {
-                if let Some(group) = set.get(&index) {
-                    for (index, descriptor) in group {
-                        entry.insert(*index, descriptor.clone());
-                    }
-                }
-            }
-        }
-
-        result
     }
 }
 
@@ -499,6 +283,5 @@ impl Drop for Program {
         self.shaders
             .iter()
             .for_each(|shader| shader.free(&self.device));
-        unsafe { self.device.get().destroy_pipeline_layout(self.layout, None) }
     }
 }

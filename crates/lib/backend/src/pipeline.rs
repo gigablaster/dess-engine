@@ -183,6 +183,8 @@ pub struct RasterPipelineCreateDesc {
     pub depth_write: bool,
     /// Vertex streams layout
     pub streams: Vec<InputVertexStreamDesc>,
+    /// Layouts
+    pub layouts: Vec<vk::DescriptorSetLayout>,
 }
 
 impl RasterPipelineCreateDesc {
@@ -260,6 +262,11 @@ impl RasterPipelineCreateDesc {
 
     pub fn vertex_stream(mut self, stream: InputVertexStreamDesc) -> Self {
         self.streams.push(stream);
+        self
+    }
+
+    pub fn layout(mut self, layout: vk::DescriptorSetLayout) -> Self {
+        self.layouts.push(layout);
         self
     }
 }
@@ -380,8 +387,16 @@ pub fn compile_raster_pipeline(
         .logic_op_enable(false)
         .build();
 
+    let pipeline_create_info = vk::PipelineLayoutCreateInfo::builder()
+        .set_layouts(&desc.layouts)
+        .build();
+    let pipeline_layout = unsafe {
+        device
+            .get()
+            .create_pipeline_layout(&pipeline_create_info, None)
+    }?;
     let pipeline_create_info = vk::GraphicsPipelineCreateInfo::builder()
-        .layout(program.pipeline_layout())
+        .layout(pipeline_layout)
         .render_pass(render_pass.as_vk())
         .subpass(subpass as _)
         .stages(&shader_create_info)
@@ -403,7 +418,7 @@ pub fn compile_raster_pipeline(
         )
     }?[0];
 
-    Ok((pipeline, program.pipeline_layout()))
+    Ok((pipeline, pipeline_layout))
 }
 
 const MAGICK: [u8; 4] = *b"PLCH";
