@@ -65,6 +65,8 @@ pub struct ResourceManager {
     pipelines: RwLock<Vec<(vk::Pipeline, vk::PipelineLayout)>>,
     pipeline_descriptons: Mutex<HashMap<RasterPipelineDesc, RasterPipelineHandle>>,
     render_passes: RwLock<RenderPassPool>,
+    bindless_layout: vk::DescriptorSetLayout,
+    bindless_pool: vk::DescriptorPool,
     bindless_set: vk::DescriptorSet,
     sampled_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
     storage_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
@@ -172,6 +174,8 @@ impl ResourceManager {
             pipelines: RwLock::default(),
             pipeline_descriptons: Mutex::default(),
             bindless_set,
+            bindless_layout,
+            bindless_pool,
             sampled_image_updates: Mutex::default(),
             storage_image_updates: Mutex::default(),
             storage_buffer_updates: Mutex::new(storage_buffer_updates),
@@ -327,6 +331,10 @@ impl ResourceManager {
 
     pub fn bindless_set(&self) -> vk::DescriptorSet {
         self.bindless_set
+    }
+
+    pub fn bindless_layout(&self) -> vk::DescriptorSetLayout {
+        self.bindless_layout
     }
 
     /// Update bindings, submits staging buffer uploads. Returns sempahore to wait
@@ -519,5 +527,18 @@ impl ResourceManager {
             .write()
             .iter()
             .for_each(|x| x.clear_framebuffers());
+    }
+}
+
+impl Drop for ResourceManager {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .get()
+                .destroy_descriptor_pool(self.bindless_pool, None);
+            self.device
+                .get()
+                .destroy_descriptor_set_layout(self.bindless_layout, None);
+        }
     }
 }
