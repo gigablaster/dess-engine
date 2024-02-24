@@ -23,13 +23,14 @@ use dess_backend::{
     ImageCreateDesc, ImageSubresourceData, ImageViewDesc, Program, RasterPipelineCreateDesc,
     RenderPass, ShaderDesc,
 };
-use dess_common::{Handle, HotColdPool, Pool, SentinelPoolStrategy};
+use dess_common::Handle;
 use parking_lot::{Mutex, RwLock};
 
 use crate::{
     staging::{Staging, StagingDesc},
     temp::TempBuffer,
-    BufferPool, BufferSlice, Error, GpuBuferWriter, ImagePool, ProgramPool, RenderPassPool,
+    BufferPool, BufferSlice, Error, GpuBuferWriter, ImagePool, ProgramPool, RenderArea,
+    RenderPassPool,
 };
 
 pub type ImageHandle = Handle<Arc<Image>>;
@@ -76,6 +77,7 @@ struct RasterPipelineDesc {
     desc: RasterPipelineCreateDesc,
 }
 
+#[derive(Debug)]
 pub struct Renderer {
     device: Arc<Device>,
     images: RwLock<ImagePool>,
@@ -87,6 +89,9 @@ pub struct Renderer {
     bindless_layout: vk::DescriptorSetLayout,
     bindless_pool: vk::DescriptorPool,
     bindless_set: vk::DescriptorSet,
+    buffers_layout: vk::DescriptorSetLayout,
+    buffers_pool: vk::DescriptorPool,
+    buffers_set: vk::DescriptorSet,
     sampled_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
     storage_image_updates: Mutex<Vec<(u32, vk::DescriptorImageInfo)>>,
     storage_buffer_updates: Mutex<Vec<(u32, vk::DescriptorBufferInfo)>>,
@@ -171,6 +176,67 @@ impl Renderer {
         alloc_info.descriptor_set_count = 1;
         let bindless_set = unsafe { device.get().allocate_descriptor_sets(&alloc_info) }?[0];
 
+        let pool_sizes = [
+            vk::DescriptorPoolSize {
+                // Per-pass
+                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+                descriptor_count: 1,
+            },
+            vk::DescriptorPoolSize {
+                // Per-material
+                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+                descriptor_count: 1,
+            },
+            vk::DescriptorPoolSize {
+                // Per-draw (for multiple objects)
+                ty: vk::DescriptorType::STORAGE_BUFFER_DYNAMIC,
+                descriptor_count: 1,
+            },
+        ];
+        let bindings = [
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(0)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
+                .build(),
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(1)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
+                .build(),
+            vk::DescriptorSetLayoutBinding::builder()
+                .binding(2)
+                .descriptor_count(1)
+                .descriptor_type(vk::DescriptorType::STORAGE_BUFFER_DYNAMIC)
+                .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS)
+                .build(),
+        ];
+        let buffers_pool = unsafe {
+            device.get().create_descriptor_pool(
+                &vk::DescriptorPoolCreateInfo::builder()
+                    .pool_sizes(&pool_sizes)
+                    .max_sets(1)
+                    .flags(vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND)
+                    .build(),
+                None,
+            )
+        }?;
+        let buffers_layout = unsafe {
+            device.get().create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::builder()
+                    .bindings(&bindings)
+                    .build(),
+                None,
+            )
+        }?;
+        let mut alloc_info = vk::DescriptorSetAllocateInfo::builder()
+            .descriptor_pool(buffers_pool)
+            .set_layouts(slice::from_ref(&buffers_layout));
+        alloc_info.descriptor_set_count = 1;
+        let buffers_set = unsafe { device.get().allocate_descriptor_sets(&alloc_info) }?[0];
+
         let temp = TempBuffer::new(device, TEMP_BUFFER_PAGE_SIZE)?;
         let mut buffers = BufferPool::default();
         let temp_buffer = temp.get();
@@ -195,6 +261,9 @@ impl Renderer {
             bindless_set,
             bindless_layout,
             bindless_pool,
+            buffers_layout,
+            buffers_pool,
+            buffers_set,
             sampled_image_updates: Mutex::default(),
             storage_image_updates: Mutex::default(),
             storage_buffer_updates: Mutex::new(storage_buffer_updates),
@@ -346,14 +415,6 @@ impl Renderer {
 
     pub fn buffer(&self, handle: BufferHandle) -> Option<Arc<Buffer>> {
         self.buffers.read().get_cold(handle).cloned()
-    }
-
-    pub fn bindless_set(&self) -> vk::DescriptorSet {
-        self.bindless_set
-    }
-
-    pub fn bindless_layout(&self) -> vk::DescriptorSetLayout {
-        self.bindless_layout
     }
 
     /// Update bindings, submits staging buffer uploads. Returns sempahore to wait
@@ -556,12 +617,19 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
+            self.device.get().device_wait_idle().unwrap();
             self.device
                 .get()
                 .destroy_descriptor_pool(self.bindless_pool, None);
             self.device
                 .get()
                 .destroy_descriptor_set_layout(self.bindless_layout, None);
+            self.device
+                .get()
+                .destroy_descriptor_pool(self.buffers_pool, None);
+            self.device
+                .get()
+                .destroy_descriptor_set_layout(self.buffers_layout, None);
         }
     }
 }
