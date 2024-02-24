@@ -16,7 +16,7 @@
 use arrayvec::ArrayVec;
 use ash::vk;
 
-use crate::{BufferHandle, BufferPool, BufferSlice, RasterPipelineHandle};
+use crate::{BufferHandle, BufferPool, BufferSlice, RasterPipelineHandle, Renderer};
 
 pub(crate) const MAX_VERTEX_STREAMS: usize = 2;
 pub(crate) const MAX_OFFSETS: usize = 4;
@@ -104,10 +104,7 @@ impl From<RenderArea> for vk::Rect2D {
 /// one CPU cache line.
 #[derive(Debug)]
 pub struct DrawStream {
-    subpass: usize,
     render_area: RenderArea,
-    bindless_descriptor_set: vk::DescriptorSet,
-    dynamic_buffers_descriptor_set: vk::DescriptorSet,
     stream: Vec<u16>,
     current: Draw,
     mask: u16,
@@ -143,17 +140,9 @@ impl<'a> DrawStreamReader<'a> {
 }
 
 impl DrawStream {
-    pub(crate) fn new(
-        subpass: usize,
-        render_area: RenderArea,
-        bindless_descriptor_set: vk::DescriptorSet,
-        dynamic_buffers_descriptor_set: vk::DescriptorSet,
-    ) -> Self {
+    pub fn new(render_area: RenderArea) -> Self {
         Self {
-            subpass,
             render_area,
-            bindless_descriptor_set,
-            dynamic_buffers_descriptor_set,
             stream: Vec::with_capacity(4096),
             current: Draw::default(),
             mask: 0,
@@ -262,10 +251,6 @@ impl DrawStream {
         self.mask = 0;
     }
 
-    pub(crate) fn get_subpass(&self) -> usize {
-        self.subpass
-    }
-
     #[allow(clippy::needless_range_loop)]
     pub(crate) fn execute(
         &self,
@@ -289,10 +274,7 @@ impl DrawStream {
         let mut instance_count = 0u32;
         let mut first_instance = 0u32;
         let mut vertex_offset = 0u32;
-        let descriptors = [
-            self.bindless_descriptor_set,
-            self.dynamic_buffers_descriptor_set,
-        ];
+        let descriptors = [context.bindless_set, context.buffers_set];
 
         unsafe {
             context
@@ -454,6 +436,8 @@ impl DrawStream {
 
 pub(crate) struct ExecutionContext<'a> {
     pub device: &'a ash::Device,
+    pub bindless_set: vk::DescriptorSet,
+    pub buffers_set: vk::DescriptorSet,
     pipelines: &'a Vec<(vk::Pipeline, vk::PipelineLayout)>,
     buffers: &'a BufferPool,
 }
