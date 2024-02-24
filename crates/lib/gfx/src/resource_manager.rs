@@ -232,7 +232,7 @@ impl ResourceManager {
 
     pub fn create_image(
         &self,
-        desc: ImageCreateDesc,
+        desc: ImageCreat121eDesc,
         view: ImageViewDesc,
     ) -> Result<ImageHandle, Error> {
         let image = Image::new(&self.device, desc)?.into();
@@ -368,7 +368,11 @@ impl ResourceManager {
         let mut storage_buffers_update = self.storage_buffer_updates.lock();
         let mut sampled_images_update = self.sampled_image_updates.lock();
         let mut storage_images_update = self.storage_image_updates.lock();
-        let mut writes = Vec::default();
+        let mut writes = Vec::with_capacity(
+            storage_buffers_update.len()
+                + sampled_images_update.len()
+                + storage_buffers_update.len(),
+        );
         storage_buffers_update.iter().for_each(|(index, write)| {
             writes.push(
                 vk::WriteDescriptorSet::builder()
