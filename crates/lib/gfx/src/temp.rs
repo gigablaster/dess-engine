@@ -91,7 +91,7 @@ impl TempBuffer {
         Ok(offset)
     }
 
-    pub fn push_uniform<T: Sized + Copy>(&self, data: &T) -> Result<usize, Error> {
+    pub fn push_data<T: Sized + Copy>(&self, data: &T) -> Result<usize, Error> {
         let alignment = self
             .device
             .physical_device()

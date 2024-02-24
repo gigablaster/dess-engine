@@ -480,8 +480,8 @@ impl Renderer {
         self.staging.lock().execute_pending_barriers(recorder);
     }
 
-    pub fn push_temp_uniform<T: Sized + Copy>(&self, data: &T) -> Result<usize, Error> {
-        self.temp.push_uniform(data)
+    pub fn push_temp_data<T: Sized + Copy>(&self, data: &T) -> Result<usize, Error> {
+        self.temp.push_data(data)
     }
 
     pub fn push_temp_buffer<T: Sized + Copy>(&self, data: &[T]) -> Result<BufferSlice, Error> {
