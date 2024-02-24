@@ -14,7 +14,7 @@
 // along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 mod draw_stream;
-mod resource_manager;
+mod renderer;
 mod staging;
 mod temp;
 mod temp_images;
@@ -32,7 +32,7 @@ use ash::vk;
 use dess_backend::{Buffer, Image, Program, RenderPass};
 use dess_common::{HotColdPool, Pool, SentinelPoolStrategy};
 pub use draw_stream::*;
-pub use resource_manager::*;
+pub use renderer::*;
 pub use temp_images::*;
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]

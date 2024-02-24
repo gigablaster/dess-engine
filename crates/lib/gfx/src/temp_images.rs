@@ -18,7 +18,7 @@ use ash::vk::{self};
 use dess_backend::{ImageCreateDesc, ImageViewDesc};
 use parking_lot::Mutex;
 
-use crate::{Error, ImageHandle, ResourceManager};
+use crate::{Error, ImageHandle, Renderer};
 
 #[derive(Debug, Default, Hash, PartialEq, Eq, Clone, Copy)]
 pub enum TemporaryImageDims {
@@ -83,13 +83,13 @@ impl<'frame> Drop for TemporaryImage<'frame> {
 }
 
 pub struct TempImagePool {
-    resource_manager: Arc<ResourceManager>,
+    resource_manager: Arc<Renderer>,
     images: Mutex<Vec<(TempImageDesc, ImageHandle)>>,
     backbuffer_dims: [u32; 2],
 }
 
 impl TempImagePool {
-    pub fn new(resource_manager: &Arc<ResourceManager>) -> Self {
+    pub fn new(resource_manager: &Arc<Renderer>) -> Self {
         Self {
             resource_manager: resource_manager.clone(),
             images: Mutex::default(),

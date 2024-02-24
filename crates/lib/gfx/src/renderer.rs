@@ -76,7 +76,7 @@ struct RasterPipelineDesc {
     desc: RasterPipelineCreateDesc,
 }
 
-pub struct ResourceManager {
+pub struct Renderer {
     device: Arc<Device>,
     images: RwLock<ImagePool>,
     buffers: RwLock<BufferPool>,
@@ -102,10 +102,10 @@ const STORAGE_IMAGE_BINDING: u32 = 1;
 const STORAGE_BUFFER_BINDING: u32 = 2;
 const TEMP_BUFFER_PAGE_SIZE: usize = 32 * 1024 * 1024;
 
-unsafe impl Send for ResourceManager {}
-unsafe impl Sync for ResourceManager {}
+unsafe impl Send for Renderer {}
+unsafe impl Sync for Renderer {}
 
-impl ResourceManager {
+impl Renderer {
     pub fn new(device: &Arc<Device>) -> Result<Self, Error> {
         let pool_sizes = [
             vk::DescriptorPoolSize {
@@ -232,7 +232,7 @@ impl ResourceManager {
 
     pub fn create_image(
         &self,
-        desc: ImageCreat121eDesc,
+        desc: ImageCreateDesc,
         view: ImageViewDesc,
     ) -> Result<ImageHandle, Error> {
         let image = Image::new(&self.device, desc)?.into();
@@ -553,7 +553,7 @@ impl ResourceManager {
     }
 }
 
-impl Drop for ResourceManager {
+impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
             self.device
